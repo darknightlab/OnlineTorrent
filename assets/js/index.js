@@ -1,4 +1,4 @@
-const serverURL = ["https://wt-server.dnlab.net/1/", "https://wt-server.dnlab.net/2/", "https://wt-server.dnlab.net/3/", "/"];
+const serverURL = ["/server/1/", "/server/2/", "/server/3/", "/"];
 
 const loopTime = 2000;
 
