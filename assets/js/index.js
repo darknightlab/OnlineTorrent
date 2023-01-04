@@ -4,6 +4,8 @@ const loopTime = 2000;
 
 const progressBarSplits = 200;
 
+const defaultEnableWebseed = true;
+
 var printInfo;
 
 $("#uri").keydown(function (e) {
@@ -103,15 +105,15 @@ function onTorrent(torrent) {
         torrent.select(file._startPiece, file._startPiece, priority);
     });
 
-    $("#enable-webseed")
-        .unbind("click")
-        .click(function (e) {
-            webseedPrefix.forEach((prefix) => {
-                let webseedURL = prefix + encodeURIComponent(torrent.name) + webseedSuffix;
-                torrent.addWebSeed(webseedURL);
-            });
-            log("已启用webseed");
+    function enableWebseed() {
+        webseedPrefix.forEach((prefix) => {
+            let webseedURL = prefix + encodeURIComponent(torrent.name) + webseedSuffix;
+            torrent.addWebSeed(webseedURL);
         });
+        log("已启用webseed");
+    }
+
+    $("#enable-webseed").unbind("click").click(enableWebseed);
     $("#disable-webseed")
         .unbind("click")
         .click(function (e) {
@@ -122,6 +124,11 @@ function onTorrent(torrent) {
             }
             log("已禁用webseed");
         });
+
+    // 自动启用webseed
+    if (defaultEnableWebseed) {
+        enableWebseed();
+    }
 
     // Render all files into to the page
     torrent.files.forEach(function (file) {
