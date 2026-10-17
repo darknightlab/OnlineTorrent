@@ -135,7 +135,6 @@ export const api = {
   redeem: (code: string) => post<MeResponse>("/me/redeem", { code }),
   schedule: (s?: AbortSignal) => get<ScheduleResponse>("/schedule", s),
   anime: (key: string, s?: AbortSignal) => get<AnimeResponse>(`/anime/${encodeURIComponent(key)}`, s),
-  latest: (page = 1, s?: AbortSignal) => get<Paged<Torrent>>(`/torrents/latest${qs({ page })}`, s),
   search: (q: string, page = 1, s?: AbortSignal) => get<Paged<Torrent>>(`/torrents/search${qs({ q, page })}`, s),
   play: (b: PlayRequest) => post<PlayResponse>("/play", b),
   report: (b: ReportRequest) => post<Record<string, never>>("/report", b),

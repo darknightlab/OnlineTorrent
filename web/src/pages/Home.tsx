@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useMemo, useRef, useState, type TouchEvent } from "react"
 import { Navigate, useLocation } from "react-router-dom"
 import { CalendarDays, Megaphone } from "lucide-react"
 import { Container } from "@/components/layout/Container"
@@ -31,6 +31,23 @@ function ScheduleSection() {
   const now = useNow()
   const today = todayWeekday(new Date(now))
   const [day, setDay] = useState(today)
+  // 移动端：在时间表区域左右滑动切换星期（左滑下一天，右滑上一天，首尾循环）
+  const touch = useRef<{ x: number; y: number; t: number } | null>(null)
+  const onTouchStart = (e: TouchEvent) => {
+    const p = e.touches[0]
+    touch.current = e.touches.length === 1 ? { x: p.clientX, y: p.clientY, t: Date.now() } : null
+  }
+  const onTouchEnd = (e: TouchEvent) => {
+    const start = touch.current
+    touch.current = null
+    if (!start) return
+    const p = e.changedTouches[0]
+    const dx = p.clientX - start.x
+    const dy = p.clientY - start.y
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5 || Date.now() - start.t > 800) return
+    const i = WEEK_ORDER.indexOf(day)
+    setDay(WEEK_ORDER[(i + (dx < 0 ? 1 : 6)) % 7])
+  }
   const { data, isPending, error, refetch } = useSchedule()
   const [showAll, setShowAll] = useState(() => localStorage.getItem("schedule.showAll") === "1")
   const toggleShowAll = () =>
@@ -114,7 +131,9 @@ function ScheduleSection() {
       <div
         id="schedule-panel"
         role="tabpanel"
-        className="grid grid-cols-3 gap-x-2.5 gap-y-4 sm:grid-cols-4 sm:gap-x-3 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8"
+        onTouchStart={onTouchStart}
+        onTouchEnd={onTouchEnd}
+        className="touch-pan-y grid grid-cols-3 gap-x-2.5 gap-y-4 sm:grid-cols-4 sm:gap-x-3 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8"
       >
         {isPending && Array.from({ length: 7 }, (_, i) => <AnimeCardSkeleton key={i} />)}
         {!isPending && !error && items.map((i) => <AnimeCard key={i.key} item={i} now={now} />)}
@@ -125,7 +144,7 @@ function ScheduleSection() {
         </Card>
       )}
       {data && items.length === 0 && (
-        <Card>
+        <Card onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} className="touch-pan-y">
           <EmptyState icon={CalendarDays} title={`${WEEKDAYS[day]}暂无新番`} description="换一天看看吧" />
         </Card>
       )}

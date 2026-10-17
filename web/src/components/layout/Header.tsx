@@ -1,4 +1,4 @@
-import { NavLink, Link, useLocation, useNavigate } from "react-router-dom"
+import { Link, useLocation, useNavigate } from "react-router-dom"
 import { LogIn, LogOut, Shield, User as UserIcon } from "lucide-react"
 import { Logo } from "./Logo"
 import { ThemeToggle } from "./ThemeToggle"
@@ -15,12 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useLogout, useUser } from "@/lib/queries"
 import { RoleBadge } from "@/components/badges"
-import { cn } from "@/lib/utils"
 
-const nav = [
-  { to: "/", label: "首页", end: true },
-  { to: "/latest", label: "最新种子" },
-]
 
 export function Header() {
   // 搜索页自带大搜索框，顶栏不再重复显示（保留占位以免右侧按钮跳动）
@@ -29,24 +24,7 @@ export function Header() {
     <header className="sticky top-0 z-40 border-b bg-header pt-safe backdrop-blur-md supports-[backdrop-filter]:bg-header">
       <Container className="flex h-14 items-center gap-3 lg:gap-5">
         <Logo />
-        <nav aria-label="主导航" className="hidden shrink-0 items-center gap-0.5 md:flex lg:gap-1">
-          {nav.map((n) => (
-            <NavLink
-              key={n.to}
-              to={n.to}
-              end={n.end}
-              className={({ isActive }) =>
-                cn(
-                  "inline-flex h-9 shrink-0 items-center whitespace-nowrap rounded-md px-2.5 text-sm font-medium transition-colors lg:px-3",
-                  isActive ? "bg-primary-soft text-primary-text" : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                )
-              }
-            >
-              {n.label}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="ml-auto hidden min-w-0 flex-1 md:block md:max-w-xs lg:max-w-md xl:max-w-lg">
+        <div className="mx-auto hidden min-w-0 flex-1 md:block md:max-w-md lg:max-w-xl">
           {!onSearch && <TorrentSearchBox size="sm" />}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-0.5 md:ml-0">

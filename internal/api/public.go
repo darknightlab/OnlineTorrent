@@ -30,7 +30,6 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 	s.route(mux, "GET", "/api/v1/schedule", AccessConfigurable, "浏览", "新番时间表", []string{store.RoleGuest}, s.getSchedule)
 	s.route(mux, "GET", "/api/v1/anime/{key}", AccessConfigurable, "浏览", "番剧详情", []string{store.RoleGuest}, s.getAnime)
-	s.route(mux, "GET", "/api/v1/torrents/latest", AccessConfigurable, "浏览", "最新种子", []string{store.RoleGuest}, s.getLatest)
 	s.route(mux, "GET", "/api/v1/torrents/search", AccessConfigurable, "浏览", "搜索种子", []string{store.RoleGuest}, s.getSearch)
 
 	s.route(mux, "POST", "/api/v1/play", AccessConfigurable, "播放", "打开种子（策略判定 + 磁力）", []string{store.RoleGuest}, s.play)
@@ -332,19 +331,6 @@ func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) error {
 const maxCatalogPage = 50
 
 func catalogPage(r *http.Request) int { return min(httpx.Page(r), maxCatalogPage) }
-
-func (s *Server) getLatest(w http.ResponseWriter, r *http.Request) error {
-	if err := s.rateLimitN(r, "catalog", 20, 3*time.Second); err != nil {
-		return err
-	}
-	page := catalogPage(r)
-	items, pc, err := s.Cat.Latest(r.Context(), page)
-	if err != nil {
-		return httpx.E(502, "upstream", "bangumi.moe 暂时无法访问")
-	}
-	httpx.JSON(w, 200, map[string]any{"page": page, "page_count": pc, "items": s.withAccess(r, items)})
-	return nil
-}
 
 func (s *Server) getSearch(w http.ResponseWriter, r *http.Request) error {
 	if err := s.rateLimitN(r, "catalog", 20, 3*time.Second); err != nil {

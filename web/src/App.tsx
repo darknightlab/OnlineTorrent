@@ -9,7 +9,6 @@ import { PageLoading } from "@/components/states"
 import Home from "@/pages/Home"
 import AnimePage from "@/pages/Anime"
 import SearchPage from "@/pages/Search"
-import LatestPage from "@/pages/Latest"
 import { LoginPage, RegisterPage } from "@/pages/Auth"
 import MePage from "@/pages/Me"
 import NotFound from "@/pages/NotFound"
@@ -35,7 +34,6 @@ export default function App() {
           <Routes>
             <Route element={<Shell />}>
               <Route index element={<Home />} />
-              <Route path="latest" element={<LatestPage />} />
               <Route path="anime/:key" element={<AnimePage />} />
               <Route path="search" element={<SearchPage />} />
               <Route

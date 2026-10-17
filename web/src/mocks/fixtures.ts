@@ -310,7 +310,6 @@ export const permissionSpecs: Spec[] = [
   spec("POST", "/api/v1/me/redeem", "user", "账号", "使用兑换码", ["member"]),
   spec("GET", "/api/v1/schedule", "configurable", "浏览", "新番时间表", ["guest"]),
   spec("GET", "/api/v1/anime/{key}", "configurable", "浏览", "番剧详情", ["guest"]),
-  spec("GET", "/api/v1/torrents/latest", "configurable", "浏览", "最新种子", ["guest"]),
   spec("GET", "/api/v1/torrents/search", "configurable", "浏览", "搜索种子", ["guest"]),
   spec("POST", "/api/v1/play", "configurable", "播放", "打开种子（策略判定 + 磁力）", ["guest"]),
   spec("POST", "/api/v1/torrents/{ih}/seed", "configurable", "播放", "让服务器下载做种（消耗服务器资源）", ["member"]),

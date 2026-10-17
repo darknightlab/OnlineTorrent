@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom"
-import { Flame, Home, Search, User } from "lucide-react"
+import { Home, Search, User } from "lucide-react"
 import { useUser } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
@@ -7,7 +7,6 @@ export function MobileTabBar() {
   const { user } = useUser()
   const tabs = [
     { to: "/", label: "首页", icon: Home, end: true },
-    { to: "/latest", label: "最新", icon: Flame },
     { to: "/search", label: "搜索", icon: Search },
     { to: user ? "/me" : "/login", label: user ? "我的" : "登录", icon: User },
   ]
@@ -16,7 +15,7 @@ export function MobileTabBar() {
       aria-label="底部导航"
       className="fixed inset-x-0 bottom-0 z-40 border-t bg-header pb-safe backdrop-blur-md md:hidden"
     >
-      <div className="grid h-[3.75rem] grid-cols-4">
+      <div className="grid h-[3.75rem] grid-cols-3">
         {tabs.map((t) => (
           <NavLink
             key={t.label}

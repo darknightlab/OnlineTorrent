@@ -152,7 +152,6 @@ const routes: [string, string, Handler][] = [
       : []
     return { anime: a, torrents: [...(a.latest_torrent ? [a.latest_torrent] : []), ...related, ...eps] }
   }],
-  ["GET", "/torrents/latest", ({ query }) => (requirePerm("GET /api/v1/torrents/latest"), page(torrents, Number(query.get("page") || 1)))],
   ["GET", "/torrents/search", ({ query }) => {
     requirePerm("GET /api/v1/torrents/search")
     const kw = (query.get("q") || "").toLowerCase().split(/\s+/).filter(Boolean)

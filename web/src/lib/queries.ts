@@ -7,7 +7,6 @@ export const qk = {
   me: ["me"] as const,
   schedule: ["schedule"] as const,
   anime: (key: string) => ["anime", key] as const,
-  latest: (page: number) => ["torrents", "latest", page] as const,
   search: (q: string, page: number) => ["torrents", "search", q, page] as const,
 }
 
@@ -53,7 +52,6 @@ export function useUser() {
 export const PERM = {
   schedule: "GET /api/v1/schedule",
   anime: "GET /api/v1/anime/{key}",
-  latest: "GET /api/v1/torrents/latest",
   search: "GET /api/v1/torrents/search",
   play: "POST /api/v1/play",
   seed: "POST /api/v1/torrents/{ih}/seed",
@@ -99,15 +97,6 @@ export function useSchedule() {
 
 export function useAnime(key: string) {
   return useQuery({ queryKey: qk.anime(key), queryFn: ({ signal }) => api.anime(key, signal), enabled: !!key })
-}
-
-export function useLatest(page: number) {
-  return useQuery({
-    queryKey: qk.latest(page),
-    queryFn: ({ signal }) => api.latest(page, signal),
-    placeholderData: keepPreviousData,
-    staleTime: 60_000,
-  })
 }
 
 export function useSearch(q: string, page: number) {

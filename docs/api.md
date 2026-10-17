@@ -62,7 +62,7 @@
   "torrents": [Torrent, ...] }
 ```
 
-### `GET /torrents/latest?page=1` / `GET /torrents/search?q=xxx&page=1`
+### `GET /torrents/search?q=xxx&page=1`
 `page` 上限 50（超出按 50 处理）；`q` 最长 100 字；每 IP 突发 20 次、之后每 3 秒 1 次。
 ```json
 { "page": 1, "page_count": 30, "items": [Torrent, ...] }
