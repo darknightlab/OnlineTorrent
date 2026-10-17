@@ -33,7 +33,18 @@ type Server struct {
 	BaseCtx context.Context
 
 	limiter *limiter
+	bg      sync.WaitGroup // background goroutines started by handlers
+
+	postChecks sync.Map      // infohash -> struct{}: post-checks in flight
+	postSem    chan struct{} // caps concurrent post-checks
+
+	recheckMu sync.Mutex
+	checked   map[string]uint64 // infohash -> policy generation it was last checked at
 }
+
+// Wait blocks until background work started by handlers has finished (call after the
+// HTTP server has shut down and BaseCtx is cancelled).
+func (s *Server) Wait() { s.bg.Wait() }
 
 type ctxKey int
 
@@ -54,6 +65,8 @@ func uid(u *store.User) *int64 {
 // Handler builds the full HTTP handler.
 func (s *Server) Handler() http.Handler {
 	s.limiter = &limiter{m: map[string]*bucket{}}
+	s.postSem = make(chan struct{}, 4)
+	s.checked = map[string]uint64{}
 	mux := http.NewServeMux()
 	s.routes(mux)
 	mux.Handle("/meta/v1/", s.Meta.Handler(func(r *http.Request) (string, bool) {
@@ -72,16 +85,31 @@ func csrfOK(r *http.Request) bool {
 }
 
 func (s *Server) withUser(next http.Handler) http.Handler {
+	guarded := s.guard(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
 			if u, err := s.St.SessionUser(r.Context(), c.Value); err == nil {
 				r = r.WithContext(context.WithValue(r.Context(), userKey, u))
 			}
 		}
+		guarded.ServeHTTP(w, r)
+	})
+}
+
+// guard applies CSRF checks and security headers.
+func (s *Server) guard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// CSRF: every state-changing API call must carry the custom header (not settable cross-site without CORS).
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && (strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/meta/")) && !csrfOK(r) {
-			httpx.Fail(w, httpx.E(http.StatusForbidden, "csrf", "缺少 X-Requested-With 请求头"))
-			return
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && (strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/meta/")) {
+			if !csrfOK(r) {
+				httpx.Fail(w, httpx.E(http.StatusForbidden, "csrf", "缺少 X-Requested-With 请求头"))
+				return
+			}
+			// defence in depth: browsers tell us when a request comes from another site
+			if r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+				httpx.Fail(w, httpx.E(http.StatusForbidden, "csrf", "不允许跨站请求"))
+				return
+			}
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
@@ -162,11 +190,18 @@ func (s *Server) spa() http.Handler {
 	})
 }
 
-// ---- tiny per-IP rate limiter for auth endpoints ----
+// ---- tiny token-bucket rate limiter (per IP / per key) ----
 
 type bucket struct {
 	tokens float64
 	last   time.Time
+	burst  float64
+	every  time.Duration
+}
+
+func (b *bucket) refill(now time.Time) {
+	b.tokens = min(b.burst, b.tokens+now.Sub(b.last).Seconds()/b.every.Seconds())
+	b.last = now
 }
 
 type limiter struct {
@@ -174,24 +209,68 @@ type limiter struct {
 	m  map[string]*bucket
 }
 
+const limiterMax = 10000
+
+func (l *limiter) get(key string, burst float64, every time.Duration, now time.Time) *bucket {
+	b, ok := l.m[key]
+	if !ok {
+		if len(l.m) >= limiterMax {
+			l.evict(now)
+		}
+		b = &bucket{tokens: burst, last: now, burst: burst, every: every}
+		l.m[key] = b
+	}
+	b.refill(now)
+	return b
+}
+
+// evict drops buckets that have fully refilled (they carry no state); if that isn't
+// enough, an arbitrary half goes (map order is random). Caller holds l.mu.
+func (l *limiter) evict(now time.Time) {
+	for k, b := range l.m {
+		b.refill(now)
+		if b.tokens >= b.burst {
+			delete(l.m, k)
+		}
+	}
+	if len(l.m) >= limiterMax {
+		drop := len(l.m) / 2
+		for k := range l.m {
+			if drop == 0 {
+				break
+			}
+			delete(l.m, k)
+			drop--
+		}
+	}
+}
+
 // allow permits `burst` requests then one every `every`.
 func (l *limiter) allow(key string, burst float64, every time.Duration) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	now := time.Now()
-	b, ok := l.m[key]
-	if !ok {
-		if len(l.m) > 10000 {
-			l.m = map[string]*bucket{}
-		}
-		b = &bucket{tokens: burst, last: now}
-		l.m[key] = b
-	}
-	b.tokens = min(burst, b.tokens+now.Sub(b.last).Seconds()/every.Seconds())
-	b.last = now
+	b := l.get(key, burst, every, time.Now())
 	if b.tokens < 1 {
 		return false
 	}
 	b.tokens--
 	return true
+}
+
+// peek reports whether a token is available without consuming it.
+func (l *limiter) peek(key string, burst float64, every time.Duration) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.get(key, burst, every, time.Now()).tokens >= 1
+}
+
+// take consumes a token (if any), e.g. to count a failure.
+func (l *limiter) take(key string, burst float64, every time.Duration) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if b := l.get(key, burst, every, time.Now()); b.tokens >= 1 {
+		b.tokens--
+	} else {
+		b.tokens = 0
+	}
 }

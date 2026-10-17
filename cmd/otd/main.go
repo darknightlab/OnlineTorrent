@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -70,45 +71,77 @@ func serve(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// every background goroutine is tracked so the DBs are only closed after they exit
+	var wg sync.WaitGroup
 	pool := qb.NewPool(st, log)
 	if err := pool.Reload(ctx); err != nil {
 		return err
 	}
-	go pool.Run(ctx)
+	wg.Go(func() { pool.Run(ctx) })
 
 	cat := catalog.New(st, ms, log)
 	cat.Run(ctx)
 
-	go func() {
-		t := time.NewTicker(time.Hour)
-		defer t.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-t.C:
-				st.PruneSessions(ctx)
-			}
-		}
-	}()
+	wg.Go(func() { maintenance(ctx, st, log) })
 
 	if n, _ := st.UserCount(ctx); n == 0 {
 		log.Warn("no users yet; create an admin with: otd user -db <db> -username admin -password <pw> -role admin")
 	}
 
 	srv := &api.Server{St: st, Meta: ms, Cat: cat, Pool: pool, Policy: policy.New(st), Log: log, WebFS: web.FS(), BaseCtx: ctx}
-	hs := &http.Server{Addr: *addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second}
+	hs := &http.Server{Addr: *addr, Handler: srv.Handler(),
+		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
+	wg.Go(func() { srv.RunRecheck(ctx) })
+
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		_ = hs.Shutdown(sctx)
+		if err := hs.Shutdown(sctx); err != nil {
+			log.Warn("http shutdown", "err", err)
+		}
 	}()
 	log.Info("listening", "addr", *addr, "frontend", srv.WebFS != nil)
-	if err := hs.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
+	serveErr := hs.ListenAndServe()
+	if errors.Is(serveErr, http.ErrServerClosed) {
+		serveErr = nil
 	}
-	return nil
+	// stop everything (also when ListenAndServe failed) and wait before the deferred DB closes
+	stop()
+	<-shutdownDone
+	wg.Wait()
+	cat.Wait()
+	srv.Wait()
+	log.Info("shutdown complete")
+	return serveErr
+}
+
+// maintenance prunes expired sessions hourly and applies log retention daily.
+func maintenance(ctx context.Context, st *store.Store, log *slog.Logger) {
+	retention := func() {
+		if n, err := st.Retention(ctx); err != nil {
+			log.Warn("retention", "err", err)
+		} else if n > 0 {
+			log.Info("retention: pruned old rows", "rows", n)
+		}
+	}
+	retention()
+	hourly := time.NewTicker(time.Hour)
+	daily := time.NewTicker(24 * time.Hour)
+	defer hourly.Stop()
+	defer daily.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-hourly.C:
+			st.PruneSessions(ctx)
+		case <-daily.C:
+			retention()
+		}
+	}
 }
 
 func userCmd(args []string) error {

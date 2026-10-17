@@ -2,7 +2,10 @@ module github.com/darknightlab/onlinetorrent
 
 go 1.26.7
 
-require github.com/ncruces/go-sqlite3 v0.35.2
+require (
+	github.com/ncruces/go-sqlite3 v0.35.2
+	golang.org/x/sync v0.23.0
+)
 
 require (
 	github.com/ncruces/go-sqlite3-wasm/v3 v3.2.35303 // indirect

@@ -20,6 +20,14 @@ func TestParseEpisode(t *testing.T) {
 		{"[Team] Show NCOP1 [1080p].mkv", -1, "op"},
 		{"[Team] Show [2024][1080p].mkv", -1, "other"},
 		{"Show 03.mp4", 3, "episode"},
+		{"Mob Psycho 100 [BDRip].mkv", -1, "other"},
+		{"[Team] Show - 01 [NCOP ver][1080p].mkv", 1, "episode"},
+		{"[Team] Show - 2024 [1080p].mkv", -1, "other"},
+		{"[Team] Show - NCED2 [1080p].mkv", -1, "ed"},
+		{"[Team] Show [Menu01][1080p].mkv", -1, "extra"},
+		{"[Team] Show [SP02][1080p].mkv", 2, "sp"},
+		{"[Team] Special Agent Show [05][1080p].mkv", 5, "episode"},
+		{"86.mkv", -1, "other"},
 	}
 	for _, c := range cases {
 		p := ParseEpisode(c.in)
@@ -30,5 +38,14 @@ func TestParseEpisode(t *testing.T) {
 		if got != c.ep || p.Kind != c.kind {
 			t.Errorf("%q: got ep=%v kind=%s, want ep=%v kind=%s", c.in, got, p.Kind, c.ep, c.kind)
 		}
+	}
+}
+
+func TestParseTitleNoTrailing(t *testing.T) {
+	if p := ParseTitle("Show 03"); p.Kind != "other" {
+		t.Errorf("title trailing number must not parse: %+v", p)
+	}
+	if p := ParseTitle("[Sub] Show - 03 [1080p]"); p.Episode == nil || *p.Episode != 3 {
+		t.Errorf("title dash: %+v", p)
 	}
 }

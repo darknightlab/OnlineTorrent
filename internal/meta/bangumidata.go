@@ -111,17 +111,28 @@ func normTime(s string) string {
 
 // Airing computes broadcast info from a work at time now.
 type Airing struct {
-	Start    time.Time // first broadcast
-	Interval time.Duration
-	Last     time.Time // last aired episode time (zero if not yet)
-	Next     time.Time // next air time (zero if ended)
-	Aired    int       // estimated aired episodes
+	Start    time.Time     // first broadcast
+	Interval time.Duration // 0 = unknown / single broadcast
+	Last     time.Time     // last aired episode time (zero if not yet)
+	Next     time.Time     // next air time (zero if ended or unknown)
+	Aired    int           // estimated aired episodes
 }
 
-// ComputeAiring parses "R/2026-10-11T14:30:00.000Z/P7D" (or falls back to begin + 7d).
+// maxEpisodesNoEnd caps the estimate for series without an end date.
+const maxEpisodesNoEnd = 26
+
+// ComputeAiring parses "R/2026-10-11T14:30:00.000Z/P7D". Without a broadcast string tv/web
+// works fall back to begin + weekly; an unrecognised interval (or a movie) is treated as a
+// single broadcast: Aired 1 once started, no Next.
 func ComputeAiring(w *Work, now time.Time) (Airing, bool) {
 	var a Airing
-	start, interval := time.Time{}, 7*24*time.Hour
+	typ := strings.ToLower(w.Type)
+	series := typ == "tv" || typ == "web"
+	start := time.Time{}
+	interval := time.Duration(0)
+	if series {
+		interval = 7 * 24 * time.Hour
+	}
 	if parts := strings.Split(w.Broadcast, "/"); len(parts) == 3 && strings.HasPrefix(parts[0], "R") {
 		if t, err := time.Parse(time.RFC3339, parts[1]); err == nil {
 			start = t
@@ -131,9 +142,12 @@ func ComputeAiring(w *Work, now time.Time) (Airing, bool) {
 			interval = 24 * time.Hour
 		case "P7D", "P1W":
 			interval = 7 * 24 * time.Hour
-		case "P0D":
+		default: // P0D or anything we can't interpret
 			interval = 0
 		}
+	}
+	if typ == "movie" {
+		interval = 0
 	}
 	if start.IsZero() {
 		t, err := time.Parse(time.RFC3339, w.Begin)
@@ -166,6 +180,12 @@ func ComputeAiring(w *Work, now time.Time) (Airing, bool) {
 		// ended: clamp to end
 		a.Aired = int(end.Sub(start)/interval) + 1
 		a.Last = start.Add(time.Duration(a.Aired-1) * interval)
+		a.Next = time.Time{}
+	}
+	if end.IsZero() && series && a.Aired > maxEpisodesNoEnd {
+		// no end date: assume it ended after a 2-cour run rather than airing forever
+		a.Aired = maxEpisodesNoEnd
+		a.Last = start.Add(time.Duration(maxEpisodesNoEnd-1) * interval)
 		a.Next = time.Time{}
 	}
 	return a, true

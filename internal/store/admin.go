@@ -225,9 +225,17 @@ func (s *Store) GetVerdict(ctx context.Context, ih string) (*Verdict, error) {
 }
 
 func (s *Store) SetVerdict(ctx context.Context, by *int64, v Verdict) error {
-	_, err := s.W.ExecContext(ctx, `INSERT INTO verdicts(infohash,action,label,note,decided_by,decided_at) VALUES(?,?,?,?,?,?)
+	return setVerdict(ctx, s.W, by, v)
+}
+
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func setVerdict(ctx context.Context, db execer, by *int64, v Verdict) error {
+	_, err := db.ExecContext(ctx, `INSERT INTO verdicts(infohash,action,label,note,decided_by,decided_at) VALUES(?,?,?,?,?,?)
 		ON CONFLICT(infohash) DO UPDATE SET action=excluded.action,label=excluded.label,note=excluded.note,decided_by=excluded.decided_by,decided_at=excluded.decided_at`,
-		v.Infohash, v.Action, v.Label, v.Note, by, Now())
+		v.Infohash, v.Action, v.Label, Trunc(v.Note, MaxReasonBytes), by, Now())
 	return err
 }
 
@@ -248,7 +256,7 @@ type Review struct {
 // AddReview enqueues a pending review (deduplicated per infohash+source).
 func (s *Store) AddReview(ctx context.Context, ih, title, source, reason string, reporter *int64) error {
 	_, err := s.W.ExecContext(ctx, `INSERT INTO reviews(infohash,title,source,reason,reporter_id,created_at) VALUES(?,?,?,?,?,?)
-		ON CONFLICT DO NOTHING`, ih, title, source, reason, reporter, Now())
+		ON CONFLICT DO NOTHING`, ih, Trunc(title, MaxTitleBytes), source, Trunc(reason, MaxReasonBytes), reporter, Now())
 	return err
 }
 
@@ -283,48 +291,73 @@ func (s *Store) ListReviews(ctx context.Context, status string, page, size int) 
 }
 
 // ResolveReview closes a review; action "dismiss" leaves no verdict.
+// The verdict and the review status change are written in one transaction.
 func (s *Store) ResolveReview(ctx context.Context, by *int64, id int64, action, label, note string) (string, error) {
+	status := "resolved"
+	switch action {
+	case "dismiss":
+		status = "dismissed"
+	case "allow", "login", "vip", "block":
+	default:
+		return "", errors.New("无效动作")
+	}
+	tx, err := s.W.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
 	var ih string
-	if err := s.R.QueryRowContext(ctx, `SELECT infohash FROM reviews WHERE id = ?`, id).Scan(&ih); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT infohash FROM reviews WHERE id = ?`, id).Scan(&ih); err != nil {
 		return "", ErrNotFound
 	}
-	status := "resolved"
-	if action == "dismiss" {
-		status = "dismissed"
-	} else {
-		switch action {
-		case "allow", "login", "vip", "block":
-		default:
-			return "", errors.New("无效动作")
-		}
-		if err := s.SetVerdict(ctx, by, Verdict{Infohash: ih, Action: action, Label: label, Note: note}); err != nil {
+	if action != "dismiss" {
+		if err := setVerdict(ctx, tx, by, Verdict{Infohash: ih, Action: action, Label: label, Note: note}); err != nil {
 			return "", err
 		}
 	}
 	// resolve every pending review for the same torrent
-	_, err := s.W.ExecContext(ctx, `UPDATE reviews SET status=?, resolved_by=?, resolved_at=? WHERE infohash = ? AND status = 'pending'`, status, by, Now(), ih)
-	return ih, err
+	if _, err := tx.ExecContext(ctx, `UPDATE reviews SET status=?, resolved_by=?, resolved_at=? WHERE infohash = ? AND status = 'pending'`, status, by, Now(), ih); err != nil {
+		return "", err
+	}
+	return ih, tx.Commit()
 }
 
 // ---- torrents / plays ----
 
 type TorrentRecord struct {
-	Infohash string
-	Title    string
-	Size     int64
-	Files    []string
-	Team     string
-	Tags     []string
-	Source   string
-	SourceID string
+	Infohash  string
+	Title     string // trusted: qB metadata or catalogue
+	UserTitle string // the dn= a user supplied; never trusted for display/policy decisions
+	Size      int64
+	Files     []string
+	Team      string
+	Tags      []string
+	Source    string
+	SourceID  string
 }
 
 func (s *Store) UpsertTorrent(ctx context.Context, t TorrentRecord) error {
-	files, _ := json.Marshal(t.Files)
-	tags, _ := json.Marshal(t.Tags)
-	_, err := s.W.ExecContext(ctx, `INSERT INTO torrents(infohash,title,size_bytes,files_json,team,tags_json,source,source_id,first_seen,last_played) VALUES(?,?,?,?,?,?,?,?,?,?)
+	fl := t.Files
+	if len(fl) > MaxFilesStored {
+		fl = fl[:MaxFilesStored]
+	}
+	cut := make([]string, len(fl))
+	for i, f := range fl {
+		cut[i] = Trunc(f, MaxPathBytes)
+	}
+	tg := make([]string, 0, len(t.Tags))
+	for i, g := range t.Tags {
+		if i >= 50 {
+			break
+		}
+		tg = append(tg, Trunc(g, 100))
+	}
+	files, _ := json.Marshal(cut)
+	tags, _ := json.Marshal(tg)
+	_, err := s.W.ExecContext(ctx, `INSERT INTO torrents(infohash,title,user_title,size_bytes,files_json,team,tags_json,source,source_id,first_seen,last_played) VALUES(?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(infohash) DO UPDATE SET
 		  title = CASE WHEN excluded.title != '' THEN excluded.title ELSE title END,
+		  user_title = CASE WHEN excluded.user_title != '' THEN excluded.user_title ELSE user_title END,
 		  size_bytes = CASE WHEN excluded.size_bytes > 0 THEN excluded.size_bytes ELSE size_bytes END,
 		  files_json = CASE WHEN excluded.files_json != '[]' AND excluded.files_json != 'null' THEN excluded.files_json ELSE files_json END,
 		  team = CASE WHEN excluded.team != '' THEN excluded.team ELSE team END,
@@ -332,15 +365,15 @@ func (s *Store) UpsertTorrent(ctx context.Context, t TorrentRecord) error {
 		  source = CASE WHEN excluded.source != 'user' THEN excluded.source ELSE source END,
 		  source_id = CASE WHEN excluded.source_id != '' THEN excluded.source_id ELSE source_id END,
 		  last_played = excluded.last_played`,
-		t.Infohash, t.Title, t.Size, string(files), t.Team, string(tags), t.Source, t.SourceID, Now(), Now())
+		t.Infohash, Trunc(t.Title, MaxTitleBytes), Trunc(t.UserTitle, MaxTitleBytes), t.Size, string(files), Trunc(t.Team, 100), string(tags), t.Source, Trunc(t.SourceID, 64), Now(), Now())
 	return err
 }
 
 func (s *Store) GetTorrent(ctx context.Context, ih string) (*TorrentRecord, error) {
 	var t TorrentRecord
 	var files, tags string
-	err := s.R.QueryRowContext(ctx, `SELECT infohash,title,size_bytes,files_json,team,tags_json,source,source_id FROM torrents WHERE infohash = ?`, ih).
-		Scan(&t.Infohash, &t.Title, &t.Size, &files, &t.Team, &tags, &t.Source, &t.SourceID)
+	err := s.R.QueryRowContext(ctx, `SELECT infohash,title,user_title,size_bytes,files_json,team,tags_json,source,source_id FROM torrents WHERE infohash = ?`, ih).
+		Scan(&t.Infohash, &t.Title, &t.UserTitle, &t.Size, &files, &t.Team, &tags, &t.Source, &t.SourceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -366,7 +399,7 @@ type Play struct {
 
 func (s *Store) AddPlay(ctx context.Context, p Play, userID *int64) {
 	_, _ = s.W.ExecContext(ctx, `INSERT INTO plays(infohash,title,user_id,ip,action,seeded_by,created_at) VALUES(?,?,?,?,?,?,?)`,
-		p.Infohash, p.Title, userID, p.IP, p.Action, p.SeededBy, Now())
+		p.Infohash, Trunc(p.Title, MaxTitleBytes), userID, Trunc(p.IP, 64), p.Action, p.SeededBy, Now())
 }
 
 func (s *Store) ListPlays(ctx context.Context, page, size int) ([]Play, int, error) {
@@ -411,7 +444,7 @@ type AuditEntry struct {
 }
 
 func (s *Store) Audit(ctx context.Context, actor *int64, action, target, detail, ip string) {
-	_, _ = s.W.ExecContext(ctx, `INSERT INTO audit(actor_id,action,target,detail,ip,created_at) VALUES(?,?,?,?,?,?)`, actor, action, target, detail, ip, Now())
+	_, _ = s.W.ExecContext(ctx, `INSERT INTO audit(actor_id,action,target,detail,ip,created_at) VALUES(?,?,?,?,?,?)`, actor, action, Trunc(target, MaxTitleBytes), Trunc(detail, MaxReasonBytes), Trunc(ip, 64), Now())
 }
 
 func (s *Store) ListAudit(ctx context.Context, page, size int) ([]AuditEntry, int, error) {

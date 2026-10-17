@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/darknightlab/onlinetorrent/internal/catalog"
 	"github.com/darknightlab/onlinetorrent/internal/httpx"
@@ -29,7 +30,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v1/torrents/latest", s.h(s.getLatest))
 	mux.HandleFunc("GET /api/v1/torrents/search", s.h(s.getSearch))
 	mux.HandleFunc("POST /api/v1/play", s.h(s.play))
-	mux.HandleFunc("POST /api/v1/report", s.h(s.report))
+	mux.HandleFunc("POST /api/v1/report", s.authed(s.report))
 
 	s.adminRoutes(mux)
 }
@@ -102,12 +103,27 @@ func (s *Server) setSession(w http.ResponseWriter, r *http.Request, u *store.Use
 	return nil
 }
 
+var errRateLimited = httpx.E(http.StatusTooManyRequests, "rate_limited", "操作过于频繁，请稍后再试")
+
+// ipKey is the rate-limit key for the client (IPv6 grouped by /64).
+func ipKey(r *http.Request) string { return httpx.RateKey(httpx.ClientIP(r)) }
+
 func (s *Server) rateLimit(r *http.Request, name string) error {
-	if !s.limiter.allow(name+":"+httpx.ClientIP(r), 10, 30*time.Second) {
-		return httpx.E(http.StatusTooManyRequests, "rate_limited", "操作过于频繁，请稍后再试")
+	return s.rateLimitN(r, name, 10, 30*time.Second)
+}
+
+func (s *Server) rateLimitN(r *http.Request, name string, burst float64, every time.Duration) error {
+	if !s.limiter.allow(name+":"+ipKey(r), burst, every) {
+		return errRateLimited
 	}
 	return nil
 }
+
+// per-account login failures: 5 per 15 minutes
+const (
+	loginFailBurst = 5
+	loginFailEvery = 3 * time.Minute
+)
 
 func (s *Server) verifyTurnstile(ctx context.Context, token, ip string) error {
 	secret := s.St.Str(store.KeyTurnstileSecret)
@@ -146,7 +162,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) error {
 		InviteCode                string `json:"invite_code"`
 		TurnstileToken            string `json:"turnstile_token"`
 	}
-	if err := httpx.Decode(r, &in); err != nil {
+	if err := httpx.DecodeSmall(r, &in); err != nil {
 		return err
 	}
 	mode := s.St.Str(store.KeyRegistration)
@@ -186,12 +202,21 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var in struct{ Identifier, Password string }
-	if err := httpx.Decode(r, &in); err != nil {
+	if err := httpx.DecodeSmall(r, &in); err != nil {
 		return err
 	}
-	u, err := s.St.Authenticate(r.Context(), strings.TrimSpace(in.Identifier), in.Password)
+	ident := strings.TrimSpace(in.Identifier)
+	if ident == "" || len(ident) > 254 || len(in.Password) > 128 {
+		return httpx.E(401, "bad_credentials", store.ErrBadCredentials.Error())
+	}
+	acct := "loginfail:" + strings.ToLower(ident)
+	if !s.limiter.peek(acct, loginFailBurst, loginFailEvery) {
+		return httpx.E(http.StatusTooManyRequests, "rate_limited", "该账号登录失败次数过多，请 15 分钟后再试")
+	}
+	u, err := s.St.Authenticate(r.Context(), ident, in.Password)
 	if err != nil {
 		if errors.Is(err, store.ErrBadCredentials) || errors.Is(err, store.ErrUserDisabled) {
+			s.limiter.take(acct, loginFailBurst, loginFailEvery)
 			return httpx.E(401, "bad_credentials", err.Error())
 		}
 		return err
@@ -217,7 +242,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) error {
 		Old string `json:"old_password"`
 		New string `json:"new_password"`
 	}
-	if err := httpx.Decode(r, &in); err != nil {
+	if err := httpx.DecodeSmall(r, &in); err != nil {
 		return err
 	}
 	keep := ""
@@ -236,12 +261,12 @@ func (s *Server) redeem(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var in struct{ Code string }
-	if err := httpx.Decode(r, &in); err != nil {
+	if err := httpx.DecodeSmall(r, &in); err != nil {
 		return err
 	}
 	u, err := s.St.Redeem(r.Context(), userOf(r).ID, in.Code)
 	if err != nil {
-		if errors.Is(err, store.ErrCodeInvalid) {
+		if errors.Is(err, store.ErrCodeInvalid) || errors.Is(err, store.ErrPermanentVIP) {
 			return httpx.Bad(err)
 		}
 		return err
@@ -294,8 +319,16 @@ func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// maxCatalogPage caps upstream paging (deep pages are rarely useful and uncached).
+const maxCatalogPage = 50
+
+func catalogPage(r *http.Request) int { return min(httpx.Page(r), maxCatalogPage) }
+
 func (s *Server) getLatest(w http.ResponseWriter, r *http.Request) error {
-	page := httpx.Page(r)
+	if err := s.rateLimitN(r, "catalog", 20, 3*time.Second); err != nil {
+		return err
+	}
+	page := catalogPage(r)
 	items, pc, err := s.Cat.Latest(r.Context(), page)
 	if err != nil {
 		return httpx.E(502, "upstream", "bangumi.moe 暂时无法访问")
@@ -305,11 +338,17 @@ func (s *Server) getLatest(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) getSearch(w http.ResponseWriter, r *http.Request) error {
+	if err := s.rateLimitN(r, "catalog", 20, 3*time.Second); err != nil {
+		return err
+	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 	if q == "" {
 		return httpx.E(400, "bad_request", "请输入搜索关键词")
 	}
-	page := httpx.Page(r)
+	if utf8.RuneCountInString(q) > 100 {
+		return httpx.E(400, "bad_request", "搜索关键词过长（最多 100 字）")
+	}
+	page := catalogPage(r)
 	items, pc, err := s.Cat.Search(r.Context(), q, page)
 	if err != nil {
 		return httpx.E(502, "upstream", "bangumi.moe 暂时无法访问")

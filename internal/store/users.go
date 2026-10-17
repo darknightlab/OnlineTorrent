@@ -82,6 +82,7 @@ var (
 	ErrTaken          = errors.New("用户名或邮箱已被使用")
 	ErrInviteInvalid  = errors.New("邀请码无效或已用完")
 	ErrCodeInvalid    = errors.New("兑换码无效或已被使用")
+	ErrPermanentVIP   = errors.New("你已是永久大会员")
 )
 
 var usernameRe = regexp.MustCompile(`^[\p{L}\p{N}_\-.]{2,32}$`)
@@ -102,40 +103,67 @@ func ValidatePassword(p string) error {
 	return nil
 }
 
-const pbkdf2Iter = 210000
+// pbkdf2Iter is the OWASP 2023 recommendation for PBKDF2-HMAC-SHA256. Hashes with fewer
+// iterations are upgraded transparently on the next successful login.
+const pbkdf2Iter = 600000
 
+// kdfSem caps concurrent password hashing (CPU-heavy) so a burst of logins can't starve the box.
+var kdfSem = make(chan struct{}, 2)
+
+func kdf(ctx context.Context, pw string, salt []byte, iter, n int) ([]byte, error) {
+	select {
+	case kdfSem <- struct{}{}:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	defer func() { <-kdfSem }()
+	return pbkdf2.Key(sha256.New, pw, salt, iter, n)
+}
+
+// HashPassword derives a storable hash.
 func HashPassword(pw string) (string, error) {
+	return hashPassword(context.Background(), pw)
+}
+
+func hashPassword(ctx context.Context, pw string) (string, error) {
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
 	}
-	dk, err := pbkdf2.Key(sha256.New, pw, salt, pbkdf2Iter, 32)
+	dk, err := kdf(ctx, pw, salt, pbkdf2Iter, 32)
 	if err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("pbkdf2$%d$%s$%s", pbkdf2Iter, base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(dk)), nil
 }
 
-func verifyPassword(stored, pw string) bool {
+// verifyPassword checks pw against a stored hash; outdated reports a lower iteration count.
+func verifyPassword(ctx context.Context, stored, pw string) (ok, outdated bool) {
 	parts := strings.Split(stored, "$")
 	if len(parts) != 4 || parts[0] != "pbkdf2" {
-		return false
+		return false, false
 	}
 	iter, err := strconv.Atoi(parts[1])
-	if err != nil {
-		return false
+	if err != nil || iter < 1 || iter > 10_000_000 {
+		return false, false
 	}
 	salt, err1 := base64.RawStdEncoding.DecodeString(parts[2])
 	want, err2 := base64.RawStdEncoding.DecodeString(parts[3])
 	if err1 != nil || err2 != nil {
-		return false
+		return false, false
 	}
-	dk, err := pbkdf2.Key(sha256.New, pw, salt, iter, len(want))
+	dk, err := kdf(ctx, pw, salt, iter, len(want))
 	if err != nil {
-		return false
+		return false, false
 	}
-	return subtle.ConstantTimeCompare(dk, want) == 1
+	return subtle.ConstantTimeCompare(dk, want) == 1, iter < pbkdf2Iter
 }
+
+// dummyHash is verified for unknown users so timing doesn't reveal account existence.
+var dummyHash = fmt.Sprintf("pbkdf2$%d$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", pbkdf2Iter)
+
+// NormalizeCode upper-cases and trims an invite/redeem code.
+func NormalizeCode(c string) string { return strings.ToUpper(strings.TrimSpace(c)) }
 
 // RandomToken returns a URL-safe random token.
 func RandomToken(n int) string {
@@ -209,10 +237,21 @@ func (s *Store) CreateUser(ctx context.Context, p CreateUserParams) (*User, erro
 		return nil, err
 	}
 	email := strings.TrimSpace(strings.ToLower(p.Email))
-	if email != "" && !strings.Contains(email, "@") {
+	if email != "" && (!strings.Contains(email, "@") || len(email) > 254) {
 		return nil, errors.New("邮箱格式不正确")
 	}
-	hash, err := HashPassword(p.Password)
+	code := NormalizeCode(p.InviteCode)
+	if code == "" && p.RequireInvite {
+		return nil, ErrInviteInvalid
+	}
+	// cheap pre-check before the expensive hash; re-checked atomically below
+	if code != "" {
+		var ok int
+		if err := s.R.QueryRowContext(ctx, `SELECT 1 FROM invites WHERE code = ? AND disabled = 0 AND (max_uses = 0 OR uses < max_uses) AND (expires_at IS NULL OR expires_at >= ?)`, code, Now()).Scan(&ok); err != nil {
+			return nil, ErrInviteInvalid
+		}
+	}
+	hash, err := hashPassword(ctx, p.Password)
 	if err != nil {
 		return nil, err
 	}
@@ -228,10 +267,6 @@ func (s *Store) CreateUser(ctx context.Context, p CreateUserParams) (*User, erro
 
 	var invitedBy, inviteID sql.NullInt64
 	var vipUntil sql.NullString
-	code := strings.TrimSpace(p.InviteCode)
-	if code == "" && p.RequireInvite {
-		return nil, ErrInviteInvalid
-	}
 	if code != "" {
 		var id int64
 		var createdBy sql.NullInt64
@@ -246,8 +281,12 @@ func (s *Store) CreateUser(ctx context.Context, p CreateUserParams) (*User, erro
 		if (maxUses > 0 && uses >= maxUses) || (exp.Valid && exp.String < Now()) {
 			return nil, ErrInviteInvalid
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE invites SET uses = uses + 1 WHERE id = ?`, id); err != nil {
+		res, err := tx.ExecContext(ctx, `UPDATE invites SET uses = uses + 1 WHERE id = ? AND disabled = 0 AND (max_uses = 0 OR uses < max_uses)`, id)
+		if err != nil {
 			return nil, err
+		}
+		if n, _ := res.RowsAffected(); n != 1 {
+			return nil, ErrInviteInvalid
 		}
 		invitedBy, inviteID = createdBy, sql.NullInt64{Int64: id, Valid: true}
 		if invRole == RoleVIP {
@@ -285,14 +324,20 @@ func (s *Store) Authenticate(ctx context.Context, ident, password string) (*User
 	err := s.R.QueryRowContext(ctx, `SELECT id, password_hash, disabled FROM users WHERE username = ? OR email = ?`, ident, strings.ToLower(ident)).Scan(&id, &hash, &dis)
 	if err != nil {
 		// burn similar time to avoid user enumeration by timing
-		verifyPassword("pbkdf2$210000$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", password)
+		verifyPassword(ctx, dummyHash, password)
 		return nil, ErrBadCredentials
 	}
-	if !verifyPassword(hash, password) {
+	ok, outdated := verifyPassword(ctx, hash, password)
+	if !ok {
 		return nil, ErrBadCredentials
 	}
 	if dis != 0 {
 		return nil, ErrUserDisabled
+	}
+	if outdated {
+		if h, err := hashPassword(ctx, password); err == nil {
+			_, _ = s.W.ExecContext(ctx, `UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?`, h, id, hash)
+		}
 	}
 	_, _ = s.W.ExecContext(ctx, `UPDATE users SET last_login_at = ? WHERE id = ?`, Now(), id)
 	return s.getUserW(ctx, id)
@@ -307,7 +352,7 @@ func (s *Store) ChangePassword(ctx context.Context, id int64, oldPw, newPw strin
 	if err := s.R.QueryRowContext(ctx, `SELECT password_hash FROM users WHERE id = ?`, id).Scan(&hash); err != nil {
 		return err
 	}
-	if !verifyPassword(hash, oldPw) {
+	if ok, _ := verifyPassword(ctx, hash, oldPw); !ok {
 		return errors.New("原密码错误")
 	}
 	return s.SetPassword(ctx, id, newPw, keepSession)
@@ -315,7 +360,7 @@ func (s *Store) ChangePassword(ctx context.Context, id int64, oldPw, newPw strin
 
 // SetPassword sets a password and revokes all sessions except keepSession.
 func (s *Store) SetPassword(ctx context.Context, id int64, pw, keepSession string) error {
-	h, err := HashPassword(pw)
+	h, err := hashPassword(ctx, pw)
 	if err != nil {
 		return err
 	}
@@ -341,6 +386,12 @@ func (s *Store) AdminUpdateUser(ctx context.Context, id int64, p UpdateUser) (*U
 		}
 		if _, err := s.W.ExecContext(ctx, `UPDATE users SET role = ? WHERE id = ?`, *p.Role, id); err != nil {
 			return nil, err
+		}
+		// role vip without an expiry means permanent vip
+		if *p.Role == RoleVIP && p.VIPUntil == nil {
+			if _, err := s.W.ExecContext(ctx, `UPDATE users SET vip_until = NULL WHERE id = ?`, id); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if p.VIPUntil != nil {
@@ -453,7 +504,7 @@ type Invite struct {
 }
 
 type NewInvite struct {
-	MaxUses       int    `json:"max_uses"`
+	MaxUses       *int   `json:"max_uses"` // nil = 1, 0 = unlimited
 	Role          string `json:"role"`
 	VIPDays       int    `json:"vip_days"`
 	ExpiresInDays int    `json:"expires_in_days"`
@@ -467,16 +518,23 @@ func (s *Store) CreateInvite(ctx context.Context, by int64, p NewInvite) (*Invit
 	if p.Role != RoleMember && p.Role != RoleVIP {
 		return nil, errors.New("邀请角色只能是 member 或 vip")
 	}
-	if p.MaxUses < 0 {
-		p.MaxUses = 0
+	maxUses := 1
+	if p.MaxUses != nil {
+		maxUses = *p.MaxUses
+	}
+	if maxUses < 0 {
+		return nil, errors.New("max_uses 需 ≥ 0（0 表示不限）")
+	}
+	if p.VIPDays < 0 {
+		return nil, errors.New("vip_days 需 ≥ 0")
 	}
 	var exp any
 	if p.ExpiresInDays > 0 {
 		exp = time.Now().UTC().AddDate(0, 0, p.ExpiresInDays).Format(time.RFC3339)
 	}
-	code := RandomCode(10)
+	code := NormalizeCode(RandomCode(10))
 	res, err := s.W.ExecContext(ctx, `INSERT INTO invites(code,created_by,max_uses,role,vip_days,expires_at,note,created_at) VALUES(?,?,?,?,?,?,?,?)`,
-		code, by, p.MaxUses, p.Role, p.VIPDays, exp, p.Note, Now())
+		code, by, maxUses, p.Role, p.VIPDays, exp, Trunc(p.Note, MaxReasonBytes), Now())
 	if err != nil {
 		return nil, err
 	}
@@ -543,7 +601,7 @@ func (s *Store) CreateRedeemCodes(ctx context.Context, by int64, count, days int
 	}
 	var ids []any
 	for range count {
-		res, err := s.W.ExecContext(ctx, `INSERT INTO redeem_codes(code,vip_days,note,created_by,created_at) VALUES(?,?,?,?,?)`, RandomCode(10), days, note, by, Now())
+		res, err := s.W.ExecContext(ctx, `INSERT INTO redeem_codes(code,vip_days,note,created_by,created_at) VALUES(?,?,?,?,?)`, NormalizeCode(RandomCode(10)), days, Trunc(note, MaxReasonBytes), by, Now())
 		if err != nil {
 			return nil, err
 		}
@@ -583,6 +641,7 @@ func (s *Store) listRedeem(ctx context.Context, db *sql.DB, where string, args .
 }
 
 // Redeem applies a code: extends vip_until from max(now, current vip_until).
+// Permanent VIPs (role vip, no vip_until) and admins are rejected so the code isn't wasted.
 func (s *Store) Redeem(ctx context.Context, userID int64, code string) (*User, error) {
 	tx, err := s.W.BeginTx(ctx, nil)
 	if err != nil {
@@ -591,12 +650,16 @@ func (s *Store) Redeem(ctx context.Context, userID int64, code string) (*User, e
 	defer tx.Rollback()
 	var id int64
 	var days int
-	if err := tx.QueryRowContext(ctx, `SELECT id, vip_days FROM redeem_codes WHERE code = ? AND used_by IS NULL`, strings.ToUpper(strings.TrimSpace(code))).Scan(&id, &days); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT id, vip_days FROM redeem_codes WHERE code = ? AND used_by IS NULL`, NormalizeCode(code)).Scan(&id, &days); err != nil {
 		return nil, ErrCodeInvalid
 	}
 	var cur sql.NullString
-	if err := tx.QueryRowContext(ctx, `SELECT vip_until FROM users WHERE id = ?`, userID).Scan(&cur); err != nil {
+	var role string
+	if err := tx.QueryRowContext(ctx, `SELECT vip_until, role FROM users WHERE id = ?`, userID).Scan(&cur, &role); err != nil {
 		return nil, err
+	}
+	if (role == RoleVIP && !cur.Valid) || role == RoleAdmin {
+		return nil, ErrPermanentVIP
 	}
 	base := time.Now().UTC()
 	if cur.Valid {
@@ -608,8 +671,12 @@ func (s *Store) Redeem(ctx context.Context, userID int64, code string) (*User, e
 	if _, err := tx.ExecContext(ctx, `UPDATE users SET vip_until = ? WHERE id = ?`, until, userID); err != nil {
 		return nil, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE redeem_codes SET used_by = ?, used_at = ? WHERE id = ?`, userID, Now(), id); err != nil {
+	res, err := tx.ExecContext(ctx, `UPDATE redeem_codes SET used_by = ?, used_at = ? WHERE id = ? AND used_by IS NULL`, userID, Now(), id)
+	if err != nil {
 		return nil, err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return nil, ErrCodeInvalid
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err

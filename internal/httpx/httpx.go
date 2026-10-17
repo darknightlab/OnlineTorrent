@@ -24,10 +24,12 @@ func (e *Error) Error() string { return e.Message }
 // E builds an *Error.
 func E(status int, code, msg string) *Error { return &Error{Status: status, Code: code, Message: msg} }
 
-// JSON writes v as JSON.
+// JSON writes v as JSON. Cache-Control defaults to no-store unless the handler set one.
 func JSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
+	if w.Header().Get("Cache-Control") == "" {
+		w.Header().Set("Cache-Control", "no-store")
+	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }
@@ -45,10 +47,25 @@ func Fail(w http.ResponseWriter, err error) {
 // Bad is a 400 with the error text shown to the user.
 func Bad(err error) *Error { return E(http.StatusBadRequest, "bad_request", err.Error()) }
 
-// Decode reads a JSON body (max 1MB).
-func Decode(r *http.Request, v any) error {
-	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
-	if err := dec.Decode(v); err != nil {
+// Decode reads a JSON body (max 1MB; admin endpoints).
+func Decode(r *http.Request, v any) error { return DecodeLimit(r, v, 1<<20) }
+
+// SmallBody is the body limit for public endpoints.
+const SmallBody = 16 << 10
+
+// DecodeSmall reads a JSON body of at most 16KB (public endpoints).
+func DecodeSmall(r *http.Request, v any) error { return DecodeLimit(r, v, SmallBody) }
+
+// DecodeLimit reads a JSON body of at most n bytes; larger bodies are rejected with 413.
+func DecodeLimit(r *http.Request, v any, n int64) error {
+	b, err := io.ReadAll(io.LimitReader(r.Body, n+1))
+	if err != nil {
+		return E(http.StatusBadRequest, "bad_json", "请求格式错误")
+	}
+	if int64(len(b)) > n {
+		return E(http.StatusRequestEntityTooLarge, "too_large", "请求内容过大")
+	}
+	if err := json.Unmarshal(b, v); err != nil {
 		return E(http.StatusBadRequest, "bad_json", "请求格式错误")
 	}
 	return nil
@@ -69,6 +86,19 @@ func PageCount(total, size int) int {
 		return 1
 	}
 	return (total + size - 1) / size
+}
+
+// RateKey is the rate-limit identity of an IP: IPv4 as is, IPv6 by its /64 (one
+// subscriber usually owns a whole /64, so per-address limits are trivially bypassed).
+func RateKey(ip string) string {
+	p := net.ParseIP(ip)
+	if p == nil {
+		return ip
+	}
+	if v4 := p.To4(); v4 != nil {
+		return v4.String()
+	}
+	return p.Mask(net.CIDRMask(64, 128)).String() + "/64"
 }
 
 // ClientIP returns the client address, trusting Cloudflare/proxy headers when the

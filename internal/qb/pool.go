@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -22,7 +21,8 @@ type Status struct {
 	Torrents    int    `json:"torrents"`
 }
 
-// Server is a configured qB instance plus status.
+// Server is a configured qB instance plus status. Cfg is immutable after creation
+// (Reload builds new Server values), so it can be read without locking.
 type Server struct {
 	Cfg    store.QBServer
 	Client *Client
@@ -69,8 +69,9 @@ func (p *Pool) Reload(ctx context.Context) error {
 	var next []*Server
 	for _, c := range cfgs {
 		if o, ok := old[c.ID]; ok && o.Cfg.URL == c.URL && o.Cfg.Username == c.Username && o.Cfg.Password == c.Password && o.Cfg.APIKey == c.APIKey {
-			o.Cfg = c
-			next = append(next, o)
+			// same credentials: keep the logged-in client and last status, but never mutate
+			// the live Server (other goroutines read Cfg without locks)
+			next = append(next, &Server{Cfg: c, Client: o.Client, status: o.Status()})
 			continue
 		}
 		next = append(next, &Server{Cfg: c, Client: NewClient(c.URL, c.Username, c.Password, c.APIKey)})
@@ -145,7 +146,10 @@ type PushResult struct {
 
 // Push adds a torrent to every online, enabled server and, if configured per server,
 // adds the wss trackers afterwards (qB ≥ 5.3.0rc1 strips ws/wss from magnets, PR #24512).
+// It is detached from ctx cancellation (a client disconnect must not abort between Add
+// and AddTrackers); timeout bounds each server.
 func (p *Pool) Push(ctx context.Context, ih, name string, trackers []string, timeout time.Duration) PushResult {
+	ctx = context.WithoutCancel(ctx)
 	res := PushResult{Errors: map[string]string{}}
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -227,8 +231,14 @@ func (p *Pool) Metadata(ctx context.Context, ih string) (string, []File, bool) {
 	return "", nil, false
 }
 
-// Cleanup deletes finished torrents (seeding limit reached → stopped) in our category.
+// staleAfter: torrents in our category still incomplete (or without metadata) after this
+// long are dropped — nobody is watching them any more and they only hold disk/slots.
+const staleAfter = 48 * time.Hour
+
+// Cleanup deletes, in our category, finished torrents (seeding limit reached → stopped)
+// and stale ones (added > 48h ago with progress < 1 or no metadata).
 func (p *Pool) Cleanup(ctx context.Context) {
+	stale := time.Now().Add(-staleAfter).Unix()
 	for _, s := range p.Servers() {
 		if !s.Cfg.Enabled || !s.Status().Online {
 			continue
@@ -239,7 +249,12 @@ func (p *Pool) Cleanup(ctx context.Context) {
 		}
 		var del []string
 		for _, t := range ts {
-			if t.Progress >= 1 && (t.State == "stoppedUP" || t.State == "pausedUP") && t.Category == s.Cfg.Category {
+			if t.Category != s.Cfg.Category {
+				continue
+			}
+			finished := t.Progress >= 1 && (t.State == "stoppedUP" || t.State == "pausedUP")
+			old := t.AddedOn > 0 && t.AddedOn < stale && (t.Progress < 1 || !t.HasMetadata)
+			if finished || old {
 				del = append(del, t.Hash)
 			}
 		}
@@ -287,5 +302,3 @@ func (p *Pool) OnlineCount() (int, int) {
 	}
 	return on, total
 }
-
-var _ = strings.TrimSpace

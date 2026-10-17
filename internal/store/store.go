@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"time"
+	"unicode/utf8"
 
 	"github.com/ncruces/go-sqlite3/driver"
 )
@@ -21,6 +22,34 @@ var ErrNotFound = errors.New("not found")
 type Store struct {
 	W *sql.DB // writer (1 conn)
 	R *sql.DB // readers
+
+	settings settingsCache
+}
+
+// Length caps for user-influenced text written to the DB.
+const (
+	MaxTitleBytes  = 300
+	MaxReasonBytes = 500
+	MaxPathBytes   = 300
+	MaxFilesStored = 1000
+)
+
+// Trunc cuts s to at most n bytes without splitting a UTF-8 sequence.
+func Trunc(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	s = s[:n]
+	// drop a trailing partial rune
+	for i := len(s) - 1; i >= 0 && i >= len(s)-utf8.UTFMax; i-- {
+		if utf8.RuneStart(s[i]) {
+			if !utf8.FullRuneInString(s[i:]) {
+				s = s[:i]
+			}
+			break
+		}
+	}
+	return s
 }
 
 func dsn(path string, pragmas ...string) string {
@@ -100,6 +129,31 @@ func Open(path string) (*Store, error) {
 func (s *Store) Close() error {
 	s.R.Close()
 	return s.W.Close()
+}
+
+// Retention deletes old logs: plays and audit older than 90 days, closed reviews older
+// than 180 days. Returns the number of deleted rows.
+func (s *Store) Retention(ctx context.Context) (int64, error) {
+	now := time.Now().UTC()
+	d90 := now.AddDate(0, 0, -90).Format(time.RFC3339)
+	d180 := now.AddDate(0, 0, -180).Format(time.RFC3339)
+	var total int64
+	for _, q := range []struct {
+		sql string
+		arg string
+	}{
+		{`DELETE FROM plays WHERE created_at < ?`, d90},
+		{`DELETE FROM audit WHERE created_at < ?`, d90},
+		{`DELETE FROM reviews WHERE status != 'pending' AND resolved_at < ?`, d180},
+	} {
+		res, err := s.W.ExecContext(ctx, q.sql, q.arg)
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += n
+	}
+	return total, nil
 }
 
 // Now returns the canonical timestamp format stored in the DB.

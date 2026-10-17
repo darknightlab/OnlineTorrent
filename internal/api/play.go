@@ -3,14 +3,15 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/darknightlab/onlinetorrent/internal/catalog"
 	"github.com/darknightlab/onlinetorrent/internal/httpx"
 	"github.com/darknightlab/onlinetorrent/internal/magnet"
-	"github.com/darknightlab/onlinetorrent/internal/meta"
 	"github.com/darknightlab/onlinetorrent/internal/policy"
 	"github.com/darknightlab/onlinetorrent/internal/store"
 )
@@ -51,21 +52,30 @@ func denyError(d policy.Decision, u *store.User) error {
 	}
 }
 
+var reTorrentID = regexp.MustCompile(`^[A-Za-z0-9]{1,64}$`)
+
+func (s *Server) maxPushBytes() int64 {
+	return int64(s.St.Num(store.KeyMaxPushSize)) << 20
+}
+
 func (s *Server) play(w http.ResponseWriter, r *http.Request) error {
+	if !s.limiter.allow("play:"+ipKey(r), 30, 6*time.Second) {
+		return errRateLimited
+	}
 	var in playReq
-	if err := httpx.Decode(r, &in); err != nil {
+	if err := httpx.DecodeSmall(r, &in); err != nil {
 		return err
 	}
 	ctx := r.Context()
 	u := userOf(r)
-	if !s.limiter.allow("play:"+httpx.ClientIP(r), 30, 6*time.Second) {
-		return httpx.E(429, "rate_limited", "操作过于频繁，请稍后再试")
-	}
 
 	var t *catalog.Torrent
-	var extraTrackers []string
+	userTitle := "" // dn= from a user magnet: untrusted, never stored as the title
 	switch {
 	case in.TorrentID != "":
+		if !reTorrentID.MatchString(in.TorrentID) {
+			return httpx.E(400, "bad_request", "torrent_id 无效")
+		}
 		var err error
 		t, err = s.Cat.Detail(ctx, in.TorrentID)
 		if err != nil {
@@ -80,17 +90,17 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request) error {
 		if err != nil {
 			return httpx.Bad(err)
 		}
-		for _, tr := range m.Trackers {
-			if !magnet.IsWebSocket(tr) {
-				extraTrackers = append(extraTrackers, tr)
-			}
-		}
-		t = &catalog.Torrent{Infohash: m.Infohash, Title: m.Name, Source: "user"}
+		// user-supplied trackers (tr=) are dropped entirely: we only announce to our own wss
+		// trackers, so qB can't be pointed at arbitrary hosts.
+		userTitle = store.Trunc(m.Name, store.MaxTitleBytes)
+		// until qB has the real metadata the dn is all we know; the subject stays untrusted
+		// so the user-magnet floor applies (see policy package doc)
+		t = &catalog.Torrent{Infohash: m.Infohash, Title: userTitle, Source: "user"}
 		if rec, err := s.St.GetTorrent(ctx, m.Infohash); err == nil && rec != nil {
 			if rec.Title != "" {
 				t.Title = rec.Title
 			}
-			t.FileList, t.Source, t.ID = rec.Files, rec.Source, rec.SourceID
+			t.FileList, t.Source, t.ID, t.SizeBytes = rec.Files, rec.Source, rec.SourceID, rec.Size
 			if rec.Team != "" {
 				t.Team = &catalog.Ref{Name: rec.Team}
 			}
@@ -110,6 +120,9 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request) error {
 		s.St.AddPlay(ctx, store.Play{Infohash: t.Infohash, Title: t.Title, IP: httpx.ClientIP(r), Action: d.Action}, uid(u))
 		return denyError(d, u)
 	}
+	if limit := s.maxPushBytes(); limit > 0 && t.SizeBytes > limit {
+		return httpx.E(http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("该种子过大（超过 %d MB），暂不支持在线播放", limit>>20))
+	}
 
 	var tags []string
 	for _, g := range t.Tags {
@@ -119,21 +132,27 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request) error {
 	if t.Team != nil {
 		team = t.Team.Name
 	}
-	_ = s.St.UpsertTorrent(ctx, store.TorrentRecord{Infohash: t.Infohash, Title: t.Title, Size: t.SizeBytes, Files: t.FileList, Team: team, Tags: tags, Source: t.Source, SourceID: t.ID})
+	rec := store.TorrentRecord{Infohash: t.Infohash, Size: t.SizeBytes, Files: t.FileList, Team: team, Tags: tags, Source: t.Source, SourceID: t.ID}
+	if t.Source == "bangumi.moe" {
+		rec.Title = t.Title
+	} else {
+		rec.UserTitle = userTitle
+	}
+	_ = s.St.UpsertTorrent(ctx, rec)
 
 	trackers := s.St.List(store.KeyTrackers)
 	timeout := time.Duration(s.St.Num(store.KeyQBAddTimeoutSec)) * time.Second
 	if timeout <= 0 {
 		timeout = 8 * time.Second
 	}
-	push := s.Pool.Push(ctx, t.Infohash, t.Title, append(append([]string{}, trackers...), extraTrackers...), timeout)
+	push := s.Pool.Push(ctx, t.Infohash, t.Title, trackers, timeout)
 	s.St.AddPlay(ctx, store.Play{Infohash: t.Infohash, Title: t.Title, IP: httpx.ClientIP(r), Action: policy.Allow, SeededBy: strings.Join(push.SeededBy, ",")}, uid(u))
 	if len(push.Errors) > 0 {
 		s.Log.Warn("push errors", "ih", t.Infohash, "errors", push.Errors)
 	}
 	// user-submitted torrents: re-check once the file list is known
 	if t.Source != "bangumi.moe" && len(t.FileList) == 0 && len(push.SeededBy) > 0 {
-		go s.postCheck(t.Infohash, uid(u))
+		s.startPostCheck(t.Infohash, uid(u))
 	}
 
 	resp := playResp{
@@ -156,57 +175,42 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// postCheck waits for metadata from qB, records the files, re-evaluates policy and
-// removes the torrent if it turns out to be blocked.
+// startPostCheck runs postCheck in the background, at most once per infohash at a time and
+// at most 4 concurrently (beyond that the periodic re-check picks the torrent up).
+func (s *Server) startPostCheck(ih string, by *int64) {
+	if _, busy := s.postChecks.LoadOrStore(ih, struct{}{}); busy {
+		return
+	}
+	select {
+	case s.postSem <- struct{}{}:
+	default:
+		s.postChecks.Delete(ih)
+		return
+	}
+	s.bg.Go(func() {
+		defer func() {
+			<-s.postSem
+			s.postChecks.Delete(ih)
+		}()
+		s.postCheck(ih, by)
+	})
+}
+
+// postCheck waits for metadata from qB, then evaluates the real name and files.
 func (s *Server) postCheck(ih string, by *int64) {
 	ctx, cancel := context.WithTimeout(s.BaseCtx, 3*time.Minute)
 	defer cancel()
-	var name string
-	var files []string
-	var sizes []int64
+	gen := s.Policy.Generation()
 	for i := 0; i < 36; i++ {
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(5 * time.Second):
 		}
-		n, fs, ok := s.Pool.Metadata(ctx, ih)
-		if ok {
-			name = n
-			for _, f := range fs {
-				files = append(files, f.Name)
-				sizes = append(sizes, f.Size)
-			}
-			break
+		if name, files, ok := s.Pool.Metadata(ctx, ih); ok {
+			s.checkSeeded(ctx, gen, ih, name, files, 0, by, true)
+			return
 		}
-	}
-	if len(files) == 0 {
-		return
-	}
-	var total int64
-	for _, sz := range sizes {
-		total += sz
-	}
-	_ = s.St.UpsertTorrent(ctx, store.TorrentRecord{Infohash: ih, Title: name, Size: total, Files: files, Source: "user"})
-	in := meta.TorrentInput{Infohash: ih, Title: name, Source: "user"}
-	for i, f := range files {
-		in.Files = append(in.Files, meta.FileInput{Index: i, Path: f, Size: sizes[i]})
-	}
-	s.Cat.MatchTorrent(in)
-
-	d, err := s.Policy.Requirement(ctx, policy.Subject{Infohash: ih, Title: name, Files: files})
-	if err != nil {
-		return
-	}
-	if d.Action == policy.Block {
-		s.Log.Info("post-check blocked", "ih", ih, "rule", d.RuleName)
-		s.Pool.Remove(ctx, ih)
-		_ = s.St.SetVerdict(ctx, nil, store.Verdict{Infohash: ih, Action: policy.Block, Label: d.Label, Note: "自动：" + d.RuleName})
-		s.St.Audit(ctx, nil, "policy.autoblock", ih, d.RuleName, "")
-		return
-	}
-	if s.St.Bool(store.KeyAutoReviewUnknown) {
-		_ = s.St.AddReview(ctx, ih, name, "auto", "用户提交的种子", by)
 	}
 }
 
@@ -217,9 +221,8 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) error {
 	var in struct {
 		Infohash string `json:"infohash"`
 		Reason   string `json:"reason"`
-		Title    string `json:"title"`
 	}
-	if err := httpx.Decode(r, &in); err != nil {
+	if err := httpx.DecodeSmall(r, &in); err != nil {
 		return err
 	}
 	ih, ok := magnet.NormalizeInfohash(in.Infohash)
@@ -230,9 +233,13 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) error {
 	if len([]rune(reason)) > 500 {
 		reason = string([]rune(reason)[:500])
 	}
-	title := in.Title
-	if rec, err := s.St.GetTorrent(r.Context(), ih); err == nil && rec != nil && rec.Title != "" {
+	// the title comes from our own records only, never from the client
+	title := ""
+	if rec, err := s.St.GetTorrent(r.Context(), ih); err == nil && rec != nil {
 		title = rec.Title
+		if title == "" && rec.UserTitle != "" {
+			title = "（用户填写）" + rec.UserTitle
+		}
 	}
 	if err := s.St.AddReview(r.Context(), ih, title, "report", reason, uid(userOf(r))); err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err

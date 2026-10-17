@@ -151,4 +151,11 @@ CREATE TABLE audit (
 );
 CREATE INDEX audit_time ON audit(id DESC);
 `,
+	// 2: user-supplied magnet names are kept apart from trusted titles (qB metadata / catalogue);
+	// indexes for retention pruning.
+	`
+ALTER TABLE torrents ADD COLUMN user_title TEXT NOT NULL DEFAULT '';
+CREATE INDEX audit_created ON audit(created_at);
+CREATE INDEX reviews_resolved ON reviews(resolved_at) WHERE status != 'pending';
+`,
 }

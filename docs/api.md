@@ -1,7 +1,9 @@
 # onlinetorrent v2 API 契约（v1）
 
 - Base: `/api/v1`，JSON，UTF-8。错误：`{"error":{"code":"string","message":"人类可读"}}` + 合适的 HTTP 状态码。
-- 认证：登录后服务端设置 HttpOnly Cookie `ot_session`（SameSite=Lax）。写操作需带请求头 `X-Requested-With: fetch`（简易 CSRF 防护）。
+- 认证：登录后服务端设置 HttpOnly Cookie `ot_session`（SameSite=Lax）。写操作需带请求头 `X-Requested-With: fetch`（简易 CSRF 防护）；浏览器标记 `Sec-Fetch-Site: cross-site` 的写请求一律 403。
+- 请求体：公共写接口（auth、me、play、report）最大 16KB，超出 413 `too_large`；后台接口 1MB。
+- 限流（429 `rate_limited`）：按 IP 计（IPv6 按 /64）。登录另按账号计：15 分钟内失败 5 次即暂时锁定。
 - 时间：RFC3339 字符串（UTC）。大小：字节 `int64`。
 - 角色：`guest`（未登录）< `member` < `vip` < `admin`。
 
@@ -25,7 +27,7 @@
 ### `POST /auth/login` `{identifier, password}` → `/me` 结构
 ### `POST /auth/logout` → `{}`
 ### `POST /me/password` `{old_password, new_password}` → `{}`
-### `POST /me/redeem` `{code}` → `/me` 结构（兑换码 → vip）
+### `POST /me/redeem` `{code}` → `/me` 结构（兑换码 → vip；不区分大小写。永久大会员 / 管理员兑换返回 400「你已是永久大会员」，兑换码不会被消耗）
 
 ### `GET /schedule`
 番剧时间线（bangumi-data 本季 + 上季仍在播）。`items` 按 `next_air_at`/`last_air_at` 计算，前端按星期分组。
@@ -55,6 +57,7 @@
 ```
 
 ### `GET /torrents/latest?page=1` / `GET /torrents/search?q=xxx&page=1`
+`page` 上限 50（超出按 50 处理）；`q` 最长 100 字；每 IP 突发 20 次、之后每 3 秒 1 次。
 ```json
 { "page": 1, "page_count": 30, "items": [Torrent, ...] }
 ```
@@ -81,20 +84,24 @@ Torrent：
   "seeded_by": ["ams"], "webseeds": [] ,
   "meta": { "anime_key": "bgm:123", "episode": 2 } }   // meta 可空
 ```
-- 401 `{"error":{"code":"login_required"}}`，402 `{"error":{"code":"vip_required"}}`，451 `{"error":{"code":"blocked","message":"原因"}}`。
+- 401 `{"error":{"code":"login_required"}}`，402 `{"error":{"code":"vip_required"}}`，451 `{"error":{"code":"blocked","message":"原因"}}`，413 `{"error":{"code":"too_large"}}`（超过设置 `play.max_push_size_mb`）。
+- 用户磁力里的 `tr=` 一律丢弃（只用站点配置的 tracker）；`dn=` 只作为未受信标题参与判定（用户磁力最低权限始终生效），不写入种子标题，真实标题以 qB 元数据为准。
+- 用户提交的种子获取元数据后会被复查；此外后台每 10 分钟用 qB 中的真实名称与文件列表复查本站分类下所有种子，命中屏蔽规则或超过大小上限的会被移除。
 
-### `POST /report` `{infohash, reason}` → `{}`  举报 → 进入审核队列
+### `POST /report` `{infohash, reason}` → `{}`  需登录。举报 → 进入审核队列（标题取自服务端记录，不接受客户端提供；reason 最长 500 字）
 
 ## 后台 `/admin/*`（仅 admin）
 - `GET/PUT /admin/settings` 全部站点设置（KV 对象，字段见 `GET` 返回）
 - `GET/POST /admin/qb-servers`，`PUT/DELETE /admin/qb-servers/{id}`，`POST /admin/qb-servers/{id}/test`
   QBServer: `{id,name,url,username,password(写入时),api_key(写入时),category,enabled,seeding_time_limit_min,ratio_limit,max_active,online,version,last_error,last_check_at}`
-- `GET /admin/users?q=&page=`，`PUT /admin/users/{id}` `{role?, vip_until?, disabled?}`
+- `GET /admin/users?q=&page=`，`PUT /admin/users/{id}` `{role?, vip_until?, disabled?}`（设 `role: "vip"` 且不传 `vip_until` = 永久大会员，会清空 vip_until）
 - `GET/POST /admin/invites`、`GET/POST /admin/redeem-codes`
+  创建邀请 `{max_uses?, role, vip_days, expires_in_days, note}`：`max_uses` 省略为 1，0 为不限，负数 400；`vip_days` 需 ≥ 0。邀请码大写，使用时不区分大小写。
 - `GET/POST /admin/rules`，`PUT/DELETE /admin/rules/{id}`
   Rule: `{id, name, enabled, priority, match: {"field":"title|file|infohash|team|tag|category","op":"contains|regex|equals","value":"..."}, action:"allow|login|vip|block", label:"political|porn|copyright|other|", note}`
 - `POST /admin/policy/test` `{title, infohash?, files?, tags?, team?}` → `{access, matched_rule}`
-- `GET /admin/reviews?status=pending` / `PUT /admin/reviews/{id}` `{action, label, note}`（写入 infohash 级裁决）
+- `GET /admin/reviews?status=pending` / `PUT /admin/reviews/{id}` `{action, label, note}`（写入 infohash 级裁决；action 为 block 或 label 为 political/porn 时同时从 qB 移除。note 仅后台可见，前台理由由 action+label 生成）
+- 日志保留：plays / audit 保留 90 天，已处理的 reviews 保留 180 天（每日清理）。
 - `GET /admin/plays?page=`：播放/推送记录
 - `GET /admin/audit?page=`
 - `GET /admin/stats`：`{users, plays_24h, qb_online, qb_total, pending_reviews}`

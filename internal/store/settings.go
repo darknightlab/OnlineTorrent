@@ -33,6 +33,7 @@ const (
 	KeyTrackers          = "webtorrent.trackers"
 	KeyICEServers        = "webtorrent.ice_servers"
 	KeyMaxAutoSize       = "play.max_auto_size_mb"
+	KeyMaxPushSize       = "play.max_push_size_mb"
 	KeyDefaultAction     = "policy.default_action"
 	KeyUserMagnetAction  = "policy.user_magnet_action"
 	KeyAutoReviewUnknown = "policy.review_user_magnets"
@@ -66,6 +67,7 @@ func SettingsSchema() []SettingSpec {
 		{Key: KeyTrackers, Group: "播放", Type: "string_list", Label: "WebTorrent Tracker", Description: "浏览器与 qB 用于互相发现的 wss tracker", Default: defaultTrackers, Public: true},
 		{Key: KeyICEServers, Group: "播放", Type: "string_list", Label: "ICE 服务器", Description: "stun:/turn: URL", Default: []string{"stun:stun.l.google.com:19302", "stun:stun.miwifi.com:3478"}, Public: true},
 		{Key: KeyMaxAutoSize, Group: "播放", Type: "number", Label: "时间线自动选种大小上限（MB）", Default: 2048, Public: true},
+		{Key: KeyMaxPushSize, Group: "播放", Type: "number", Label: "可播放种子大小上限（MB）", Description: "超过此大小的种子不会推送给 qB；用户自填磁力在获取元数据后超限会被移除", Default: 8192},
 
 		{Key: KeyDefaultAction, Group: "审核", Type: "enum", Label: "默认权限", Options: []string{"allow", "login", "vip"}, Description: "没有任何规则命中时的权限要求", Default: "allow"},
 		{Key: KeyUserMagnetAction, Group: "审核", Type: "enum", Label: "用户自填磁力最低权限", Options: []string{"allow", "login", "vip"}, Description: "非 bangumi.moe 来源的种子至少需要的权限", Default: "login"},
@@ -90,13 +92,11 @@ func specFor(key string) (SettingSpec, bool) {
 	return SettingSpec{}, false
 }
 
-// Settings is an in-memory snapshot of all settings, refreshed after writes.
-type Settings struct {
+// settingsCache is an in-memory snapshot of all settings, refreshed after writes.
+type settingsCache struct {
 	mu   sync.RWMutex
 	vals map[string]json.RawMessage
 }
-
-var settingsCache = &Settings{}
 
 func (s *Store) seedSettings(ctx context.Context) error {
 	for _, spec := range SettingsSchema() {
@@ -122,43 +122,43 @@ func (s *Store) reloadSettings(ctx context.Context) error {
 		}
 		m[k] = json.RawMessage(v)
 	}
-	settingsCache.mu.Lock()
-	settingsCache.vals = m
-	settingsCache.mu.Unlock()
+	s.settings.mu.Lock()
+	s.settings.vals = m
+	s.settings.mu.Unlock()
 	return rows.Err()
 }
 
-func rawSetting(key string) json.RawMessage {
-	settingsCache.mu.RLock()
-	defer settingsCache.mu.RUnlock()
-	return settingsCache.vals[key]
+func (s *Store) rawSetting(key string) json.RawMessage {
+	s.settings.mu.RLock()
+	defer s.settings.mu.RUnlock()
+	return s.settings.vals[key]
 }
 
 // Str returns a string setting.
 func (s *Store) Str(key string) string {
 	var v string
-	_ = json.Unmarshal(rawSetting(key), &v)
+	_ = json.Unmarshal(s.rawSetting(key), &v)
 	return v
 }
 
 // Num returns a numeric setting.
 func (s *Store) Num(key string) float64 {
 	var v float64
-	_ = json.Unmarshal(rawSetting(key), &v)
+	_ = json.Unmarshal(s.rawSetting(key), &v)
 	return v
 }
 
 // Bool returns a bool setting.
 func (s *Store) Bool(key string) bool {
 	var v bool
-	_ = json.Unmarshal(rawSetting(key), &v)
+	_ = json.Unmarshal(s.rawSetting(key), &v)
 	return v
 }
 
 // List returns a string-list setting.
 func (s *Store) List(key string) []string {
 	var v []string
-	_ = json.Unmarshal(rawSetting(key), &v)
+	_ = json.Unmarshal(s.rawSetting(key), &v)
 	return v
 }
 
@@ -174,7 +174,7 @@ func (s *Store) SettingItems() []SettingItem {
 	var out []SettingItem
 	for _, spec := range SettingsSchema() {
 		var v any
-		_ = json.Unmarshal(rawSetting(spec.Key), &v)
+		_ = json.Unmarshal(s.rawSetting(spec.Key), &v)
 		it := SettingItem{SettingSpec: spec, Value: v}
 		if spec.Type == "secret" {
 			str, _ := v.(string)

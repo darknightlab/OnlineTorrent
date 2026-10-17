@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -63,6 +64,46 @@ type moeBangumi struct {
 type moeClient struct {
 	base func() string
 	hc   func() *http.Client
+	lim  *pacer
+}
+
+// pacer is a global token bucket for upstream requests: `rate` per second with a burst
+// worth `window`. wait blocks (honoring ctx) instead of failing.
+type pacer struct {
+	mu       sync.Mutex
+	next     time.Time
+	interval time.Duration
+	window   time.Duration
+}
+
+func newPacer(perSec float64, window time.Duration) *pacer {
+	return &pacer{interval: time.Duration(float64(time.Second) / perSec), window: window}
+}
+
+func (p *pacer) wait(ctx context.Context) error {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	now := time.Now()
+	if floor := now.Add(-p.window); p.next.Before(floor) {
+		p.next = floor
+	}
+	slot := p.next
+	p.next = slot.Add(p.interval)
+	p.mu.Unlock()
+	d := time.Until(slot)
+	if d <= 0 {
+		return nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 func (c *moeClient) get(ctx context.Context, path string, out any) error {
@@ -74,6 +115,9 @@ func (c *moeClient) post(ctx context.Context, path string, body any, out any) er
 }
 
 func (c *moeClient) req(ctx context.Context, method, path string, body any, out any) error {
+	if err := c.lim.wait(ctx); err != nil {
+		return err
+	}
 	var rd io.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)

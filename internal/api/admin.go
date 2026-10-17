@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -363,8 +364,12 @@ func (s *Server) adminResolveReview(w http.ResponseWriter, r *http.Request) erro
 	if err != nil {
 		return httpx.Bad(err)
 	}
-	if in.Action == policy.Block {
-		go s.Pool.Remove(s.BaseCtx, ih)
+	if in.Action != "dismiss" && (in.Action == policy.Block || in.Label == "political" || in.Label == "porn") {
+		s.bg.Go(func() {
+			ctx, cancel := context.WithTimeout(s.BaseCtx, time.Minute)
+			defer cancel()
+			s.Pool.Remove(ctx, ih)
+		})
 	}
 	s.audit(r, "review.resolve", ih, in.Action+" "+in.Label)
 	httpx.JSON(w, 200, map[string]any{})

@@ -10,6 +10,8 @@ import (
 	"errors"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/darknightlab/onlinetorrent/internal/store"
 )
@@ -69,7 +71,13 @@ CREATE INDEX torrent_files_ep ON torrent_files(work_key, episode);
 `}
 
 // Store is the meta database.
-type Store struct{ W, R *sql.DB }
+type Store struct {
+	W, R *sql.DB
+
+	aliasMu sync.Mutex
+	aliases []aliasEntry
+	aliasAt time.Time
+}
 
 // Open opens meta.db.
 func Open(path string) (*Store, error) {
@@ -164,6 +172,35 @@ func (s *Store) WorkByExternal(ctx context.Context, provider, id string) (*Work,
 // WorksBetween returns works whose begin is in [from, to) (RFC3339 strings).
 func (s *Store) WorksBetween(ctx context.Context, from, to string) ([]*Work, error) {
 	rows, err := s.R.QueryContext(ctx, `SELECT `+workCols+` FROM works WHERE begin_at >= ? AND begin_at < ? ORDER BY begin_at`, from, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*Work
+	for rows.Next() {
+		w, err := scanWork(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, s.fillExternal(ctx, out)
+}
+
+// WorksForSchedule returns candidate works for the airing timeline at now: begun within
+// the last 200 days (up to 21 days ahead), plus older ones (≤ 2 years) that have no end
+// date or ended within the last 10 days (long-running / multi-cour shows).
+func (s *Store) WorksForSchedule(ctx context.Context, now time.Time) ([]*Work, error) {
+	f := func(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+	from := f(now.AddDate(0, 0, -200))
+	to := f(now.AddDate(0, 0, 21))
+	oldest := f(now.AddDate(-2, 0, 0))
+	ended := f(now.AddDate(0, 0, -10))
+	rows, err := s.R.QueryContext(ctx, `SELECT `+workCols+` FROM works WHERE begin_at < ? AND (begin_at >= ? OR (begin_at >= ? AND (end_at = '' OR end_at >= ?))) ORDER BY begin_at`,
+		to, from, oldest, ended)
 	if err != nil {
 		return nil, err
 	}

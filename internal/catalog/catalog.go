@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/darknightlab/onlinetorrent/internal/meta"
 	"github.com/darknightlab/onlinetorrent/internal/policy"
 	"github.com/darknightlab/onlinetorrent/internal/store"
@@ -75,20 +77,41 @@ func (c *ttlCache[T]) get(k string) (T, bool) {
 	return e.v, true
 }
 
+// ttlCacheMax bounds a ttlCache; beyond it expired entries are purged and, if still too
+// big, an arbitrary half is dropped (map iteration order is random).
+const ttlCacheMax = 2000
+
 func (c *ttlCache[T]) set(k string, v T, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.m == nil {
 		c.m = map[string]cacheEntry[T]{}
 	}
-	if len(c.m) > 2000 {
+	if len(c.m) >= ttlCacheMax {
+		now := time.Now()
 		for kk, e := range c.m {
-			if time.Now().After(e.exp) {
+			if now.After(e.exp) {
 				delete(c.m, kk)
+			}
+		}
+		if len(c.m) >= ttlCacheMax {
+			drop := len(c.m) / 2
+			for kk := range c.m {
+				if drop == 0 {
+					break
+				}
+				delete(c.m, kk)
+				drop--
 			}
 		}
 	}
 	c.m[k] = cacheEntry[T]{v, time.Now().Add(ttl)}
+}
+
+func (c *ttlCache[T]) len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.m)
 }
 
 type pageResult struct {
@@ -105,10 +128,17 @@ type Catalog struct {
 
 	pages   ttlCache[pageResult]
 	details ttlCache[*Torrent]
+	sf      singleflight.Group // dedupes concurrent upstream fetches per cache key
+
+	trMu    sync.Mutex
+	trProxy string
+	tr      *http.Transport
 
 	namesMu sync.RWMutex
 	teams   map[string]string
 	tags    map[string]moeTag
+	missMu  sync.Mutex
+	missing map[string]time.Time // "team:id"/"tag:id" -> retry after (negative cache)
 
 	schedMu   sync.RWMutex
 	sched     *Schedule
@@ -118,72 +148,146 @@ type Catalog struct {
 	covers   map[string]string // moe tag id -> cover URL
 
 	matchCh chan meta.TorrentInput
+	wg      sync.WaitGroup
 }
 
 // New creates the catalog.
 func New(st *store.Store, ms *meta.Store, log *slog.Logger) *Catalog {
-	c := &Catalog{st: st, meta: ms, log: log, teams: map[string]string{}, tags: map[string]moeTag{}, covers: map[string]string{}, matchCh: make(chan meta.TorrentInput, 512)}
-	c.moe = &moeClient{base: func() string { return st.Str(store.KeyMoeBase) }, hc: c.HTTPClient}
+	c := &Catalog{st: st, meta: ms, log: log, teams: map[string]string{}, tags: map[string]moeTag{}, missing: map[string]time.Time{}, covers: map[string]string{}, matchCh: make(chan meta.TorrentInput, 512)}
+	c.moe = &moeClient{base: func() string { return st.Str(store.KeyMoeBase) }, hc: c.HTTPClient, lim: newPacer(3, 2*time.Second)}
 	return c
 }
 
-// HTTPClient returns a client honoring the upstream proxy setting.
+// HTTPClient returns a client honoring the upstream proxy setting. The transport (and its
+// connection pool) is shared and only rebuilt when the proxy setting changes.
 func (c *Catalog) HTTPClient() *http.Client {
-	tr := http.DefaultTransport.(*http.Transport).Clone()
-	if p := c.st.Str(store.KeyUpstreamProxy); p != "" {
-		if u, err := url.Parse(p); err == nil {
-			tr.Proxy = http.ProxyURL(u)
+	p := c.st.Str(store.KeyUpstreamProxy)
+	c.trMu.Lock()
+	if c.tr == nil || c.trProxy != p {
+		tr := http.DefaultTransport.(*http.Transport).Clone()
+		tr.MaxIdleConnsPerHost = 4
+		if p != "" {
+			if u, err := url.Parse(p); err == nil {
+				tr.Proxy = http.ProxyURL(u)
+			}
+		}
+		if c.tr != nil {
+			c.tr.CloseIdleConnections()
+		}
+		c.tr, c.trProxy = tr, p
+	}
+	tr := c.tr
+	c.trMu.Unlock()
+	return &http.Client{Transport: tr, Timeout: 30 * time.Second}
+}
+
+const (
+	missTTL    = time.Hour        // id not returned by bangumi.moe
+	missErrTTL = 10 * time.Minute // lookup request failed
+)
+
+func (c *Catalog) isMissing(k string, now time.Time) bool {
+	c.missMu.Lock()
+	defer c.missMu.Unlock()
+	t, ok := c.missing[k]
+	if ok && now.After(t) {
+		delete(c.missing, k)
+		return false
+	}
+	return ok
+}
+
+func (c *Catalog) markMissing(keys []string, ttl time.Duration) {
+	c.missMu.Lock()
+	defer c.missMu.Unlock()
+	now := time.Now()
+	if len(c.missing) > 20000 {
+		for k, t := range c.missing {
+			if now.After(t) {
+				delete(c.missing, k)
+			}
 		}
 	}
-	return &http.Client{Transport: tr, Timeout: 30 * time.Second}
+	for _, k := range keys {
+		c.missing[k] = now.Add(ttl)
+	}
 }
 
 func (c *Catalog) resolveNames(ctx context.Context, ts []moeTorrent) {
 	var needTeams, needTags []string
 	seenTeam, seenTag := map[string]bool{}, map[string]bool{}
+	now := time.Now()
 	c.namesMu.RLock()
 	for _, t := range ts {
-		if t.Team != nil && t.Team.Name != "" {
-			continue
-		}
-		if t.TeamID != "" && c.teams[t.TeamID] == "" && !seenTeam[t.TeamID] {
-			needTeams, seenTeam[t.TeamID] = append(needTeams, t.TeamID), true
+		if (t.Team == nil || t.Team.Name == "") && t.TeamID != "" && c.teams[t.TeamID] == "" && !seenTeam[t.TeamID] {
+			seenTeam[t.TeamID] = true
+			needTeams = append(needTeams, t.TeamID)
 		}
 		for _, id := range t.TagIDs {
 			if _, ok := c.tags[id]; !ok && !seenTag[id] {
-				needTags, seenTag[id] = append(needTags, id), true
+				seenTag[id] = true
+				needTags = append(needTags, id)
 			}
 		}
 	}
 	c.namesMu.RUnlock()
-	for _, t := range ts {
-		for _, id := range t.TagIDs {
-			c.namesMu.RLock()
-			_, ok := c.tags[id]
-			c.namesMu.RUnlock()
-			if !ok && !seenTag[id] {
-				needTags, seenTag[id] = append(needTags, id), true
-			}
-		}
-	}
+	needTeams = slicesFilter(needTeams, func(id string) bool { return !c.isMissing("team:"+id, now) })
+	needTags = slicesFilter(needTags, func(id string) bool { return !c.isMissing("tag:"+id, now) })
 	if len(needTeams) > 0 {
-		if teams, err := c.moe.teams(ctx, needTeams); err == nil {
+		teams, err := c.moe.teams(ctx, needTeams)
+		got := map[string]bool{}
+		if err == nil {
 			c.namesMu.Lock()
 			for _, t := range teams {
 				c.teams[t.ID] = t.Name
+				got[t.ID] = true
 			}
 			c.namesMu.Unlock()
 		}
+		var miss []string
+		for _, id := range needTeams {
+			if !got[id] {
+				miss = append(miss, "team:"+id)
+			}
+		}
+		c.markMissing(miss, ttlFor(err))
 	}
 	if len(needTags) > 0 {
-		if tags, err := c.moe.tags(ctx, needTags); err == nil {
+		tags, err := c.moe.tags(ctx, needTags)
+		got := map[string]bool{}
+		if err == nil {
 			c.namesMu.Lock()
 			for _, t := range tags {
 				c.tags[t.ID] = t
+				got[t.ID] = true
 			}
 			c.namesMu.Unlock()
 		}
+		var miss []string
+		for _, id := range needTags {
+			if !got[id] {
+				miss = append(miss, "tag:"+id)
+			}
+		}
+		c.markMissing(miss, ttlFor(err))
 	}
+}
+
+func ttlFor(err error) time.Duration {
+	if err != nil {
+		return missErrTTL
+	}
+	return missTTL
+}
+
+func slicesFilter(in []string, keep func(string) bool) []string {
+	out := in[:0]
+	for _, v := range in {
+		if keep(v) {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func (c *Catalog) normalize(t moeTorrent) *Torrent {
@@ -260,49 +364,55 @@ func (c *Catalog) MatchTorrent(in meta.TorrentInput) {
 	}
 }
 
-// Latest returns a page of the newest bangumi.moe torrents.
-func (c *Catalog) Latest(ctx context.Context, page int) ([]*Torrent, int, error) {
-	key := "latest:" + itoa(page)
+// fetchPage serves key from cache or fetches it once (singleflight) for all concurrent callers.
+// The upstream fetch runs detached from the caller's cancellation (bounded by 45s) so one
+// impatient client doesn't fail everybody sharing the flight.
+func (c *Catalog) fetchPage(ctx context.Context, key string, ttl time.Duration, fetch func(context.Context) (moePage, error)) ([]*Torrent, int, error) {
 	if v, ok := c.pages.get(key); ok {
 		return v.items, v.pageCount, nil
 	}
-	p, err := c.moe.latest(ctx, page)
-	if err != nil {
-		return nil, 0, err
+	ch := c.sf.DoChan(key, func() (any, error) {
+		if v, ok := c.pages.get(key); ok {
+			return v, nil
+		}
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
+		defer cancel()
+		p, err := fetch(fctx)
+		if err != nil {
+			return nil, err
+		}
+		res := pageResult{c.normalizeAll(fctx, p.Torrents), p.PageCount}
+		c.pages.set(key, res, ttl)
+		return res, nil
+	})
+	select {
+	case <-ctx.Done():
+		return nil, 0, ctx.Err()
+	case r := <-ch:
+		if r.Err != nil {
+			return nil, 0, r.Err
+		}
+		v := r.Val.(pageResult)
+		return v.items, v.pageCount, nil
 	}
-	items := c.normalizeAll(ctx, p.Torrents)
-	c.pages.set(key, pageResult{items, p.PageCount}, 3*time.Minute)
-	return items, p.PageCount, nil
+}
+
+// Latest returns a page of the newest bangumi.moe torrents.
+func (c *Catalog) Latest(ctx context.Context, page int) ([]*Torrent, int, error) {
+	return c.fetchPage(ctx, "latest:"+itoa(page), 3*time.Minute, func(ctx context.Context) (moePage, error) { return c.moe.latest(ctx, page) })
 }
 
 // Search queries bangumi.moe.
 func (c *Catalog) Search(ctx context.Context, q string, page int) ([]*Torrent, int, error) {
-	key := "search:" + itoa(page) + ":" + q
-	if v, ok := c.pages.get(key); ok {
-		return v.items, v.pageCount, nil
-	}
-	p, err := c.moe.search(ctx, q, page)
-	if err != nil {
-		return nil, 0, err
-	}
-	items := c.normalizeAll(ctx, p.Torrents)
-	c.pages.set(key, pageResult{items, p.PageCount}, 5*time.Minute)
-	return items, p.PageCount, nil
+	return c.fetchPage(ctx, "search:"+itoa(page)+":"+q, 5*time.Minute, func(ctx context.Context) (moePage, error) { return c.moe.search(ctx, q, page) })
 }
+
+// tagTTL is how long a tag listing is cached (schedule rebuilds only refetch recent airings).
+const tagTTL = 60 * time.Minute
 
 // ByTag lists torrents of a bangumi.moe tag (e.g. an anime).
 func (c *Catalog) ByTag(ctx context.Context, tagID string, page int) ([]*Torrent, int, error) {
-	key := "tag:" + itoa(page) + ":" + tagID
-	if v, ok := c.pages.get(key); ok {
-		return v.items, v.pageCount, nil
-	}
-	p, err := c.moe.byTag(ctx, []string{tagID}, page)
-	if err != nil {
-		return nil, 0, err
-	}
-	items := c.normalizeAll(ctx, p.Torrents)
-	c.pages.set(key, pageResult{items, p.PageCount}, 10*time.Minute)
-	return items, p.PageCount, nil
+	return c.fetchPage(ctx, "tag:"+itoa(page)+":"+tagID, tagTTL, func(ctx context.Context) (moePage, error) { return c.moe.byTag(ctx, []string{tagID}, page) })
 }
 
 // Detail fetches one bangumi.moe torrent (with files).
@@ -310,30 +420,46 @@ func (c *Catalog) Detail(ctx context.Context, id string) (*Torrent, error) {
 	if v, ok := c.details.get(id); ok {
 		return v, nil
 	}
-	raw, err := c.moe.detail(ctx, id)
-	if err != nil {
-		return nil, err
+	ch := c.sf.DoChan("detail:"+id, func() (any, error) {
+		if v, ok := c.details.get(id); ok {
+			return v, nil
+		}
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 45*time.Second)
+		defer cancel()
+		raw, err := c.moe.detail(fctx, id)
+		if err != nil {
+			return nil, err
+		}
+		c.namesMu.Lock()
+		for _, tg := range raw.Tags {
+			c.tags[tg.ID] = tg
+		}
+		c.namesMu.Unlock()
+		raw.Tags = nil
+		items := c.normalizeAll(fctx, []moeTorrent{raw})
+		if len(items) == 0 {
+			return nil, store.ErrNotFound
+		}
+		c.details.set(id, items[0], 30*time.Minute)
+		return items[0], nil
+	})
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case r := <-ch:
+		if r.Err != nil {
+			return nil, r.Err
+		}
+		return r.Val.(*Torrent), nil
 	}
-	c.namesMu.Lock()
-	for _, tg := range raw.Tags {
-		c.tags[tg.ID] = tg
-	}
-	c.namesMu.Unlock()
-	raw.Tags = nil
-	items := c.normalizeAll(ctx, []moeTorrent{raw})
-	if len(items) == 0 {
-		return nil, store.ErrNotFound
-	}
-	c.details.set(id, items[0], 30*time.Minute)
-	return items[0], nil
 }
 
 func itoa(i int) string { return strconv.Itoa(i) }
 
-// Run starts background jobs.
+// Run starts background jobs; Wait blocks until they exit after ctx is done.
 func (c *Catalog) Run(ctx context.Context) {
-	go c.matchLoop(ctx)
-	go func() {
+	c.wg.Go(func() { c.matchLoop(ctx) })
+	c.wg.Go(func() {
 		c.refreshBangumiData(ctx)
 		t := time.NewTicker(12 * time.Hour)
 		defer t.Stop()
@@ -345,8 +471,8 @@ func (c *Catalog) Run(ctx context.Context) {
 				c.refreshBangumiData(ctx)
 			}
 		}
-	}()
-	go func() {
+	})
+	c.wg.Go(func() {
 		// schedule (and moe covers) every 15 min; ingest latest pages every 5 min
 		c.refreshCovers(ctx)
 		c.ingestLatest(ctx, 3)
@@ -369,8 +495,11 @@ func (c *Catalog) Run(ctx context.Context) {
 				c.rebuildSchedule(ctx)
 			}
 		}
-	}()
+	})
 }
+
+// Wait blocks until the background jobs started by Run have exited.
+func (c *Catalog) Wait() { c.wg.Wait() }
 
 func (c *Catalog) matchLoop(ctx context.Context) {
 	for {

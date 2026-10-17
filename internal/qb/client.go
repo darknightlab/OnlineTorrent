@@ -18,14 +18,25 @@ import (
 
 // Client talks to one qBittorrent instance. It authenticates with an API key
 // (Authorization: Bearer, qB ≥ 5.2) when set, otherwise with a login cookie that is
-// reused and refreshed on 403.
+// reused and refreshed on 401/403.
+//
+// After a rejected login the client backs off (1m doubling to 30m) without contacting
+// the server, so a wrong password doesn't get our IP banned by the WebUI.
 type Client struct {
 	base, user, pass, apiKey string
 	hc                       *http.Client
 
-	mu       sync.Mutex
-	loggedIn bool
+	mu        sync.Mutex
+	loggedIn  bool
+	loginGen  uint64 // bumped on every successful login
+	authUntil time.Time
+	authWait  time.Duration
 }
+
+const (
+	authBackoffMin = time.Minute
+	authBackoffMax = 30 * time.Minute
+)
 
 // NewClient creates a client.
 func NewClient(base, user, pass, apiKey string) *Client {
@@ -38,6 +49,26 @@ func NewClient(base, user, pass, apiKey string) *Client {
 
 // ErrAuth means credentials were rejected.
 var ErrAuth = errors.New("qBittorrent 认证失败")
+
+// ensureLogin logs in unless a login newer than gen already happened. Caller holds c.mu.
+func (c *Client) ensureLogin(ctx context.Context, gen uint64, force bool) error {
+	if c.loggedIn && (!force || c.loginGen != gen) {
+		return nil // someone else already (re)logged in
+	}
+	if wait := time.Until(c.authUntil); wait > 0 {
+		return fmt.Errorf("%w，%s 后重试", ErrAuth, wait.Round(time.Second))
+	}
+	c.loggedIn = false
+	err := c.login(ctx)
+	if errors.Is(err, ErrAuth) {
+		c.authWait = min(max(c.authWait*2, authBackoffMin), authBackoffMax)
+		c.authUntil = time.Now().Add(c.authWait)
+	} else if err == nil {
+		c.authWait, c.authUntil = 0, time.Time{}
+		c.loginGen++
+	}
+	return err
+}
 
 func (c *Client) login(ctx context.Context) error {
 	form := url.Values{"username": {c.user}, "password": {c.pass}}
@@ -82,25 +113,24 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values) (
 		}
 		return c.hc.Do(req)
 	}
+	var gen uint64
 	if c.apiKey == "" {
 		c.mu.Lock()
-		if !c.loggedIn {
-			if err := c.login(ctx); err != nil {
-				c.mu.Unlock()
-				return nil, 0, err
-			}
-		}
+		err := c.ensureLogin(ctx, c.loginGen, false)
+		gen = c.loginGen
 		c.mu.Unlock()
+		if err != nil {
+			return nil, 0, err
+		}
 	}
 	resp, err := try()
 	if err != nil {
 		return nil, 0, err
 	}
-	if resp.StatusCode == http.StatusForbidden && c.apiKey == "" {
+	if (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized) && c.apiKey == "" {
 		resp.Body.Close()
 		c.mu.Lock()
-		c.loggedIn = false
-		err := c.login(ctx)
+		err := c.ensureLogin(ctx, gen, true)
 		c.mu.Unlock()
 		if err != nil {
 			return nil, 0, err
@@ -115,7 +145,11 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values) (
 		return nil, resp.StatusCode, err
 	}
 	if resp.StatusCode >= 400 {
-		return b, resp.StatusCode, fmt.Errorf("qBittorrent %s: HTTP %d %s", path, resp.StatusCode, strings.TrimSpace(string(b)))
+		msg := strings.TrimSpace(string(b[:min(len(b), 256)]))
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			return b, resp.StatusCode, fmt.Errorf("%w: %s HTTP %d %s", ErrAuth, path, resp.StatusCode, msg)
+		}
+		return b, resp.StatusCode, fmt.Errorf("qBittorrent %s: HTTP %d %s", path, resp.StatusCode, msg)
 	}
 	return b, resp.StatusCode, nil
 }

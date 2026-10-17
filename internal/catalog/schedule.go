@@ -5,7 +5,6 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -112,7 +111,7 @@ func (c *Catalog) ItemFor(w *meta.Work, now time.Time) (*ScheduleItem, bool) {
 }
 
 var reHiRes = regexp.MustCompile(`(?i)1080|1920`)
-var reCHS = regexp.MustCompile(`(?i)简|chs|gb|sc\b|简体`)
+var reCHS = regexp.MustCompile(`(?i)简|chs|\bgb\b|\bsc\b`)
 
 // PickLatest chooses the torrent to auto-play for the newest episode.
 func PickLatest(ts []*Torrent, maxBytes int64) (*Torrent, *float64) {
@@ -124,7 +123,7 @@ func PickLatest(ts []*Torrent, maxBytes int64) (*Torrent, *float64) {
 	var cands []cand
 	maxEp := -1.0
 	for _, t := range ts {
-		p := meta.ParseEpisode(t.Title + ".mkv")
+		p := meta.ParseTitle(t.Title)
 		if p.Episode == nil || p.Kind != "episode" {
 			continue
 		}
@@ -173,9 +172,7 @@ func (c *Catalog) rebuildSchedule(ctx context.Context) {
 	c.rebuildMu.Lock()
 	defer c.rebuildMu.Unlock()
 	now := time.Now()
-	from := now.AddDate(0, 0, -200).UTC().Format(time.RFC3339)
-	to := now.AddDate(0, 0, 21).UTC().Format(time.RFC3339)
-	works, err := c.meta.WorksBetween(ctx, from, to)
+	works, err := c.meta.WorksForSchedule(ctx, now)
 	if err != nil {
 		c.log.Warn("schedule: works", "err", err)
 		return
@@ -210,11 +207,16 @@ func (c *Catalog) rebuildSchedule(ctx context.Context) {
 	}
 	c.publishSchedule(now, cloneItems(items))
 
-	// phase 2: latest torrent per anime (bounded concurrency; ByTag is cached)
+	// phase 2: latest torrent per anime (bounded concurrency; ByTag is cached for an hour).
+	// Only refetch shows that aired within the last 3 days or have no torrent yet.
+	recent := now.AddDate(0, 0, -3).UTC().Format(time.RFC3339)
 	sem := make(chan struct{}, 3)
 	var wg sync.WaitGroup
 	for _, it := range items {
 		if it.MoeTagID == nil {
+			continue
+		}
+		if it.LatestTorrent != nil && (it.LastAirAt == nil || *it.LastAirAt < recent) {
 			continue
 		}
 		wg.Add(1)
@@ -261,5 +263,3 @@ func (c *Catalog) publishSchedule(now time.Time, items []*ScheduleItem) {
 	c.sched = &Schedule{GeneratedAt: store.Now(), Season: season, Items: items}
 	c.schedMu.Unlock()
 }
-
-var _ = strings.TrimSpace

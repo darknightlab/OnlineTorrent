@@ -81,6 +81,16 @@ func TestDecide(t *testing.T) {
 		t.Errorf("verdict: %+v", d)
 	}
 
+	// verdict note must not leak to the public access object
+	ih3 := "3333333333333333333333333333333333333333"
+	if err := st.SetVerdict(ctx, nil, store.Verdict{Infohash: ih3, Action: Block, Label: "copyright", Note: "internal: DMCA ticket #42 from foo@bar"}); err != nil {
+		t.Fatal(err)
+	}
+	d, _ = e.Decide(ctx, nil, Subject{Infohash: ih3, Trusted: true})
+	if a := d.Access(); a.Action != Block || a.Reason != reasonFor(Block, "copyright") || d.Note == "" {
+		t.Errorf("verdict leak: access=%+v decision=%+v", a, d)
+	}
+
 	// default action from settings
 	raw, _ := json.Marshal("vip")
 	if err := st.UpdateSettings(ctx, map[string]json.RawMessage{store.KeyDefaultAction: raw}); err != nil {
@@ -89,5 +99,70 @@ func TestDecide(t *testing.T) {
 	d, _ = e.Decide(ctx, user("member", nil), trusted("plain"))
 	if d.Action != VIP || d.Allowed {
 		t.Errorf("default vip: %+v", d)
+	}
+}
+
+func TestHardBlockBeatsPriority(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	if _, err := st.SaveRule(ctx, store.Rule{Name: "porn-kw", Enabled: true, Priority: 0, Field: "file", Op: "contains", Value: "xxx", Action: Login, Label: "porn"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SaveRule(ctx, store.Rule{Name: "team allow", Enabled: true, Priority: 100, Field: "team", Op: "equals", Value: "GoodSub", Action: Allow}); err != nil {
+		t.Fatal(err)
+	}
+	e := New(st)
+	d, err := e.Decide(ctx, user("admin", nil), Subject{Title: "ok", Team: "GoodSub", Files: []string{"a xxx b.mkv"}, Trusted: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Action != Block || d.Allowed || d.Label != "porn" || d.RuleName != "porn-kw" {
+		t.Errorf("porn rule vs higher-priority allow: %+v", d)
+	}
+	if a := d.Access(); a.Reason != reasonFor(Block, "porn") {
+		t.Errorf("reason: %+v", a)
+	}
+}
+
+func TestFloorVsTitleAllow(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	if _, err := st.SaveRule(ctx, store.Rule{Name: "title allow", Enabled: true, Priority: 5, Field: "title", Op: "contains", Value: "Frieren", Action: Allow}); err != nil {
+		t.Fatal(err)
+	}
+	e := New(st)
+	// untrusted (user magnet, dn= is attacker-controlled): floor (login) still applies
+	d, _ := e.Decide(ctx, nil, Subject{Infohash: "4444444444444444444444444444444444444444", Title: "[x] Frieren - 01"})
+	if d.Action != Login || d.Allowed || d.Source != "source" {
+		t.Errorf("untrusted title allow must not lower floor: %+v", d)
+	}
+	if d.Access().Reason != reasonFor(Login, "") {
+		t.Errorf("reason: %+v", d.Access())
+	}
+	// trusted: rule applies
+	d, _ = e.Decide(ctx, nil, Subject{Title: "[x] Frieren - 01", Trusted: true})
+	if d.Action != Allow || !d.Allowed {
+		t.Errorf("trusted title allow: %+v", d)
+	}
+	// raising rules still raise above the floor for untrusted
+	if _, err := st.SaveRule(ctx, store.Rule{Name: "vip", Enabled: true, Field: "title", Op: "contains", Value: "VIPONLY", Action: VIP}); err != nil {
+		t.Fatal(err)
+	}
+	e.Invalidate()
+	d, _ = e.Decide(ctx, user("member", nil), Subject{Title: "VIPONLY"})
+	if d.Action != VIP || d.Allowed {
+		t.Errorf("untrusted vip rule: %+v", d)
+	}
+}
+
+func TestGeneration(t *testing.T) {
+	e := New(newStore(t))
+	g := e.Generation()
+	if _, err := e.load(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	e.Invalidate()
+	if e.Generation() == g {
+		t.Fatal("generation not bumped")
 	}
 }
