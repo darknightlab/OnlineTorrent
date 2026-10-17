@@ -68,3 +68,15 @@ func TestPickLatest(t *testing.T) {
 		t.Errorf("got %+v ep=%v", got, ep)
 	}
 }
+
+func TestPickLatestPrefersAVC(t *testing.T) {
+	mk := func(title string) *Torrent {
+		return &Torrent{Title: title, SizeBytes: 500 << 20, FileList: []string{title + ".mkv"}, PublishedAt: "2026-10-17T00:00:00Z"}
+	}
+	hevc := mk("[A] Show - 02 [1080p][HEVC-10bit]")
+	avc := mk("[B] Show - 02 [1080p][AVC]")
+	got, ep := PickLatest([]*Torrent{hevc, avc}, 2<<30)
+	if got != avc || ep == nil || *ep != 2 {
+		t.Fatalf("got %+v", got)
+	}
+}

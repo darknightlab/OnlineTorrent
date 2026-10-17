@@ -114,6 +114,8 @@ func (c *Catalog) ItemFor(w *meta.Work, now time.Time) (*ScheduleItem, bool) {
 }
 
 var reHiRes = regexp.MustCompile(`(?i)1080|1920`)
+var reHEVC = regexp.MustCompile(`(?i)hevc|x\.?265|h\.?265|10-?bit|ma10p`)
+var reAVC = regexp.MustCompile(`(?i)\bavc\b|x\.?264|h\.?264`)
 var reCHS = regexp.MustCompile(`(?i)简|chs|\bgb\b|\bsc\b`)
 
 // PickLatest chooses the torrent to auto-play for the newest episode.
@@ -148,6 +150,12 @@ func PickLatest(ts []*Torrent, maxBytes int64) (*Torrent, *float64) {
 		}
 		if reCHS.MatchString(t.Title) {
 			sc++
+		}
+		// browsers decode H.264 everywhere; HEVC/10-bit only on some platforms
+		if reHEVC.MatchString(t.Title) {
+			sc -= 3
+		} else if reAVC.MatchString(t.Title) {
+			sc += 3
 		}
 		cands = append(cands, cand{t, *p.Episode, sc})
 		if *p.Episode > maxEp {

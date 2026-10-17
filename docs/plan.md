@@ -73,8 +73,15 @@
 - Portainer 新 stack，数据 `/root/app/onlinetorrent:/data`，端口绑 `192.168.233.8:<port>`，cloudflared 隧道加 hostname。
 - 直接部署到 `www.projectk.org`（用户已确认）；生产服务器只有 131.143.240.2。
 
+## 已实现的补充（计划外）
+- **HTTP WebSeed**：实测欧洲 qB → 国内浏览器的 WebRTC 只有 ~50KB/s（高 RTT 下 SCTP 窗口受限）。利用 qB 5.3 的 `torrents/downloadFile`（支持 Range），由 otd 提供签名的 BEP19 webseed（`/webseed/{exp}.{sig}/{ih}/`），经 Cloudflare 实测 ~9MB/s。后台可设：开关、最低用户等级（默认会员，可作为大会员权益）、延迟秒数（先 P2P 再 HTTP）。只服务 qB 已完整下载的文件。
+- 时间表自动选种优先 AVC/H.264（浏览器兼容），HEVC/10bit 降权。
+
 ## TODO（低优先级）
 - dandanplay 弹幕（需 AppId/Secret，用户暂无账号）
+- 番剧页按集分组（映射库已有文件级集数，前端目前是种子列表 + 字幕组筛选）
+- 映射纠错的后台界面（API `PUT /meta/v1/torrents/{ih}/files/{idx}` 已有）
+- 封面图自建缓存/缩略图（目前直链 lain.bgm.tv / bangumi.moe）
 - Torznab 端点给 Sonarr
 - qBittorrent#24899 观察，如复现再做 reannounce 看门狗
 - 向 qBittorrent 上游反馈 #24512 过滤 wss 的副作用
