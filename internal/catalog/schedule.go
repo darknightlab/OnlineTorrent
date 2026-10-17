@@ -2,9 +2,12 @@ package catalog
 
 import (
 	"context"
+	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -207,6 +210,9 @@ func (c *Catalog) rebuildSchedule(ctx context.Context) {
 	}
 	c.publishSchedule(now, cloneItems(items))
 
+	// covers: resolve api.bgm.tv image redirects once (they can take ~20s) and store the final URL
+	c.resolveCovers(ctx, works, items)
+
 	// phase 2: latest torrent per anime (bounded concurrency; ByTag is cached for an hour).
 	// Only refetch shows that aired within the last 3 days or have no torrent yet.
 	recent := now.AddDate(0, 0, -3).UTC().Format(time.RFC3339)
@@ -262,4 +268,50 @@ func (c *Catalog) publishSchedule(now time.Time, items []*ScheduleItem) {
 	c.schedMu.Lock()
 	c.sched = &Schedule{GeneratedAt: store.Now(), Season: season, Items: items}
 	c.schedMu.Unlock()
+}
+
+// resolveCovers stores the final lain.bgm.tv URL for works that only have a bgm id,
+// so browsers never hit the slow api.bgm.tv redirect.
+func (c *Catalog) resolveCovers(ctx context.Context, works []*meta.Work, items []*ScheduleItem) {
+	byKey := map[string]*ScheduleItem{}
+	for _, it := range items {
+		byKey[it.Key] = it
+	}
+	hc := c.HTTPClient()
+	nc := &http.Client{Transport: hc.Transport, Timeout: 40 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	sem := make(chan struct{}, 2)
+	var wg sync.WaitGroup
+	for _, w := range works {
+		it := byKey[w.Key]
+		id := w.External["bgm"]
+		if it == nil || w.Cover != "" || id == "" {
+			continue
+		}
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer wg.Done()
+			defer func() { <-sem }()
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.bgm.tv/v0/subjects/"+id+"/image?type=common", nil)
+			if err != nil {
+				return
+			}
+			req.Header.Set("User-Agent", c.st.Str(store.KeyBgmUserAgent))
+			resp, err := nc.Do(req)
+			if err != nil {
+				return
+			}
+			resp.Body.Close()
+			loc := resp.Header.Get("Location")
+			u, err := url.Parse(loc)
+			if resp.StatusCode/100 != 3 || err != nil || u.Scheme != "https" || !strings.HasSuffix(u.Host, "bgm.tv") {
+				return
+			}
+			if c.meta.SetCover(ctx, w.Key, loc) == nil {
+				it.Cover = loc
+			}
+		}()
+	}
+	wg.Wait()
 }
