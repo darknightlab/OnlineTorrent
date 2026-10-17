@@ -17,6 +17,17 @@ import { AdminHeader } from "./components"
 
 const KEY = ["admin", "settings"]
 
+/** 常见枚举值的中文显示（保存的仍是原始值） */
+const ENUM_LABEL: Record<string, string> = {
+  allow: "允许",
+  login: "需登录",
+  vip: "需大会员",
+  block: "屏蔽",
+  open: "开放注册",
+  invite: "仅邀请",
+  closed: "关闭注册",
+}
+
 /** 编辑态初值：secret 恒为 ""（表示不修改） */
 function initial(items: SettingItem[]) {
   return Object.fromEntries(items.map((i) => [i.key, i.type === "secret" ? "" : i.value])) as Record<string, SettingValue>
@@ -185,9 +196,14 @@ function SettingRow({ item, value, dirty, onChange }: { item: SettingItem; value
                 role="radio"
                 aria-checked={value === c}
                 onClick={() => onChange(c)}
-                className={cn("h-8 rounded-md px-3 font-mono text-xs", value === c ? "bg-card text-primary-text shadow-sm" : "text-muted-foreground hover:text-foreground")}
+                title={c}
+                className={cn(
+                  "h-8 rounded-md px-3 text-xs font-medium",
+                  !ENUM_LABEL[c] && "font-mono",
+                  value === c ? "bg-card text-primary-text shadow-sm" : "text-muted-foreground hover:text-foreground",
+                )}
               >
-                {c}
+                {ENUM_LABEL[c] ?? c}
               </button>
             ))}
           </div>
@@ -195,7 +211,7 @@ function SettingRow({ item, value, dirty, onChange }: { item: SettingItem; value
           <Select id={id} value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} className="max-w-xs">
             {opts.map((o) => (
               <option key={o} value={o}>
-                {o}
+                {ENUM_LABEL[o] ? `${ENUM_LABEL[o]}（${o}）` : o}
               </option>
             ))}
           </Select>

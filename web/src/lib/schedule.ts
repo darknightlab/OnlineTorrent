@@ -4,12 +4,17 @@ const DAY = 86400_000
 
 export type AirStatus = "updated" | "soon" | null
 
-/** 已更新：24 小时内播出；即将播出：24 小时内将播出 */
+const SOON = 3 * 3600_000
+
+/**
+ * 已更新：24 小时内播出；即将播出：3 小时内将播出。
+ * （“即将播出”若取 24 小时，当天几乎每张卡片都会挂角标，失去提示意义）
+ */
 export function airStatus(item: ScheduleItem, now = Date.now()): AirStatus {
   const last = item.last_air_at ? new Date(item.last_air_at).getTime() : NaN
   if (Number.isFinite(last) && now - last >= 0 && now - last <= DAY) return "updated"
   const next = item.next_air_at ? new Date(item.next_air_at).getTime() : NaN
-  if (Number.isFinite(next) && next - now > 0 && next - now <= DAY) return "soon"
+  if (Number.isFinite(next) && next - now > 0 && next - now <= SOON) return "soon"
   return null
 }
 

@@ -37,7 +37,7 @@ export default function WatchPage() {
         <Player key={state.magnet} magnet={state.magnet} play={state.play} direct={state.direct} hint={hint} shareURL={shareURL} />
       ) : (
         <div className="pt-3 sm:pt-0">
-          <GateFrame>
+          <GateFrame subject={state.status === "loading" ? undefined : hint?.title}>
             {state.status === "loading" && (
               <Gate icon={<Loader2 className="h-7 w-7 animate-spin text-primary" />} title="正在请求播放…" description={hint?.title ?? "服务器正在检查资源并准备做种"} />
             )}
@@ -146,11 +146,18 @@ export default function WatchPage() {
   )
 }
 
-function GateFrame({ children }: { children: React.ReactNode }) {
+function GateFrame({ children, subject }: { children: React.ReactNode; subject?: string }) {
   return (
     <Card className="relative mx-auto max-w-4xl overflow-hidden">
       <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,var(--primary-soft),transparent_60%)]" />
-      <div className="relative flex min-h-[340px] items-center justify-center p-6 sm:aspect-video sm:min-h-0">{children}</div>
+      <div className="relative flex min-h-[340px] flex-col items-center justify-center p-6 sm:aspect-video sm:min-h-0">
+        {children}
+        {subject && (
+          <p className="mt-6 line-clamp-2 max-w-lg wrap-anywhere text-center text-xs text-muted-foreground" title={subject}>
+            {subject}
+          </p>
+        )}
+      </div>
     </Card>
   )
 }

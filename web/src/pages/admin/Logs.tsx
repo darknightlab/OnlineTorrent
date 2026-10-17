@@ -8,6 +8,25 @@ import type { AuditEntry, PlayRecord } from "@/lib/types"
 import { formatDateTime } from "@/lib/format"
 import { AdminHeader, DataView, Mono, type Column } from "./components"
 
+const AUDIT_LABEL: Record<string, string> = {
+  "settings.update": "修改设置",
+  "qb.save": "保存 qB 服务器",
+  "qb.delete": "删除 qB 服务器",
+  "qb.test": "测试 qB 服务器",
+  "user.update": "修改用户",
+  "user.redeem": "兑换大会员",
+  "invite.create": "生成邀请码",
+  "invite.update": "修改邀请码",
+  "redeem.create": "生成兑换码",
+  "rule.save": "保存规则",
+  "rule.create": "新建规则",
+  "rule.delete": "删除规则",
+  "review.resolve": "处理审核",
+  "review.decide": "处理审核",
+  "auth.login": "登录",
+  "play.block": "拦截播放",
+}
+
 export function Plays() {
   const [page, setPage] = useState(1)
   const q = useQuery({ queryKey: ["admin", "plays", page], queryFn: () => api.admin.plays(page), placeholderData: keepPreviousData })
@@ -19,7 +38,7 @@ export function Plays() {
       mobile: "title",
       cell: (p) => (
         <div className="min-w-0 max-w-xl">
-          <p className="line-clamp-2 wrap-anywhere text-[13px]">{p.name}</p>
+          <p className="line-clamp-2 wrap-anywhere text-[13px]">{p.name || <span className="text-muted-foreground">（未知名称）</span>}</p>
           <Mono className="text-[11px] text-muted-foreground">{p.infohash}</Mono>
         </div>
       ),
@@ -44,7 +63,16 @@ export function Audit() {
   const q = useQuery({ queryKey: ["admin", "audit", page], queryFn: () => api.admin.audit(page), placeholderData: keepPreviousData })
   const list = toList(q.data)
   const columns: Column<AuditEntry>[] = [
-    { key: "action", header: "操作", mobile: "title", cell: (a) => <Mono className="text-[13px] font-medium text-foreground">{a.action}</Mono> },
+    { key: "action", header: "操作", mobile: "title", cell: (a) =>
+        AUDIT_LABEL[a.action] ? (
+          <span className="inline-flex flex-wrap items-baseline gap-x-1.5">
+            <span className="text-[13px] font-medium">{AUDIT_LABEL[a.action]}</span>
+            <Mono className="text-[11px] text-muted-foreground">{a.action}</Mono>
+          </span>
+        ) : (
+          <Mono className="text-[13px] font-medium text-foreground">{a.action}</Mono>
+        ),
+    },
     { key: "actor", header: "操作者", cell: (a) => a.actor ?? <span className="text-muted-foreground">系统</span> },
     { key: "target", header: "对象", cell: (a) => <Mono>{a.target}</Mono> },
     { key: "detail", header: "详情", cell: (a) => <span className="text-[13px]">{a.detail}</span> },

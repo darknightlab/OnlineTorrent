@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react"
 import { useNavigate } from "react-router-dom"
 import { ArrowRight, Magnet, Search } from "lucide-react"
 import { cn, parseTorrentInput, watchHref } from "@/lib/utils"
+import { useMediaQuery } from "@/lib/hooks"
 
 /**
  * 统一输入框：磁力链接/infohash → 直接播放；其他文本 → 种子搜索。
@@ -36,6 +37,7 @@ export function TorrentSearchBox({
 
   const Icon = parsed ? Magnet : Search
   const lg = size === "lg"
+  const wide = useMediaQuery("(min-width: 640px)")
   return (
     <form role="search" onSubmit={submit} className={cn("relative w-full", className)}>
       <Icon
@@ -55,10 +57,10 @@ export function TorrentSearchBox({
         spellCheck={false}
         autoComplete="off"
         aria-label="搜索种子，或粘贴磁力链接 / infohash 直接播放"
-        placeholder={placeholder ?? (lg ? "粘贴磁力链接 / infohash 立即播放，或输入关键词搜索" : "搜索种子或粘贴磁力链接")}
+        placeholder={placeholder ?? (lg ? (wide ? "粘贴磁力链接 / infohash 立即播放，或输入关键词搜索" : "搜索或粘贴磁力链接") : "搜索种子或粘贴磁力链接")}
         className={cn(
           "w-full border border-input bg-card text-foreground shadow-sm transition-colors placeholder:text-muted-foreground/80 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/25 [&::-webkit-search-cancel-button]:hidden",
-          lg ? "h-12 rounded-xl pl-12 pr-[7.5rem] text-[15px] sm:h-14 sm:pr-32 sm:text-base" : "h-9 rounded-lg bg-muted/60 pl-9 pr-3 text-sm focus:bg-card",
+          lg ? "h-12 rounded-xl pl-11 pr-[7.25rem] sm:pl-12 text-[15px] sm:h-14 sm:pr-32 sm:text-base" : "h-9 rounded-lg bg-muted/60 pl-9 pr-3 text-sm focus:bg-card",
         )}
       />
       {lg && (

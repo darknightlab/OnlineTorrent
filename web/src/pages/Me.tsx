@@ -54,7 +54,7 @@ export default function MePage() {
           <div className="px-3 py-3">
             <dt className="text-xs text-muted-foreground">大会员</dt>
             <dd className="mt-0.5 text-sm font-semibold">
-              {user.role === "admin" ? "管理员不限" : vipActive ? `${formatDate(user.vip_until)} 到期` : "未开通"}
+              {user.role === "admin" ? "永久（管理员）" : vipActive ? `${formatDate(user.vip_until)} 到期` : "未开通"}
             </dd>
           </div>
           <div className="px-3 py-3">

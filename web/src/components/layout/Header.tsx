@@ -1,4 +1,4 @@
-import { NavLink, Link, useNavigate } from "react-router-dom"
+import { NavLink, Link, useLocation, useNavigate } from "react-router-dom"
 import { LogIn, LogOut, Search, Shield, User as UserIcon } from "lucide-react"
 import { Logo } from "./Logo"
 import { ThemeToggle } from "./ThemeToggle"
@@ -24,6 +24,8 @@ const nav = [
 ]
 
 export function Header() {
+  // 搜索页自带大搜索框，顶栏不再重复显示（保留占位以免右侧按钮跳动）
+  const onSearch = useLocation().pathname === "/search"
   return (
     <header className="sticky top-0 z-40 border-b bg-header pt-safe backdrop-blur-md supports-[backdrop-filter]:bg-header">
       <Container className="flex h-14 items-center gap-3 lg:gap-5">
@@ -46,7 +48,7 @@ export function Header() {
           ))}
         </nav>
         <div className="ml-auto hidden min-w-0 flex-1 md:block md:max-w-xs lg:max-w-md xl:max-w-lg">
-          <TorrentSearchBox size="sm" />
+          {!onSearch && <TorrentSearchBox size="sm" />}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-0.5 md:ml-0">
           <Button asChild variant="ghost" size="icon" className="text-muted-foreground md:hidden" aria-label="搜索">

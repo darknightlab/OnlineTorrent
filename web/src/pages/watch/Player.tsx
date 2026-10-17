@@ -217,7 +217,15 @@ export function Player({
       <section className="min-w-0">
         {/* 播放区：移动端吸顶、全宽 */}
         <div className="sticky top-14 z-20 -mx-3 bg-black sm:static sm:mx-0 sm:overflow-hidden sm:rounded-xl sm:shadow-lg">
-          <div className="relative aspect-video w-full bg-black">
+          <div className="relative aspect-video w-full overflow-hidden bg-black">
+            {/* 未出画面时：竖版封面两侧用模糊背景填满，避免大片纯黑 */}
+            {poster && !url && (
+              <div
+                aria-hidden
+                className="absolute inset-0 scale-110 bg-cover bg-center opacity-50 blur-2xl"
+                style={{ backgroundImage: `url("${poster}")` }}
+              />
+            )}
             {file?.kind === "video" || !file ? (
               <video
                 key={`${current}-${url ?? ""}`}

@@ -24,11 +24,13 @@ export default function Home() {
   return (
     <Container className="space-y-6 py-4 sm:space-y-8 sm:py-6">
       <Hero />
+      {/* 窄屏：公告放在时间表之前，避免被埋在长列表下方 */}
+      <Announcement className="xl:hidden" />
       <ScheduleSection />
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
         <LatestSection />
-        <aside className="space-y-4">
-          <Announcement />
+        <aside className="grid content-start gap-4">
+          <Announcement className="hidden xl:block" />
           <Tips />
         </aside>
       </div>
@@ -105,17 +107,17 @@ function ScheduleSection() {
         id="schedule-title"
         icon={CalendarDays}
         title={
-          <span className="flex items-baseline gap-2">
+          <span className="flex items-baseline gap-2 whitespace-nowrap">
             新番时间表
             {season && (
-              <span className="text-xs font-normal text-muted-foreground">
+              <span className="hidden text-xs font-normal text-muted-foreground min-[400px]:inline">
                 {season[1]} 年 {Number(season[2])} 月新番
               </span>
             )}
           </span>
         }
         extra={
-          <span className="flex items-center gap-3 text-xs text-muted-foreground">
+          <span className="flex shrink-0 items-center gap-3 whitespace-nowrap text-xs text-muted-foreground">
             <span className="hidden sm:inline">北京时间 · 按播出时间排序</span>
             {(hiddenCount > 0 || showAll) && (
               <button
@@ -151,7 +153,7 @@ function ScheduleSection() {
               <span className="leading-tight">{isToday ? "今天" : WEEKDAYS[w]}</span>
               <span className={cn("text-[10px] tabular-nums leading-tight sm:text-[11px]", active ? "text-white/85" : "text-muted-foreground/80")}>
                 {isToday ? WEEKDAYS[w] : weekdayDate(w, new Date(now))}
-                <span className="hidden sm:inline">{counts.get(w) ? ` · ${counts.get(w)}` : ""}</span>
+                <span className="hidden sm:inline">{counts.get(w) ? ` · ${counts.get(w)} 部` : ""}</span>
               </span>
               {isToday && !active && <span aria-hidden className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-primary" />}
             </button>
@@ -219,11 +221,11 @@ function LatestSection() {
   )
 }
 
-function Announcement() {
+function Announcement({ className }: { className?: string }) {
   const { data } = useSite()
   if (!data?.announcement_md) return null
   return (
-    <Card className="p-4">
+    <Card className={cn("p-4", className)}>
       <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold">
         <Megaphone className="h-4 w-4 text-accent-text" />
         站点公告

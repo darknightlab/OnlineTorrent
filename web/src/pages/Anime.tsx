@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react"
 import { Link, useParams } from "react-router-dom"
-import { CalendarClock, ExternalLink, Film, ListVideo, Play, Tv } from "lucide-react"
+import { CalendarClock, CalendarDays, ExternalLink, Film, ListVideo, Play, Tv } from "lucide-react"
 import { Container } from "@/components/layout/Container"
 import { Cover } from "@/components/Cover"
 import { TorrentList, TorrentTableHead } from "@/components/TorrentList"
@@ -57,6 +57,8 @@ export default function AnimePage() {
   const title = displayTitle(a)
   const status = airStatus(a, now)
   const latest = a.latest_torrent ?? data.torrents[0]
+  // bgm 简介常带大段空行/行尾空格，压缩成最多一个空行
+  const summary = (a.summary ?? "").replace(/\r\n?/g, "\n").replace(/[ \t\u3000]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim()
   const ext = EXTERNAL.filter((e) => a.external?.[e.key] !== null && a.external?.[e.key] !== undefined)
 
   return (
@@ -80,7 +82,7 @@ export default function AnimePage() {
               <Meta icon={Tv} label="放送">
                 每{WEEKDAYS[a.weekday]} {a.air_time}
               </Meta>
-              <Meta icon={CalendarClock} label="开播">
+              <Meta icon={CalendarDays} label="开播">
                 {formatDate(a.begin)}
               </Meta>
               {a.next_air_at && (
@@ -124,13 +126,13 @@ export default function AnimePage() {
       </section>
 
       <Container className="space-y-6 py-5 sm:py-6">
-        {(a.summary || ext.length > 0) && (
+        {(summary || ext.length > 0) && (
           <Card className="p-4 sm:p-5">
             <h2 className="mb-2 text-sm font-semibold">简介</h2>
-            <p className={cn("whitespace-pre-line text-[13px] leading-7 text-foreground/85 sm:text-sm", !expanded && "line-clamp-4 sm:line-clamp-none")}>
-              {a.summary || "暂无简介"}
+            <p className={cn("max-w-4xl whitespace-pre-line text-[13px] leading-7 text-foreground/85 sm:text-sm", !expanded && "line-clamp-4 sm:line-clamp-none")}>
+              {summary || "暂无简介"}
             </p>
-            {a.summary && a.summary.length > 80 && (
+            {summary.length > 80 && (
               <button type="button" onClick={() => setExpanded((v) => !v)} className="mt-1 h-8 text-[13px] font-medium text-primary-text sm:hidden">
                 {expanded ? "收起" : "展开全部"}
               </button>
