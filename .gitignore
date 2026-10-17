@@ -1,0 +1,12 @@
+frontend-legacy/
+backend-legacy/
+/data/
+*.db
+*.db-*
+node_modules/
+web/dist/*
+!web/dist/.keep
+/otd
+.playwright-mcp/
+.playwright-cli/
+docs/screenshots/
