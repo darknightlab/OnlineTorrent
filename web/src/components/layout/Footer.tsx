@@ -8,7 +8,7 @@ export function Footer() {
         <div className="flex shrink-0 items-center gap-2">
           <LogoMark className="h-5 w-5" />
           <span className="whitespace-nowrap">
-            © {new Date().getFullYear()} Project Kawaii · projectk.org
+            © 2022–{new Date().getFullYear()} Project Kawaii · projectk.org
           </span>
         </div>
         <p className="leading-relaxed lg:text-right">

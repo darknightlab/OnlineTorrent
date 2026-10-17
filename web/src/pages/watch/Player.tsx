@@ -22,7 +22,6 @@ import {
   Users,
   Captions,
   Tv,
-  Zap,
 } from "lucide-react"
 import { loadEngine } from "@/player/engine"
 import { isPlayable, likelyUnsupported, type Engine, type FileKind, type FileSnap, type LogLevel, type Session, type TorrentSnap } from "@/player/types"
@@ -187,8 +186,6 @@ export function Player({
     }
   }, [session, direct, ih, meReady, canSeed, canWebseed, log])
 
-  /** 无做种权限时的提示：游客引导登录，已登录则说明等级不支持 */
-  const accelHint = !direct && play && meReady && !canSeed ? (loggedIn ? "tier" : "login") : null
 
   // 轮询状态
   useEffect(() => {
@@ -406,7 +403,6 @@ export function Player({
                 </span>
               ) : null}
             </div>
-            {accelHint && <AccelHint kind={accelHint} next={here} />}
           </div>
           <div className="flex shrink-0 gap-2">
             <Button variant="soft" size="sm" onClick={share} className="flex-1 md:flex-none">
@@ -506,24 +502,6 @@ export function Player({
 
       {infoHash && canReport && <ReportDialog open={reportOpen} onOpenChange={setReportOpen} infohash={infoHash} title={title} />}
     </div>
-  )
-}
-
-function AccelHint({ kind, next }: { kind: "login" | "tier"; next: string }) {
-  return (
-    <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
-      <Zap className="h-3.5 w-3.5 shrink-0 text-accent-text" />
-      {kind === "login" ? (
-        <span>
-          登录后服务器可参与做种，播放更快更稳定
-          <Link to={`/login?next=${encodeURIComponent(next)}`} className="ml-1.5 font-medium text-accent-text hover:underline">
-            登录
-          </Link>
-        </span>
-      ) : (
-        <span>当前等级不支持服务器加速</span>
-      )}
-    </p>
   )
 }
 

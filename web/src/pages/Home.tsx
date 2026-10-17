@@ -1,13 +1,12 @@
 import { useMemo, useState } from "react"
-import { Link, Navigate, useLocation } from "react-router-dom"
-import { CalendarDays, ChevronRight, Flame, Lightbulb, Megaphone } from "lucide-react"
+import { Navigate, useLocation } from "react-router-dom"
+import { CalendarDays, Megaphone } from "lucide-react"
 import { Container } from "@/components/layout/Container"
 import { AnimeCard, AnimeCardSkeleton } from "@/components/AnimeCard"
-import { TorrentList, TorrentListSkeleton, TorrentTableHead } from "@/components/TorrentList"
 import { EmptyState, ErrorState, SectionHeader } from "@/components/states"
 import { Markdown } from "@/components/Markdown"
 import { Card } from "@/components/ui/card"
-import { useLatest, useSchedule, useSite } from "@/lib/queries"
+import { useSchedule, useSite } from "@/lib/queries"
 import { byWeekday } from "@/lib/schedule"
 import { todayWeekday, WEEKDAYS, weekdayDate } from "@/lib/format"
 import { useDocumentTitle, useNow } from "@/lib/hooks"
@@ -22,16 +21,8 @@ export default function Home() {
   if (new URLSearchParams(loc.search).has("uri")) return <Navigate replace to={`/watch${loc.search}`} />
   return (
     <Container className="space-y-6 py-4 sm:space-y-8 sm:py-6">
-      {/* 窄屏：公告放在时间表之前，避免被埋在长列表下方 */}
-      <Announcement className="xl:hidden" />
+      <Announcement />
       <ScheduleSection />
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <LatestSection />
-        <aside className="grid content-start gap-4">
-          <Announcement className="hidden xl:block" />
-          <Tips />
-        </aside>
-      </div>
     </Container>
   )
 }
@@ -142,44 +133,6 @@ function ScheduleSection() {
   )
 }
 
-function LatestSection() {
-  const now = useNow()
-  const { data, isPending, error, refetch } = useLatest(1)
-  return (
-    <section aria-labelledby="latest-title" className="min-w-0">
-      <SectionHeader
-        id="latest-title"
-        icon={Flame}
-        title="最新种子"
-        extra={
-          <Link to="/latest" className="inline-flex h-9 items-center gap-0.5 rounded-md px-2 text-[13px] text-muted-foreground hover:text-primary-text">
-            查看更多
-            <ChevronRight className="h-4 w-4" />
-          </Link>
-        }
-      />
-      <Card className="overflow-hidden">
-        <TorrentTableHead />
-        {isPending ? (
-          <TorrentListSkeleton rows={10} />
-        ) : error ? (
-          <ErrorState error={error} onRetry={() => refetch()} />
-        ) : data.items.length ? (
-          <TorrentList items={data.items.slice(0, 16)} now={now} />
-        ) : (
-          <EmptyState title="暂无种子" />
-        )}
-        <Link
-          to="/latest"
-          className="flex h-11 items-center justify-center gap-1 border-t text-[13px] font-medium text-primary-text hover:bg-muted/60"
-        >
-          浏览全部最新种子
-          <ChevronRight className="h-4 w-4" />
-        </Link>
-      </Card>
-    </section>
-  )
-}
 
 function Announcement({ className }: { className?: string }) {
   const { data } = useSite()
@@ -195,28 +148,3 @@ function Announcement({ className }: { className?: string }) {
   )
 }
 
-function Tips() {
-  return (
-    <Card className="p-4">
-      <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold">
-        <Lightbulb className="h-4 w-4 text-warning-text" />
-        观看提示
-      </h2>
-      <ol className="space-y-2 text-[13px] leading-relaxed text-foreground/85">
-        {[
-          "推荐使用最新版 Chrome 或 Edge 浏览器，兼容性最好。",
-          "HEVC (H.265)、10bit、AC3/DTS 音轨在部分浏览器可能无法播放，可下载后用本地播放器观看。",
-          "播放时浏览器会同时为其他观众上传数据，请保持页面打开以帮助分享。",
-          "会员 / 大会员资源需要登录，大会员可通过兑换码开通。",
-        ].map((t, i) => (
-          <li key={i} className="flex gap-2">
-            <span className="mt-[3px] inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-primary-soft text-[10px] font-semibold text-primary-text">
-              {i + 1}
-            </span>
-            <span>{t}</span>
-          </li>
-        ))}
-      </ol>
-    </Card>
-  )
-}
