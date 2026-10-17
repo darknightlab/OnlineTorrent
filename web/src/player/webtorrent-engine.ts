@@ -171,7 +171,7 @@ class WTSession implements Session {
     for (const u of urls) {
       try {
         this.torrent.addWebSeed(u)
-        this.log("info", `已添加 WebSeed：${u}`)
+        this.log("info", "已启用 HTTP WebSeed 加速")
       } catch (e) {
         this.log("warn", `WebSeed 添加失败：${String(e)}`)
       }

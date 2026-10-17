@@ -135,6 +135,8 @@ export interface PlayResponse {
   magnet: string
   seeded_by: string[]
   webseeds: string[]
+  /** 播放开始后多少秒再加入 webseed */
+  webseed_delay_sec?: number
   meta: { anime_key: string; episode: number } | null
 }
 

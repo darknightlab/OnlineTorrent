@@ -76,6 +76,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		return u.Username, true
 	}))
+	mux.HandleFunc("/webseed/", s.serveWebseed)
 	mux.Handle("/", s.spa())
 	return s.withUser(mux)
 }

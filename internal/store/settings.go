@@ -43,6 +43,10 @@ const (
 	KeyBgmUserAgent      = "upstream.bgm_user_agent"
 	KeyCleanupEnabled    = "qb.cleanup_enabled"
 	KeyQBAddTimeoutSec   = "qb.add_timeout_sec"
+	KeyWebseedEnabled    = "webseed.enabled"
+	KeyWebseedMinRole    = "webseed.min_role"
+	KeyWebseedDelaySec   = "webseed.delay_sec"
+	KeyWebseedSecret     = "webseed.secret"
 )
 
 var defaultTrackers = []string{
@@ -80,6 +84,11 @@ func SettingsSchema() []SettingSpec {
 
 		{Key: KeyCleanupEnabled, Group: "qBittorrent", Type: "bool", Label: "自动清理做种完成的种子", Description: "删除本站分类下已达到分享限制而停止的种子（含文件）", Default: true},
 		{Key: KeyQBAddTimeoutSec, Group: "qBittorrent", Type: "number", Label: "推送超时（秒）", Default: 8},
+
+		{Key: KeyWebseedEnabled, Group: "WebSeed", Type: "bool", Label: "启用 HTTP WebSeed 加速", Description: "qB 下载完成的文件可经本站以 HTTP 方式补充传输（经 Cloudflare 隧道，消耗服务器上行流量）", Default: true},
+		{Key: KeyWebseedMinRole, Group: "WebSeed", Type: "enum", Label: "WebSeed 最低用户等级", Options: []string{"guest", "member", "vip"}, Description: "达到该等级的用户才会获得 WebSeed 地址", Default: "member"},
+		{Key: KeyWebseedDelaySec, Group: "WebSeed", Type: "number", Label: "WebSeed 延迟（秒）", Description: "开始播放后等待多少秒再启用 WebSeed，优先使用 P2P", Default: 8},
+		{Key: KeyWebseedSecret, Group: "WebSeed", Type: "secret", Label: "WebSeed 签名密钥", Description: "留空自动生成；修改后已发出的 WebSeed 地址立即失效", Default: ""},
 	}
 }
 
@@ -104,6 +113,10 @@ func (s *Store) seedSettings(ctx context.Context) error {
 		if _, err := s.W.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO NOTHING`, spec.Key, string(b)); err != nil {
 			return err
 		}
+	}
+	// generate the webseed signing key once
+	if _, err := s.W.ExecContext(ctx, `UPDATE settings SET value = ? WHERE key = ? AND value IN ('""', '')`, `"`+RandomToken(32)+`"`, KeyWebseedSecret); err != nil {
+		return err
 	}
 	return s.reloadSettings(ctx)
 }

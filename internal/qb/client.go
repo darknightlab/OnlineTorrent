@@ -25,6 +25,7 @@ import (
 type Client struct {
 	base, user, pass, apiKey string
 	hc                       *http.Client
+	hcStream                 *http.Client
 
 	mu        sync.Mutex
 	loggedIn  bool
@@ -43,7 +44,8 @@ func NewClient(base, user, pass, apiKey string) *Client {
 	jar, _ := cookiejar.New(nil)
 	return &Client{
 		base: strings.TrimRight(base, "/"), user: user, pass: pass, apiKey: apiKey,
-		hc: &http.Client{Jar: jar, Timeout: 20 * time.Second},
+		hc:       &http.Client{Jar: jar, Timeout: 20 * time.Second},
+		hcStream: &http.Client{Jar: jar},
 	}
 }
 
@@ -90,19 +92,28 @@ func (c *Client) login(ctx context.Context) error {
 	return nil
 }
 
-func (c *Client) do(ctx context.Context, method, path string, form url.Values) ([]byte, int, error) {
+// raw performs an authenticated request (re-logging in once on 401/403) and returns the
+// open response; the caller must close the body. stream selects the client without a timeout.
+func (c *Client) raw(ctx context.Context, method, path string, form url.Values, hdr http.Header, stream bool) (*http.Response, error) {
+	hc := c.hc
+	if stream {
+		hc = c.hcStream
+	}
 	try := func() (*http.Response, error) {
 		var body io.Reader
 		if form != nil && method == http.MethodPost {
 			body = strings.NewReader(form.Encode())
 		}
 		u := c.base + "/api/v2/" + path
-		if form != nil && method == http.MethodGet {
+		if form != nil && method != http.MethodPost {
 			u += "?" + form.Encode()
 		}
 		req, err := http.NewRequestWithContext(ctx, method, u, body)
 		if err != nil {
 			return nil, err
+		}
+		for k, v := range hdr {
+			req.Header[k] = v
 		}
 		if body != nil {
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -111,7 +122,7 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values) (
 		if c.apiKey != "" {
 			req.Header.Set("Authorization", "Bearer "+c.apiKey)
 		}
-		return c.hc.Do(req)
+		return hc.Do(req)
 	}
 	var gen uint64
 	if c.apiKey == "" {
@@ -120,12 +131,12 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values) (
 		gen = c.loginGen
 		c.mu.Unlock()
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
 	}
 	resp, err := try()
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	if (resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusUnauthorized) && c.apiKey == "" {
 		resp.Body.Close()
@@ -133,11 +144,17 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values) (
 		err := c.ensureLogin(ctx, gen, true)
 		c.mu.Unlock()
 		if err != nil {
-			return nil, 0, err
+			return nil, err
 		}
-		if resp, err = try(); err != nil {
-			return nil, 0, err
-		}
+		return try()
+	}
+	return resp, nil
+}
+
+func (c *Client) do(ctx context.Context, method, path string, form url.Values) ([]byte, int, error) {
+	resp, err := c.raw(ctx, method, path, form, nil, false)
+	if err != nil {
+		return nil, 0, err
 	}
 	defer resp.Body.Close()
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
@@ -152,6 +169,16 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values) (
 		return b, resp.StatusCode, fmt.Errorf("qBittorrent %s: HTTP %d %s", path, resp.StatusCode, msg)
 	}
 	return b, resp.StatusCode, nil
+}
+
+// DownloadFile streams one file of a torrent (qB ≥ 5.3, WebAPI 2.16.0: torrents/downloadFile),
+// forwarding the Range header. The caller must close the body.
+func (c *Client) DownloadFile(ctx context.Context, hash string, index int, rangeHdr string) (*http.Response, error) {
+	h := http.Header{}
+	if rangeHdr != "" {
+		h.Set("Range", rangeHdr)
+	}
+	return c.raw(ctx, http.MethodGet, "torrents/downloadFile", url.Values{"hash": {hash}, "file": {strconv.Itoa(index)}}, h, true)
 }
 
 // Version returns the app version, e.g. "v5.3.0beta1".
@@ -247,9 +274,10 @@ func (c *Client) Info(ctx context.Context, category string, hashes ...string) ([
 
 // File is a torrents/files entry.
 type File struct {
-	Index int    `json:"index"`
-	Name  string `json:"name"`
-	Size  int64  `json:"size"`
+	Index    int     `json:"index"`
+	Name     string  `json:"name"`
+	Size     int64   `json:"size"`
+	Progress float64 `json:"progress"`
 }
 
 // Files lists a torrent's files (empty until metadata is fetched).

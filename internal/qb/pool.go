@@ -2,8 +2,10 @@ package qb
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -301,4 +303,47 @@ func (p *Pool) OnlineCount() (int, int) {
 		}
 	}
 	return on, total
+}
+
+type filesEntry struct {
+	files []File
+	exp   time.Time
+}
+
+var filesCache sync.Map // serverID|hash -> filesEntry
+
+// FindFile locates a fully downloaded file of torrent ih whose path matches reqPath
+// (BEP19 webseed request path). An empty reqPath selects the only file of a
+// single-file torrent. It returns the server holding it.
+func (p *Pool) FindFile(ctx context.Context, ih, reqPath string) (*Server, File, bool) {
+	reqPath = strings.Trim(reqPath, "/")
+	for _, s := range p.Servers() {
+		if !s.Cfg.Enabled || !s.Status().Online {
+			continue
+		}
+		key := fmt.Sprintf("%d|%s", s.Cfg.ID, ih)
+		var files []File
+		if e, ok := filesCache.Load(key); ok && time.Now().Before(e.(filesEntry).exp) {
+			files = e.(filesEntry).files
+		} else {
+			cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+			fs, err := s.Client.Files(cctx, ih)
+			cancel()
+			if err != nil {
+				continue
+			}
+			files = fs
+			filesCache.Store(key, filesEntry{files, time.Now().Add(20 * time.Second)})
+		}
+		for _, f := range files {
+			if f.Progress < 1 {
+				continue
+			}
+			name := strings.Trim(f.Name, "/")
+			if (reqPath == "" && len(files) == 1) || name == reqPath || strings.HasSuffix(name, "/"+reqPath) || strings.HasSuffix(reqPath, "/"+name) {
+				return s, f, true
+			}
+		}
+	}
+	return nil, File{}, false
 }

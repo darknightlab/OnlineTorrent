@@ -35,7 +35,9 @@ type playResp struct {
 	Magnet   string        `json:"magnet"`
 	SeededBy []string      `json:"seeded_by"`
 	Webseeds []string      `json:"webseeds"`
-	Meta     *playMeta     `json:"meta"`
+	// seconds the client should wait before adding webseeds (prefer P2P first)
+	WebseedDelaySec int       `json:"webseed_delay_sec"`
+	Meta            *playMeta `json:"meta"`
 }
 
 func denyError(d policy.Decision, u *store.User) error {
@@ -158,6 +160,12 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request) error {
 	resp := playResp{
 		Access: d.Access(), Infohash: t.Infohash, Name: t.Title,
 		Magnet: magnet.Build(t.Infohash, t.Title, trackers), SeededBy: push.SeededBy, Webseeds: []string{},
+		WebseedDelaySec: int(s.St.Num(store.KeyWebseedDelaySec)),
+	}
+	if len(push.SeededBy) > 0 {
+		if ws := s.webseedURLs(r, u, t.Infohash); ws != nil {
+			resp.Webseeds = ws
+		}
 	}
 	if tm, err := s.Meta.GetTorrentMap(ctx, t.Infohash); err == nil {
 		for _, f := range tm.Files {

@@ -115,7 +115,15 @@ export function Player({
         s = await eng.start(magnet, { announce: site.trackers, iceServers: site.ice_servers as RTCIceServer[] })
         if (cancelled) return s.destroy()
         unsubs.push(s.on("log", log))
-        if (play?.webseeds?.length) s.addWebSeeds(play.webseeds)
+        if (play?.webseeds?.length) {
+          const seeds = play.webseeds
+          const delay = Math.max(0, play.webseed_delay_sec ?? 0)
+          if (delay > 0) log("info", `${delay} 秒后启用 HTTP WebSeed 加速（优先使用 P2P）`)
+          const timer = setTimeout(() => {
+            if (!cancelled && s) s.addWebSeeds(seeds)
+          }, delay * 1000)
+          unsubs.push(() => clearTimeout(timer))
+        }
         setSession(s)
         const ok = await eng.streamingReady()
         if (!cancelled) {
