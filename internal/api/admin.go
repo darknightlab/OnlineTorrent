@@ -108,9 +108,9 @@ func (s *Server) adminPutSettings(w http.ResponseWriter, r *http.Request) error 
 
 type qbView struct {
 	store.QBServer
-	Status    qb.Status `json:"status"`
-	HasPass   bool      `json:"has_password"`
-	HasAPIKey bool      `json:"has_api_key"`
+	qb.Status
+	HasPass   bool `json:"has_password"`
+	HasAPIKey bool `json:"has_api_key"`
 }
 
 func (s *Server) qbViews(r *http.Request) ([]qbView, error) {
@@ -327,7 +327,11 @@ func (s *Server) adminPolicyTest(w http.ResponseWriter, r *http.Request) error {
 	for _, role := range []string{store.RoleGuest, store.RoleMember, store.RoleVIP, store.RoleAdmin} {
 		roles[role] = policy.Permits(role, d.Action)
 	}
-	httpx.JSON(w, 200, map[string]any{"decision": d, "access": policy.Access{Action: d.Action, Reason: d.Reason}, "allowed_for": roles})
+	var matched *store.Rule
+	if d.RuleID != 0 {
+		matched, _ = s.St.GetRule(r.Context(), d.RuleID)
+	}
+	httpx.JSON(w, 200, map[string]any{"decision": d, "access": policy.Access{Action: d.Action, Reason: d.Reason}, "matched_rule": matched, "allowed_for": roles})
 	return nil
 }
 

@@ -1,0 +1,13 @@
+# Production stack (Portainer, server 131.143.240.2). Data lives in /root/app/onlinetorrent.
+# First admin: podman exec onlinetorrent otd user -db /data/otd.db -username <name> -password <pw> -role admin
+services:
+  onlinetorrent:
+    image: docker.io/darknightlab/onlinetorrent:main
+    container_name: onlinetorrent
+    restart: always
+    ports:
+      - "192.168.233.8:23380:80"
+    volumes:
+      - /root/app/onlinetorrent:/data
+    environment:
+      - TZ=Asia/Shanghai

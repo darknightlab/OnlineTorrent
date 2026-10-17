@@ -106,8 +106,8 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	s.St.AddPlay(ctx, store.Play{Infohash: t.Infohash, Title: t.Title, IP: httpx.ClientIP(r), Action: map[bool]string{true: "allow", false: "deny:" + d.Action}[d.Allowed]}, uid(u))
 	if !d.Allowed {
+		s.St.AddPlay(ctx, store.Play{Infohash: t.Infohash, Title: t.Title, IP: httpx.ClientIP(r), Action: d.Action}, uid(u))
 		return denyError(d, u)
 	}
 
@@ -127,6 +127,7 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request) error {
 		timeout = 8 * time.Second
 	}
 	push := s.Pool.Push(ctx, t.Infohash, t.Title, append(append([]string{}, trackers...), extraTrackers...), timeout)
+	s.St.AddPlay(ctx, store.Play{Infohash: t.Infohash, Title: t.Title, IP: httpx.ClientIP(r), Action: policy.Allow, SeededBy: strings.Join(push.SeededBy, ",")}, uid(u))
 	if len(push.Errors) > 0 {
 		s.Log.Warn("push errors", "ih", t.Infohash, "errors", push.Errors)
 	}

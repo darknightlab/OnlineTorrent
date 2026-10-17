@@ -337,8 +337,9 @@ func (s *Server) getAnime(w http.ResponseWriter, r *http.Request) error {
 		Type     string            `json:"type"`
 		Official string            `json:"official_site"`
 		External map[string]string `json:"external"`
+		Tags     []string          `json:"tags"`
 	}
-	a := animeOut{ScheduleItem: item, Summary: work.Summary, Type: work.Type, Official: work.Official, External: work.External}
+	a := animeOut{ScheduleItem: item, Summary: work.Summary, Type: work.Type, Official: work.Official, External: work.External, Tags: []string{}}
 	if item == nil {
 		a.ScheduleItem = &catalog.ScheduleItem{Key: work.Key, Title: work.Title, TitleCN: work.TitleCN, Cover: s.Cat.CoverFor(work)}
 	}

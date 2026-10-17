@@ -1,0 +1,78 @@
+import { useState, type FormEvent } from "react"
+import { useNavigate } from "react-router-dom"
+import { ArrowRight, Magnet, Search } from "lucide-react"
+import { cn, parseTorrentInput, watchHref } from "@/lib/utils"
+
+/**
+ * 统一输入框：磁力链接/infohash → 直接播放；其他文本 → 种子搜索。
+ */
+export function TorrentSearchBox({
+  size = "lg",
+  defaultValue = "",
+  autoFocus,
+  placeholder,
+  className,
+}: {
+  size?: "sm" | "lg"
+  defaultValue?: string
+  autoFocus?: boolean
+  placeholder?: string
+  className?: string
+}) {
+  const [value, setValue] = useState(defaultValue)
+  const navigate = useNavigate()
+  const parsed = parseTorrentInput(value)
+
+  function submit(e: FormEvent) {
+    e.preventDefault()
+    const v = value.trim()
+    if (!v) return
+    const p = parseTorrentInput(v)
+    if (p) {
+      navigate("magnet" in p ? watchHref({ uri: p.magnet }) : watchHref({ ih: p.infohash }))
+      if (size === "sm") setValue("")
+    } else navigate(`/search?q=${encodeURIComponent(v)}`)
+  }
+
+  const Icon = parsed ? Magnet : Search
+  const lg = size === "lg"
+  return (
+    <form role="search" onSubmit={submit} className={cn("relative w-full", className)}>
+      <Icon
+        aria-hidden
+        className={cn(
+          "pointer-events-none absolute top-1/2 -translate-y-1/2 text-muted-foreground",
+          lg ? "left-4 h-5 w-5" : "left-3 h-4 w-4",
+          parsed && "text-primary-text",
+        )}
+      />
+      <input
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        autoFocus={autoFocus}
+        type="search"
+        enterKeyHint={parsed ? "go" : "search"}
+        spellCheck={false}
+        autoComplete="off"
+        aria-label="搜索种子，或粘贴磁力链接 / infohash 直接播放"
+        placeholder={placeholder ?? (lg ? "粘贴磁力链接 / infohash 立即播放，或输入关键词搜索" : "搜索种子或粘贴磁力链接")}
+        className={cn(
+          "w-full border border-input bg-card text-foreground shadow-sm transition-colors placeholder:text-muted-foreground/80 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/25 [&::-webkit-search-cancel-button]:hidden",
+          lg ? "h-12 rounded-xl pl-12 pr-[7.5rem] text-[15px] sm:h-14 sm:pr-32 sm:text-base" : "h-9 rounded-lg bg-muted/60 pl-9 pr-3 text-sm focus:bg-card",
+        )}
+      />
+      {lg && (
+        <button
+          type="submit"
+          className={cn(
+            "absolute right-1.5 top-1/2 inline-flex h-9 -translate-y-1/2 items-center gap-1.5 rounded-lg px-3.5 text-sm font-medium text-white shadow-sm transition-colors sm:h-11 sm:px-5",
+            parsed ? "bg-primary hover:bg-primary-hover" : "bg-accent hover:bg-accent-hover",
+          )}
+        >
+          {parsed ? "立即播放" : "搜索"}
+          <ArrowRight className="h-4 w-4" />
+        </button>
+      )}
+    </form>
+  )
+}

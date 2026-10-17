@@ -1,0 +1,10 @@
+frontend-legacy
+backend-legacy
+web/node_modules
+web/dist
+docs
+.git
+.playwright-cli
+.playwright-mcp
+*.db
+*.db-*

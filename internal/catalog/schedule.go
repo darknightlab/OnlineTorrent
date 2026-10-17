@@ -4,6 +4,7 @@ import (
 	"context"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,7 +25,7 @@ type ScheduleItem struct {
 	LastAirAt     *string           `json:"last_air_at"`
 	NextAirAt     *string           `json:"next_air_at"`
 	EpisodesAired int               `json:"episodes_aired"`
-	BgmID         *string           `json:"bgm_id"`
+	BgmID         *int64            `json:"bgm_id"`
 	MoeTagID      *string           `json:"moe_tag_id"`
 	External      map[string]string `json:"external,omitempty"`
 	LatestTorrent *Torrent          `json:"latest_torrent"`
@@ -62,7 +63,15 @@ func (c *Catalog) Schedule() *Schedule {
 }
 
 // CoverFor returns the best cover for a work.
+// bgm.tv's 400px "common" image is preferred (bangumi.moe covers can be 2000px+),
+// bangumi.moe is the fallback.
 func (c *Catalog) CoverFor(w *meta.Work) string {
+	if w.Cover != "" {
+		return w.Cover
+	}
+	if id := w.External["bgm"]; id != "" {
+		return "https://api.bgm.tv/v0/subjects/" + id + "/image?type=common"
+	}
 	if id := w.External["bangumi_moe"]; id != "" {
 		c.coversMu.RLock()
 		cv := c.covers[id]
@@ -70,12 +79,6 @@ func (c *Catalog) CoverFor(w *meta.Work) string {
 		if cv != "" {
 			return cv
 		}
-	}
-	if w.Cover != "" {
-		return w.Cover
-	}
-	if id := w.External["bgm"]; id != "" {
-		return "https://api.bgm.tv/v0/subjects/" + id + "/image?type=common"
 	}
 	return ""
 }
@@ -99,7 +102,7 @@ func (c *Catalog) ItemFor(w *meta.Work, now time.Time) (*ScheduleItem, bool) {
 		Weekday: int(local.Weekday()), AirTime: local.Format("15:04"),
 		LastAirAt: ts(a.Last), NextAirAt: ts(a.Next), EpisodesAired: a.Aired, External: w.External,
 	}
-	if v := w.External["bgm"]; v != "" {
+	if v, err := strconv.ParseInt(w.External["bgm"], 10, 64); err == nil {
 		it.BgmID = &v
 	}
 	if v := w.External["bangumi_moe"]; v != "" {
@@ -167,6 +170,8 @@ func PickLatest(ts []*Torrent, maxBytes int64) (*Torrent, *float64) {
 }
 
 func (c *Catalog) rebuildSchedule(ctx context.Context) {
+	c.rebuildMu.Lock()
+	defer c.rebuildMu.Unlock()
 	now := time.Now()
 	from := now.AddDate(0, 0, -200).UTC().Format(time.RFC3339)
 	to := now.AddDate(0, 0, 21).UTC().Format(time.RFC3339)
@@ -191,7 +196,21 @@ func (c *Catalog) rebuildSchedule(ctx context.Context) {
 		}
 		items = append(items, it)
 	}
-	// latest torrent per anime (bounded concurrency; ByTag is cached)
+	// phase 1: publish immediately, carrying over latest torrents from the previous build
+	if prev := c.Schedule(); prev != nil {
+		old := map[string]*ScheduleItem{}
+		for _, it := range prev.Items {
+			old[it.Key] = it
+		}
+		for _, it := range items {
+			if o := old[it.Key]; o != nil {
+				it.LatestTorrent, it.LatestEpisode = o.LatestTorrent, o.LatestEpisode
+			}
+		}
+	}
+	c.publishSchedule(now, cloneItems(items))
+
+	// phase 2: latest torrent per anime (bounded concurrency; ByTag is cached)
 	sem := make(chan struct{}, 3)
 	var wg sync.WaitGroup
 	for _, it := range items {
@@ -213,6 +232,20 @@ func (c *Catalog) rebuildSchedule(ctx context.Context) {
 		}()
 	}
 	wg.Wait()
+	c.publishSchedule(now, items)
+	c.log.Info("schedule rebuilt", "items", len(items))
+}
+
+func cloneItems(items []*ScheduleItem) []*ScheduleItem {
+	out := make([]*ScheduleItem, len(items))
+	for i, it := range items {
+		c := *it
+		out[i] = &c
+	}
+	return out
+}
+
+func (c *Catalog) publishSchedule(now time.Time, items []*ScheduleItem) {
 	sort.SliceStable(items, func(i, j int) bool {
 		if items[i].Weekday != items[j].Weekday {
 			return items[i].Weekday < items[j].Weekday
@@ -227,7 +260,6 @@ func (c *Catalog) rebuildSchedule(ctx context.Context) {
 	c.schedMu.Lock()
 	c.sched = &Schedule{GeneratedAt: store.Now(), Season: season, Items: items}
 	c.schedMu.Unlock()
-	c.log.Info("schedule rebuilt", "items", len(items))
 }
 
 var _ = strings.TrimSpace

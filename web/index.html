@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="google" content="notranslate" />
+    <meta name="renderer" content="webkit" />
+    <meta name="description" content="Project Kawaii - 在浏览器中直接观看番剧与种子，基于 WebTorrent。" />
+    <meta name="theme-color" content="#4caf50" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Project Kawaii</title>
+    <script>
+      // 主题初始化：在首屏渲染前设置 .dark，避免闪烁。支持 ?theme=light|dark|system 覆盖并持久化。
+      ;(function () {
+        try {
+          var k = "pk-theme"
+          var q = new URLSearchParams(location.search).get("theme")
+          if (q === "light" || q === "dark" || q === "system") localStorage.setItem(k, q)
+          var t = localStorage.getItem(k) || "system"
+          var d = t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches)
+          var e = document.documentElement
+          e.classList.toggle("dark", d)
+          e.style.colorScheme = d ? "dark" : "light"
+          var m = document.querySelector('meta[name="theme-color"]')
+          if (m) m.setAttribute("content", d ? "#121614" : "#ffffff")
+        } catch (_) {}
+      })()
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

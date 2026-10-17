@@ -110,8 +110,9 @@ type Catalog struct {
 	teams   map[string]string
 	tags    map[string]moeTag
 
-	schedMu sync.RWMutex
-	sched   *Schedule
+	schedMu   sync.RWMutex
+	sched     *Schedule
+	rebuildMu sync.Mutex
 
 	coversMu sync.RWMutex
 	covers   map[string]string // moe tag id -> cover URL

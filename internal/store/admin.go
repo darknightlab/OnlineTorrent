@@ -81,14 +81,45 @@ type Rule struct {
 	Name      string `json:"name"`
 	Enabled   bool   `json:"enabled"`
 	Priority  int    `json:"priority"`
-	Field     string `json:"field"`
-	Op        string `json:"op"`
-	Value     string `json:"value"`
+	Field     string `json:"-"`
+	Op        string `json:"-"`
+	Value     string `json:"-"`
 	Action    string `json:"action"`
 	Label     string `json:"label"`
 	Note      string `json:"note"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
+}
+
+// RuleMatch is the JSON form of a rule's condition: {"field","op","value"}.
+type RuleMatch struct {
+	Field string `json:"field"`
+	Op    string `json:"op"`
+	Value string `json:"value"`
+}
+
+type ruleJSON Rule
+
+// MarshalJSON nests field/op/value under "match" (docs/api.md).
+func (r Rule) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		ruleJSON
+		Match RuleMatch `json:"match"`
+	}{ruleJSON(r), RuleMatch{r.Field, r.Op, r.Value}})
+}
+
+// UnmarshalJSON accepts the nested "match" form.
+func (r *Rule) UnmarshalJSON(b []byte) error {
+	var v struct {
+		ruleJSON
+		Match RuleMatch `json:"match"`
+	}
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	*r = Rule(v.ruleJSON)
+	r.Field, r.Op, r.Value = v.Match.Field, v.Match.Op, v.Match.Value
+	return nil
 }
 
 // ValidateRule checks a rule before saving.
@@ -154,6 +185,19 @@ func (s *Store) SaveRule(ctx context.Context, r Rule) (int64, error) {
 	_, err := s.W.ExecContext(ctx, `UPDATE rules SET name=?,enabled=?,priority=?,field=?,op=?,value=?,action=?,label=?,note=?,updated_at=? WHERE id=?`,
 		r.Name, boolInt(r.Enabled), r.Priority, r.Field, r.Op, r.Value, r.Action, r.Label, r.Note, now, r.ID)
 	return r.ID, err
+}
+
+func (s *Store) GetRule(ctx context.Context, id int64) (*Rule, error) {
+	rules, err := s.ListRules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range rules {
+		if rules[i].ID == id {
+			return &rules[i], nil
+		}
+	}
+	return nil, ErrNotFound
 }
 
 func (s *Store) DeleteRule(ctx context.Context, id int64) error {
@@ -309,14 +353,15 @@ func (s *Store) GetTorrent(ctx context.Context, ih string) (*TorrentRecord, erro
 }
 
 type Play struct {
-	ID        int64   `json:"id"`
-	Infohash  string  `json:"infohash"`
-	Title     string  `json:"title"`
-	Username  *string `json:"username"`
-	IP        string  `json:"ip"`
-	Action    string  `json:"action"`
-	SeededBy  string  `json:"seeded_by"`
-	CreatedAt string  `json:"created_at"`
+	ID        int64    `json:"id"`
+	Infohash  string   `json:"infohash"`
+	Title     string   `json:"name"`
+	Username  *string  `json:"user"`
+	IP        string   `json:"ip"`
+	Action    string   `json:"action"`
+	SeededBy  string   `json:"-"`
+	Seeded    []string `json:"seeded_by"`
+	CreatedAt string   `json:"created_at"`
 }
 
 func (s *Store) AddPlay(ctx context.Context, p Play, userID *int64) {
@@ -343,6 +388,10 @@ func (s *Store) ListPlays(ctx context.Context, page, size int) ([]Play, int, err
 		}
 		if un.Valid {
 			p.Username = &un.String
+		}
+		p.Seeded = []string{}
+		if p.SeededBy != "" {
+			p.Seeded = strings.Split(p.SeededBy, ",")
 		}
 		out = append(out, p)
 	}

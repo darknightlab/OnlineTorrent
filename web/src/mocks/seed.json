@@ -1,0 +1,869 @@
+{
+ "anime": [
+  {
+   "bgm_id": 390200,
+   "title": "列女战纪：女娲石记",
+   "title_cn": "列女战纪：女娲石记",
+   "cover": "https://lain.bgm.tv/pic/cover/c/1c/b4/390200_Z9jPp.jpg",
+   "weekday": 1,
+   "air_time": "20:00",
+   "begin": "2026-10-05",
+   "summary": "",
+   "score": 3.2
+  },
+  {
+   "bgm_id": 418229,
+   "title": "魔法少女育成計画 restart",
+   "title_cn": "魔法少女育成计划 restart",
+   "cover": "https://lain.bgm.tv/pic/cover/c/52/fe/418229_gcFij.jpg",
+   "weekday": 1,
+   "air_time": "19:00",
+   "begin": "2026-10-05",
+   "summary": "",
+   "score": 6.3
+  },
+  {
+   "bgm_id": 498559,
+   "title": "Electro Andes",
+   "title_cn": "",
+   "cover": null,
+   "weekday": 1,
+   "air_time": "23:45",
+   "begin": "2026-10-05",
+   "summary": "",
+   "score": null
+  },
+  {
+   "bgm_id": 511936,
+   "title": "ロメリア戦記",
+   "title_cn": "罗梅莉亚战记",
+   "cover": "https://lain.bgm.tv/pic/cover/c/dc/f7/511936_XDkXO.jpg",
+   "weekday": 1,
+   "air_time": "21:00",
+   "begin": "2026-10-05",
+   "summary": "",
+   "score": 6.5
+  },
+  {
+   "bgm_id": 614640,
+   "title": "PSYREN -サイレン-",
+   "title_cn": "PSYREN -决战游戏-",
+   "cover": null,
+   "weekday": 1,
+   "air_time": "22:30",
+   "begin": "2026-10-05",
+   "summary": "",
+   "score": 5.1
+  },
+  {
+   "bgm_id": 624923,
+   "title": "どうも、好きな人に惚れ薬を依頼された魔女です。",
+   "title_cn": "你好，我是受心上人所托来做恋爱药的魔女。",
+   "cover": "https://lain.bgm.tv/pic/cover/c/73/99/624923_4u99L.jpg",
+   "weekday": 1,
+   "air_time": "22:30",
+   "begin": "2026-10-05",
+   "summary": "",
+   "score": 6.4
+  },
+  {
+   "bgm_id": 634587,
+   "title": "転生ゴブリンだけど質問ある？",
+   "title_cn": "转生哥布林有问题吗？",
+   "cover": "https://lain.bgm.tv/pic/cover/c/05/25/634587_8k4k7.jpg",
+   "weekday": 1,
+   "air_time": "23:45",
+   "begin": "2026-10-05",
+   "summary": "",
+   "score": 5.3
+  },
+  {
+   "bgm_id": 505550,
+   "title": "Dark Machine The Animation",
+   "title_cn": "暗机 DARK MACHINE",
+   "cover": "https://lain.bgm.tv/pic/cover/c/84/86/505550_OLQmz.jpg",
+   "weekday": 2,
+   "air_time": "19:30",
+   "begin": "2026-10-13",
+   "summary": "",
+   "score": 5.9
+  },
+  {
+   "bgm_id": 513878,
+   "title": "Cyberpunk: Edgerunners 2",
+   "title_cn": "赛博朋克：边缘行者 2",
+   "cover": "https://lain.bgm.tv/pic/cover/c/db/94/513878_e6beR.jpg",
+   "weekday": 2,
+   "air_time": "01:00",
+   "begin": "2026-10-20",
+   "summary": "",
+   "score": 7.3
+  },
+  {
+   "bgm_id": 541538,
+   "title": "幻想水滸伝",
+   "title_cn": "幻想水浒传",
+   "cover": "https://lain.bgm.tv/pic/cover/c/ee/12/541538_LxzAg.jpg",
+   "weekday": 2,
+   "air_time": "21:00",
+   "begin": "2026-10-03",
+   "summary": "",
+   "score": 5.1
+  },
+  {
+   "bgm_id": 544378,
+   "title": "Battle Spirits [Re] 絶界の空",
+   "title_cn": "战斗之魂[Re] 绝界之空",
+   "cover": "https://lain.bgm.tv/pic/cover/c/ec/af/544378_j3ouu.jpg",
+   "weekday": 2,
+   "air_time": "17:55",
+   "begin": "2026-10-06",
+   "summary": "",
+   "score": 4.8
+  },
+  {
+   "bgm_id": 584847,
+   "title": "千歳くんはラムネ瓶のなか 第2クール",
+   "title_cn": "弹珠汽水瓶里的千岁同学 第2部分",
+   "cover": "https://lain.bgm.tv/pic/cover/c/83/49/584847_5nM0F.jpg",
+   "weekday": 2,
+   "air_time": "21:30",
+   "begin": "2026-10-13",
+   "summary": "",
+   "score": 4.9
+  },
+  {
+   "bgm_id": 593565,
+   "title": "超巡！超条先輩",
+   "title_cn": "超巡！超条前辈",
+   "cover": "https://lain.bgm.tv/pic/cover/c/af/c1/593565_nno0j.jpg",
+   "weekday": 2,
+   "air_time": "23:45",
+   "begin": "2026-10-06",
+   "summary": "",
+   "score": 5.8
+  },
+  {
+   "bgm_id": 624085,
+   "title": "凶乱令嬢ニア・リストン 病弱令嬢に転生した神殺しの武人の華麗なる無双録",
+   "title_cn": "乱世千金倪亚‧利斯顿转生为娇弱千金的弑神武人华丽无双录",
+   "cover": null,
+   "weekday": 2,
+   "air_time": "21:30",
+   "begin": "2026-10-06",
+   "summary": "",
+   "score": 6.8
+  },
+  {
+   "bgm_id": 975,
+   "title": "ONE PIECE",
+   "title_cn": "航海王",
+   "cover": "https://lain.bgm.tv/pic/cover/c/92/97/975_GFGYI.jpg",
+   "weekday": 3,
+   "air_time": "01:30",
+   "begin": "1999-10-20",
+   "summary": "",
+   "score": 8.3
+  },
+  {
+   "bgm_id": 393010,
+   "title": "探偵はもう、死んでいる。 Season 2",
+   "title_cn": "侦探已经死了。 第二季",
+   "cover": "https://lain.bgm.tv/pic/cover/c/65/61/393010_EIOi9.jpg",
+   "weekday": 3,
+   "air_time": "22:00",
+   "begin": "2026-10-07",
+   "summary": "",
+   "score": 5.5
+  },
+  {
+   "bgm_id": 412008,
+   "title": "転生したら剣でしたII",
+   "title_cn": "转生就是剑 第二季",
+   "cover": "https://lain.bgm.tv/pic/cover/c/ee/ed/412008_vuyt4.jpg",
+   "weekday": 3,
+   "air_time": "20:00",
+   "begin": "2026-10-07",
+   "summary": "",
+   "score": 6.6
+  },
+  {
+   "bgm_id": 471844,
+   "title": "帰還者の魔法は特別です 第2期",
+   "title_cn": "归还者的魔法要特别 第二季",
+   "cover": "https://lain.bgm.tv/pic/cover/c/1d/7c/471844_5G6H8.jpg",
+   "weekday": 3,
+   "air_time": "23:45",
+   "begin": "2026-10-07",
+   "summary": "",
+   "score": 5.5
+  },
+  {
+   "bgm_id": 486456,
+   "title": "佐々木とピーちゃん 第2期",
+   "title_cn": "佐佐木与文鸟小哔 第二季",
+   "cover": "https://lain.bgm.tv/pic/cover/c/fc/aa/486456_XO5B0.jpg",
+   "weekday": 3,
+   "air_time": "23:30",
+   "begin": "2026-10-07",
+   "summary": "",
+   "score": 5.8
+  },
+  {
+   "bgm_id": 502123,
+   "title": "魔法騎士レイアース",
+   "title_cn": "魔法骑士雷阿斯 (2026)",
+   "cover": "https://lain.bgm.tv/pic/cover/c/e1/6f/502123_IiVB6.jpg",
+   "weekday": 3,
+   "air_time": "19:00",
+   "begin": "2026-10-07",
+   "summary": "",
+   "score": 6.3
+  },
+  {
+   "bgm_id": 573707,
+   "title": "Helluva Boss Season 3",
+   "title_cn": "极恶老大 第三季",
+   "cover": "https://lain.bgm.tv/pic/cover/c/37/37/573707_EjKKu.jpg",
+   "weekday": 3,
+   "air_time": "21:00",
+   "begin": "2026-10-14",
+   "summary": "",
+   "score": null
+  },
+  {
+   "bgm_id": 449346,
+   "title": "大理寺日志 叁",
+   "title_cn": "大理寺日志 第三季",
+   "cover": "https://lain.bgm.tv/pic/cover/c/fc/d2/449346_0ql6W.jpg",
+   "weekday": 4,
+   "air_time": "23:00",
+   "begin": "2026-10-15",
+   "summary": "",
+   "score": 8.5
+  },
+  {
+   "bgm_id": 576783,
+   "title": "狂王2",
+   "title_cn": "狂王 第2季",
+   "cover": null,
+   "weekday": 4,
+   "air_time": "22:00",
+   "begin": "2026-10-08",
+   "summary": "",
+   "score": null
+  },
+  {
+   "bgm_id": 577237,
+   "title": "仙逆剧场版 弑仙之战",
+   "title_cn": "仙逆剧场版 弑仙之战",
+   "cover": "https://lain.bgm.tv/pic/cover/c/33/a4/577237_Cd0Cm.jpg",
+   "weekday": 4,
+   "air_time": "20:00",
+   "begin": "2026-10-01",
+   "summary": "",
+   "score": 5.9
+  },
+  {
+   "bgm_id": 590553,
+   "title": "てつりょー！meet with 鉄道むすめ",
+   "title_cn": "铁旅！meet with 铁道少女",
+   "cover": "https://lain.bgm.tv/pic/cover/c/b6/e8/590553_Xz5PO.jpg",
+   "weekday": 4,
+   "air_time": "19:30",
+   "begin": "2026-10-08",
+   "summary": "",
+   "score": 5.8
+  },
+  {
+   "bgm_id": 622288,
+   "title": "FX戦士くるみちゃん",
+   "title_cn": "FX战士久留美",
+   "cover": "https://lain.bgm.tv/pic/cover/c/d3/99/622288_nmbC3.jpg",
+   "weekday": 4,
+   "air_time": "22:00",
+   "begin": "2026-10-01",
+   "summary": "",
+   "score": 6.9
+  },
+  {
+   "bgm_id": 650428,
+   "title": "傷だらけ聖女より報復をこめて Season2",
+   "title_cn": "黑化吧！圣女大人 第二季",
+   "cover": "https://lain.bgm.tv/pic/cover/c/77/63/650428_G3GgP.jpg",
+   "weekday": 4,
+   "air_time": "01:00",
+   "begin": "2026-10-01",
+   "summary": "",
+   "score": 5
+  },
+  {
+   "bgm_id": 654294,
+   "title": "冰剣の魔術師が世界を統べるⅡ",
+   "title_cn": "冰剑的魔术师将要统一世界 第二季",
+   "cover": "https://lain.bgm.tv/pic/cover/c/ec/2f/654294_ckrD9.jpg",
+   "weekday": 4,
+   "air_time": "22:00",
+   "begin": "2026-10-08",
+   "summary": "",
+   "score": 5.6
+  },
+  {
+   "bgm_id": 499474,
+   "title": "東京リベンジャーズ 三天戦争編",
+   "title_cn": "东京复仇者 三天战争篇",
+   "cover": "https://lain.bgm.tv/pic/cover/c/0f/d4/499474_bheyE.jpg",
+   "weekday": 5,
+   "air_time": "01:00",
+   "begin": "2026-10-02",
+   "summary": "",
+   "score": 5.9
+  },
+  {
+   "bgm_id": 537738,
+   "title": "とある暗部の少女共棲",
+   "title_cn": "某暗部的少女共栖",
+   "cover": "https://lain.bgm.tv/pic/cover/c/1c/9b/537738_6rr67.jpg",
+   "weekday": 5,
+   "air_time": "23:00",
+   "begin": "2026-10-09",
+   "summary": "",
+   "score": 7
+  },
+  {
+   "bgm_id": 538631,
+   "title": "Avatar: Seven Havens Season 1",
+   "title_cn": "降世神通：七个避风港 第一季",
+   "cover": "https://lain.bgm.tv/pic/cover/c/17/cc/538631_ll0LH.jpg",
+   "weekday": 5,
+   "air_time": "22:00",
+   "begin": "2026-10-09",
+   "summary": "",
+   "score": 6.8
+  },
+  {
+   "bgm_id": 563508,
+   "title": "パンどろぼう",
+   "title_cn": "神秘面包小子",
+   "cover": null,
+   "weekday": 5,
+   "air_time": "21:00",
+   "begin": "2026-10-02",
+   "summary": "",
+   "score": 5.3
+  },
+  {
+   "bgm_id": 568244,
+   "title": "薬屋のひとりごと 第3期",
+   "title_cn": "药屋少女的呢喃 第三季",
+   "cover": "https://lain.bgm.tv/pic/cover/c/55/e2/568244_e64dA.jpg",
+   "weekday": 5,
+   "air_time": "22:30",
+   "begin": "2026-10-02",
+   "summary": "",
+   "score": 7.3
+  },
+  {
+   "bgm_id": 593863,
+   "title": "罗小黑战记 学前篇",
+   "title_cn": "",
+   "cover": "https://lain.bgm.tv/pic/cover/c/86/cd/593863_7u0XX.jpg",
+   "weekday": 5,
+   "air_time": "17:55",
+   "begin": "2026-10-30",
+   "summary": "",
+   "score": 7.5
+  },
+  {
+   "bgm_id": 617948,
+   "title": "桃源暗鬼 ～日光・華厳の滝編～",
+   "title_cn": "桃源暗鬼 ～日光・华严之泷篇～",
+   "cover": "https://lain.bgm.tv/pic/cover/c/70/c2/617948_Mm3mn.jpg",
+   "weekday": 5,
+   "air_time": "21:30",
+   "begin": "2026-10-02",
+   "summary": "",
+   "score": 5.6
+  },
+  {
+   "bgm_id": 899,
+   "title": "名探偵コナン",
+   "title_cn": "名侦探柯南",
+   "cover": "https://lain.bgm.tv/pic/cover/c/01/88/899_REwVW.jpg",
+   "weekday": 6,
+   "air_time": "23:30",
+   "begin": "1996-01-08",
+   "summary": "",
+   "score": 7.5
+  },
+  {
+   "bgm_id": 456078,
+   "title": "マジカル★エクスプローラー",
+   "title_cn": "魔法★探险家",
+   "cover": "https://lain.bgm.tv/pic/cover/c/f5/6b/456078_jtjPi.jpg",
+   "weekday": 6,
+   "air_time": "23:30",
+   "begin": "2026-10-03",
+   "summary": "",
+   "score": 6.2
+  },
+  {
+   "bgm_id": 507820,
+   "title": "大王饶命 第三季",
+   "title_cn": "大王饶命 第三季",
+   "cover": "https://lain.bgm.tv/pic/cover/c/32/ed/507820_nLOH8.jpg",
+   "weekday": 6,
+   "air_time": "01:30",
+   "begin": "2026-10-03",
+   "summary": "",
+   "score": 7.1
+  },
+  {
+   "bgm_id": 542007,
+   "title": "転生した大聖女は、聖女であることをひた隠す",
+   "title_cn": "转生后的大圣女，极力隐瞒圣女的身分",
+   "cover": "https://lain.bgm.tv/pic/cover/c/61/81/542007_wNKJa.jpg",
+   "weekday": 6,
+   "air_time": "01:30",
+   "begin": "2026-10-03",
+   "summary": "",
+   "score": 5.6
+  },
+  {
+   "bgm_id": 554779,
+   "title": "生徒会にも穴はある！",
+   "title_cn": "学生会也有洞！",
+   "cover": "https://lain.bgm.tv/pic/cover/c/17/c7/554779_8C9JY.jpg",
+   "weekday": 6,
+   "air_time": "01:00",
+   "begin": "2026-10-03",
+   "summary": "",
+   "score": 7.5
+  },
+  {
+   "bgm_id": 559080,
+   "title": "Dreamland",
+   "title_cn": "",
+   "cover": null,
+   "weekday": 6,
+   "air_time": "00:00",
+   "begin": "2026-10-17",
+   "summary": "",
+   "score": 7.5
+  },
+  {
+   "bgm_id": 567896,
+   "title": "ブラッククローバー 2nd Season",
+   "title_cn": "黑色五叶草 第二季",
+   "cover": "https://lain.bgm.tv/pic/cover/c/be/e7/567896_RWffW.jpg",
+   "weekday": 6,
+   "air_time": "01:30",
+   "begin": "2026-10-03",
+   "summary": "",
+   "score": 7.5
+  },
+  {
+   "bgm_id": 536270,
+   "title": "目覚めたら最強装備と宇宙船持ちだったので 、一戸建て目指して傭兵として自由に生きたい",
+   "title_cn": "一觉醒来就有了最强装备跟太空船 决定以自家独栋建筑为目标当佣兵自由过活",
+   "cover": "https://lain.bgm.tv/pic/cover/c/3e/fc/536270_51P45.jpg",
+   "weekday": 0,
+   "air_time": "00:00",
+   "begin": "2026-10-04",
+   "summary": "",
+   "score": 5.7
+  },
+  {
+   "bgm_id": 548156,
+   "title": "アオのハコ Season 2",
+   "title_cn": "青之箱 第二季",
+   "cover": "https://lain.bgm.tv/pic/cover/c/f1/6c/548156_L3fC6.jpg",
+   "weekday": 0,
+   "air_time": "18:00",
+   "begin": "2026-10-04",
+   "summary": "",
+   "score": 6.4
+  },
+  {
+   "bgm_id": 551304,
+   "title": "わたしの幸せな結婚 特別篇",
+   "title_cn": "我的幸福婚姻 特别篇",
+   "cover": "https://lain.bgm.tv/pic/cover/c/ac/40/551304_5sWb1.jpg",
+   "weekday": 0,
+   "air_time": "22:30",
+   "begin": "2026-10-25",
+   "summary": "",
+   "score": 10
+  },
+  {
+   "bgm_id": 555605,
+   "title": "アオアシ Season 2",
+   "title_cn": "青之芦苇 第二季",
+   "cover": "https://lain.bgm.tv/pic/cover/c/67/5a/555605_cLCw5.jpg",
+   "weekday": 0,
+   "air_time": "21:30",
+   "begin": "2026-10-04",
+   "summary": "",
+   "score": 7.2
+  },
+  {
+   "bgm_id": 589775,
+   "title": "ホテル・インヒューマンズ 第2期",
+   "title_cn": "杀手旅店 第二季",
+   "cover": "https://lain.bgm.tv/pic/cover/c/5d/8c/589775_QZq4Z.jpg",
+   "weekday": 0,
+   "air_time": "01:30",
+   "begin": "2026-10-04",
+   "summary": "",
+   "score": 5.5
+  },
+  {
+   "bgm_id": 596771,
+   "title": "弱気MAX令嬢なのに、辣腕婚約者様の賭けに乗ってしまった",
+   "title_cn": "极致软弱千金小姐，不小心答应了精明未婚夫的赌局",
+   "cover": "https://lain.bgm.tv/pic/cover/c/39/bd/596771_y75Tw.jpg",
+   "weekday": 0,
+   "air_time": "01:00",
+   "begin": "2026-10-04",
+   "summary": "",
+   "score": 4.8
+  },
+  {
+   "bgm_id": 605533,
+   "title": "おじさんはカワイイものがお好き。",
+   "title_cn": "大叔喜欢可爱小玩意",
+   "cover": "https://lain.bgm.tv/pic/cover/c/d1/e7/605533_97NSn.jpg",
+   "weekday": 0,
+   "air_time": "22:00",
+   "begin": "2026-10-04",
+   "summary": "",
+   "score": 5.8
+  }
+ ],
+ "torrents": [
+  {
+   "id": "6ad3945b992853e4c985190f",
+   "infohash": "a5e5903f8dcaf536ba0c911134665e4e93689b55",
+   "title": "[jibaketa合成&音頻壓制][TVB粵語]安妮的童話 / 安妮·雪莉 / Anne Shirley - 18 [粵語+無字幕][WEB 1920x1080 AVC AAC YUE]",
+   "size": "504.69 MB",
+   "team": null,
+   "published_at": "2026-10-17T15:29:31.069Z"
+  },
+  {
+   "id": "6ad38fb7992853e4c9849855",
+   "infohash": "4c092aace051b607825bfa6a86735ecf4c40448c",
+   "title": "[黒ネズミたち] 和沒有信徒的女神大人一起攻略異世界 / Shinja Zero no Megami-sama - 01 (ABEMA 1920x1080 AVC AAC MKV)",
+   "size": "746.77 MB",
+   "team": {
+    "id": "63e497a55fa12c0007944399",
+    "name": "黒ネズミたち"
+   },
+   "published_at": "2026-10-17T15:09:43.826Z"
+  },
+  {
+   "id": "6ad38dd9992853e4c9845f8a",
+   "infohash": "734d1ba5d8420a372a64173a3e70aa49eecd8a0d",
+   "title": "[黒ネズミたち] 黑色五葉草 Season 2 / Black Clover 2nd Season - 173 (B-Global 1920x1080 HEVC AAC MKV)",
+   "size": "573.77 MB",
+   "team": {
+    "id": "63e497a55fa12c0007944399",
+    "name": "黒ネズミたち"
+   },
+   "published_at": "2026-10-17T15:01:45.684Z"
+  },
+  {
+   "id": "6ad38dc4992853e4c9845c1d",
+   "infohash": "985e06d8447e3bf64d212e6e44a79a085adfd29f",
+   "title": "[黒ネズミたち] 黑色五葉草 Season 2 / Black Clover 2nd Season - 173 (CR 1920x1080 AVC AAC MKV)",
+   "size": "1.83 GB",
+   "team": {
+    "id": "63e497a55fa12c0007944399",
+    "name": "黒ネズミたち"
+   },
+   "published_at": "2026-10-17T15:01:24.417Z"
+  },
+  {
+   "id": "6ad38dbf992853e4c9845b4c",
+   "infohash": "3d6d24f63b6b8701dc3ca62fa94e29e9594a51fe",
+   "title": "[黒ネズミたち] 黑色五葉草 Season 2 / Black Clover 2nd Season - 173 (Baha 1920x1080 AVC AAC MP4)",
+   "size": "912.06 MB",
+   "team": {
+    "id": "63e497a55fa12c0007944399",
+    "name": "黒ネズミたち"
+   },
+   "published_at": "2026-10-17T15:01:19.260Z"
+  },
+  {
+   "id": "6ad38db1992853e4c9845915",
+   "infohash": "1f00f238ca39bbd8f63e34cff25324123990e120",
+   "title": "[ANi] Black Clover /  黑色五葉草 Season 2 - 173 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]",
+   "size": "912.11 MB",
+   "team": {
+    "id": "60313a6e32f14c000745a5e2",
+    "name": "ANi"
+   },
+   "published_at": "2026-10-17T15:01:05.058Z"
+  },
+  {
+   "id": "6ad38da7992853e4c9845771",
+   "infohash": "b3d69ba18b69e7e8c253bb0c481ed5f002b2e163",
+   "title": "[黒ネズミたち] #尋找殭屍中 / #Zombie Sagashitemasu - 03 (CR 1920x1080 AVC AAC MKV)",
+   "size": "1.19 GB",
+   "team": {
+    "id": "63e497a55fa12c0007944399",
+    "name": "黒ネズミたち"
+   },
+   "published_at": "2026-10-17T15:00:55.618Z"
+  },
+  {
+   "id": "6ad38d8c992853e4c98452d6",
+   "infohash": "75b0bc458bc4aedaa1a83f7f2fe0999d5a5c426a",
+   "title": "[黒ネズミたち] 魔法★探險家 / Magical★Explorer - 03 (ABEMA 1280x720 AVC AAC MKV)",
+   "size": "384.82 MB",
+   "team": {
+    "id": "63e497a55fa12c0007944399",
+    "name": "黒ネズミたち"
+   },
+   "published_at": "2026-10-17T15:00:28.317Z"
+  },
+  {
+   "id": "6ad38365992853e4c9833b49",
+   "infohash": "f996ceba8200dbc8c9dcac4de583cd23ff5b0d55",
+   "title": "[黒ネズミたち] 你好，身為魔女的我，被心上人委託製作迷情藥 / Horemajo - 02 (ABEMA 1920x1080 AVC AAC MKV)",
+   "size": "745.45 MB",
+   "team": {
+    "id": "63e497a55fa12c0007944399",
+    "name": "黒ネズミたち"
+   },
+   "published_at": "2026-10-17T14:17:09.148Z"
+  },
+  {
+   "id": "6ad38252992853e4c9831de5",
+   "infohash": "025db8faa61284ae27c5ab0edb676defea8ceafd",
+   "title": "[猎户压制部] 青之蘆葦 第二季 / Ashi S2 [02] [1080p] [繁日内嵌] [2026年10月番]",
+   "size": "373.38 MB",
+   "team": {
+    "id": "67d59443c7f64700079a6b3b",
+    "name": "猎户压制部"
+   },
+   "published_at": "2026-10-17T14:12:34.501Z"
+  },
+  {
+   "id": "6ad38243992853e4c9831c52",
+   "infohash": "0ccc6116cdab2afcc5020f0d1922764715451df1",
+   "title": "[猎户压制部] 青之芦苇 第二季 / Ashi S2 [02] [1080p] [简日内嵌] [2026年10月番]",
+   "size": "373.26 MB",
+   "team": {
+    "id": "67d59443c7f64700079a6b3b",
+    "name": "猎户压制部"
+   },
+   "published_at": "2026-10-17T14:12:19.577Z"
+  },
+  {
+   "id": "6ad38019992853e4c982e129",
+   "infohash": "db85f7cceeae69bf961cf59f8f0866fb47be5995",
+   "title": "[沸班亚马制作组] 药屋少女的呢喃 第三季 - 02 [CR WebRip AI2160p H265 Veryslow AAC][简繁内封字幕]",
+   "size": "1.5 GB",
+   "team": {
+    "id": "6941bae25394e5000709d5ec",
+    "name": "沸班亚马制作组"
+   },
+   "published_at": "2026-10-17T14:03:05.941Z"
+  },
+  {
+   "id": "6ad38004992853e4c982dec7",
+   "infohash": "0ce507cb3e684a893f8a171edf19fc4a79487ea9",
+   "title": "[沸班亚马制作组] 药屋少女的呢喃 第三季 - 02 [CR WebRip 1080p H265 Veryslow AAC][简繁内封字幕]",
+   "size": "419.41 MB",
+   "team": {
+    "id": "6941bae25394e5000709d5ec",
+    "name": "沸班亚马制作组"
+   },
+   "published_at": "2026-10-17T14:02:44.759Z"
+  },
+  {
+   "id": "6ad378a2992853e4c9821742",
+   "infohash": "cb4daf579b3f3bfb7831d0f49ebd91a4e061c3da",
+   "title": "[ANi] Yasei no Last Boss ga Arawareta /  野生的大魔王出現了！ - 16 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]",
+   "size": "479.44 MB",
+   "team": {
+    "id": "60313a6e32f14c000745a5e2",
+    "name": "ANi"
+   },
+   "published_at": "2026-10-17T13:31:14.493Z"
+  },
+  {
+   "id": "6ad3787f992853e4c98212a6",
+   "infohash": "649701f63c62e0143ec773927f2fdd00ba4b326c",
+   "title": "[黒ネズミたち] 轉生後的大聖女，極力隱瞞聖女的身分 / Daiseijo - 03 (ABEMA 1920x1080 AVC AAC MKV)",
+   "size": "746.17 MB",
+   "team": {
+    "id": "63e497a55fa12c0007944399",
+    "name": "黒ネズミたち"
+   },
+   "published_at": "2026-10-17T13:30:39.982Z"
+  },
+  {
+   "id": "6ad374ee992853e4c981af6e",
+   "infohash": "3e726b63d4ac51453c0cfb8b27e8ea768ff212b7",
+   "title": "[黒ネズミたち] 麵包小偷 / Pan Dorobou - 01 (ABEMA 1920x1080 AVC AAC MKV)",
+   "size": "283.86 MB",
+   "team": {
+    "id": "63e497a55fa12c0007944399",
+    "name": "黒ネズミたち"
+   },
+   "published_at": "2026-10-17T13:15:26.240Z"
+  },
+  {
+   "id": "6ad3719d992853e4c9814db9",
+   "infohash": "426f00ea4fb9e6b2e6c19265fa197b58a0b886bf",
+   "title": "[ANi] A Tale of the Secret Saint /  轉生後的大聖女，極力隱瞞聖女的身分 - 04 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]",
+   "size": "345.18 MB",
+   "team": {
+    "id": "60313a6e32f14c000745a5e2",
+    "name": "ANi"
+   },
+   "published_at": "2026-10-17T13:01:17.498Z"
+  },
+  {
+   "id": "6ad37189992853e4c9814a49",
+   "infohash": "5c990f1420453f41e5c33f6c8b58a3bb5ef3acb7",
+   "title": "[黒ネズミたち] 羅梅莉亞戰記 / Romelia Senki - 03 (CR 1920x1080 AVC AAC MKV)",
+   "size": "1.02 GB",
+   "team": {
+    "id": "63e497a55fa12c0007944399",
+    "name": "黒ネズミたち"
+   },
+   "published_at": "2026-10-17T13:00:57.398Z"
+  },
+  {
+   "id": "6ad37182992853e4c981491c",
+   "infohash": "2d0acac10d8face63b3503d53348433ea0ac5d7b",
+   "title": "[黒ネズミたち] 轉生後的大聖女，極力隱瞞聖女的身分 / Daiseijo - 04 (Baha 1920x1080 AVC AAC MP4)",
+   "size": "345.15 MB",
+   "team": {
+    "id": "63e497a55fa12c0007944399",
+    "name": "黒ネズミたち"
+   },
+   "published_at": "2026-10-17T13:00:50.876Z"
+  },
+  {
+   "id": "6ad37182992853e4c9814906",
+   "infohash": "32316c7310dc839f065880bc3742602321cf42cd",
+   "title": "[黒ネズミたち] 轉生後的大聖女，極力隱瞞聖女的身分 / Daiseijo - 04 (CR 1920x1080 AVC AAC MKV)",
+   "size": "894.38 MB",
+   "team": {
+    "id": "63e497a55fa12c0007944399",
+    "name": "黒ネズミたち"
+   },
+   "published_at": "2026-10-17T13:00:50.438Z"
+  },
+  {
+   "id": "6ad37173992853e4c981466e",
+   "infohash": "5f7d377f68e5b5c4e5eff11a79bc6239f393bbd1",
+   "title": "[黒ネズミたち] 轉生後的大聖女，極力隱瞞聖女的身分 / Daiseijo - 04 (B-Global 1920x1080 HEVC AAC MKV)",
+   "size": "280.35 MB",
+   "team": {
+    "id": "63e497a55fa12c0007944399",
+    "name": "黒ネズミたち"
+   },
+   "published_at": "2026-10-17T13:00:35.662Z"
+  },
+  {
+   "id": "6ad370cc992853e4c9813226",
+   "infohash": "7d4e8717e320a1b44218a3af821bf7edee29b84c",
+   "title": "[GM-Team][国漫][光阴之外][Beyond Time's Gaze][2025][41-44][GB][4K HEVC 10Bit]",
+   "size": "3.81 GB",
+   "team": {
+    "id": "5ce2e3a7475bb7b273356ac2",
+    "name": "GM-Team"
+   },
+   "published_at": "2026-10-17T12:57:48.647Z"
+  },
+  {
+   "id": "6ad3701f992853e4c9812129",
+   "infohash": "3fdeb4b39c5755586a48203487fa03ce49e64d74",
+   "title": "[GM-Team][国漫][斗破苍穹 第5季][Fights Break Sphere Ⅴ][2022][212-215][HEVC][GB][4K]",
+   "size": "4.04 GB",
+   "team": {
+    "id": "5ce2e3a7475bb7b273356ac2",
+    "name": "GM-Team"
+   },
+   "published_at": "2026-10-17T12:54:55.300Z"
+  },
+  {
+   "id": "6ad36ffc992853e4c9811db7",
+   "infohash": "435c3c73a63890c359b96a46ad437818fc4ed557",
+   "title": "[GM-Team][国漫][斗破苍穹 第5季][Fights Break Sphere Ⅴ][2022][212-215][AVC][GB][1080P]",
+   "size": "1.73 GB",
+   "team": {
+    "id": "5ce2e3a7475bb7b273356ac2",
+    "name": "GM-Team"
+   },
+   "published_at": "2026-10-17T12:54:20.349Z"
+  },
+  {
+   "id": "6ad35ddb992853e4c97f23e5",
+   "infohash": "cc107b5ef5ab033a07378ad938ebdb1b0cd5e32f",
+   "title": "[jibaketa合成&音頻壓制][ViuTV粵語]名偵探光之美少女！ / Meitantei Precure! - 29 [粵語+無字幕] (WEB 1920x1080 AVC AAC YUE)",
+   "size": "986.59 MB",
+   "team": null,
+   "published_at": "2026-10-17T11:36:59.091Z"
+  },
+  {
+   "id": "6ad35d0a992853e4c97f0e3d",
+   "infohash": "62b01798cac4c11d9ccccf4ee3aa5bccea25d36f",
+   "title": "[桜都字幕组] FX战士久留美 / FX Senshi Kurumi-chan [02][1080P][简繁内封]",
+   "size": "250.52 MB",
+   "team": {
+    "id": "57a034aa5cc0696f1ce1a1b1",
+    "name": "桜都字幕组"
+   },
+   "published_at": "2026-10-17T11:33:30.752Z"
+  },
+  {
+   "id": "6ad35d04992853e4c97f0da7",
+   "infohash": "e7d49c18dd07b63c7da074884615f6e555b8a705",
+   "title": "[桜都字幕组] FX战士久留美 / FX Senshi Kurumi-chan [02][1080P][繁体内嵌]",
+   "size": "383.28 MB",
+   "team": {
+    "id": "57a034aa5cc0696f1ce1a1b1",
+    "name": "桜都字幕组"
+   },
+   "published_at": "2026-10-17T11:33:24.756Z"
+  },
+  {
+   "id": "6ad35d01992853e4c97f0d59",
+   "infohash": "d10a9f99022b51a75e8b5da63d5c27d7259a3ce2",
+   "title": "[桜都字幕组] FX战士久留美 / FX Senshi Kurumi-chan [02][1080P][简体内嵌]",
+   "size": "383.08 MB",
+   "team": {
+    "id": "57a034aa5cc0696f1ce1a1b1",
+    "name": "桜都字幕组"
+   },
+   "published_at": "2026-10-17T11:33:21.741Z"
+  },
+  {
+   "id": "6ad35c73992853e4c97efd3e",
+   "infohash": "111a697ed340914788c9326cd119d51e50963333",
+   "title": "[黒ネズミたち] 名侦探柯南 / Detective Conan - 1217 (CR 1920x1080 AVC AAC MKV)",
+   "size": "937.09 MB",
+   "team": {
+    "id": "63e497a55fa12c0007944399",
+    "name": "黒ネズミたち"
+   },
+   "published_at": "2026-10-17T11:30:59.955Z"
+  },
+  {
+   "id": "6ad35919992853e4c97ea1b6",
+   "infohash": "8977817acc91015cf121090f4ac27c388bda6813",
+   "title": "[黒ネズミたち] 朱色假面 / Shuiro no Kamen - 02 (ABEMA 1920x1080 AVC AAC MKV)",
+   "size": "750.57 MB",
+   "team": {
+    "id": "63e497a55fa12c0007944399",
+    "name": "黒ネズミたち"
+   },
+   "published_at": "2026-10-17T11:16:41.516Z"
+  }
+ ]
+}

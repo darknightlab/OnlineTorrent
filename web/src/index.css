@@ -1,0 +1,234 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Project Kawaii 主题
+ * - primary: Material Green 500 #4caf50（按钮/选中态背景），--primary-text 为可读的文字色
+ * - accent:  Material Blue 500  #2196f3（强调/进行中/链接次要），--accent-text 为文字色
+ * - muted:   中性悬停/底色（注意：本项目的 accent 是蓝色，不是 shadcn 的灰色 hover 色）
+ */
+:root {
+  --background: #f4f6f5;
+  --foreground: #17201b;
+  --card: #ffffff;
+  --card-foreground: #17201b;
+  --popover: #ffffff;
+  --popover-foreground: #17201b;
+
+  --primary: #4caf50;
+  --primary-hover: #43a047;
+  --primary-foreground: #ffffff;
+  --primary-text: #2e7d32;
+  --primary-soft: color-mix(in oklab, #4caf50 12%, transparent);
+
+  --accent: #2196f3;
+  --accent-hover: #1e88e5;
+  --accent-foreground: #ffffff;
+  --accent-text: #1565c0;
+  --accent-soft: color-mix(in oklab, #2196f3 12%, transparent);
+
+  --muted: #eef1ef;
+  --muted-foreground: #5f6b65;
+  --secondary: #e8ece9;
+  --secondary-foreground: #26302b;
+
+  --warning: #f59e0b;
+  --warning-text: #b45309;
+  --destructive: #e53935;
+  --destructive-text: #c62828;
+  --destructive-foreground: #ffffff;
+
+  --border: #e0e5e2;
+  --input: #d5dbd7;
+  --ring: #4caf50;
+  --radius: 0.625rem;
+
+  --piece-empty: #dde3df;
+  --header: color-mix(in oklab, #ffffff 86%, transparent);
+  --shadow-card: 0 1px 2px rgb(16 24 20 / 0.06), 0 1px 1px rgb(16 24 20 / 0.03);
+}
+
+.dark {
+  --background: #0f1311;
+  --foreground: #e6ebe8;
+  --card: #161b18;
+  --card-foreground: #e6ebe8;
+  --popover: #1a201c;
+  --popover-foreground: #e6ebe8;
+
+  --primary: #4caf50;
+  --primary-hover: #5cb860;
+  --primary-foreground: #ffffff;
+  --primary-text: #81c784;
+  --primary-soft: color-mix(in oklab, #4caf50 18%, transparent);
+
+  --accent: #2196f3;
+  --accent-hover: #42a5f5;
+  --accent-foreground: #ffffff;
+  --accent-text: #64b5f6;
+  --accent-soft: color-mix(in oklab, #2196f3 20%, transparent);
+
+  --muted: #1d2420;
+  --muted-foreground: #95a29b;
+  --secondary: #222a25;
+  --secondary-foreground: #dfe6e2;
+
+  --warning: #f59e0b;
+  --warning-text: #fbbf24;
+  --destructive: #e53935;
+  --destructive-text: #ef8a87;
+  --destructive-foreground: #ffffff;
+
+  --border: #262e2a;
+  --input: #2e3732;
+  --ring: #66bb6a;
+
+  --piece-empty: #2a322d;
+  --header: color-mix(in oklab, #121614 84%, transparent);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-text: var(--primary-text);
+  --color-primary-soft: var(--primary-soft);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent-text: var(--accent-text);
+  --color-accent-soft: var(--accent-soft);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-warning: var(--warning);
+  --color-warning-text: var(--warning-text);
+  --color-destructive: var(--destructive);
+  --color-destructive-text: var(--destructive-text);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-piece-empty: var(--piece-empty);
+  --color-header: var(--header);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-xl: calc(var(--radius) + 4px);
+  --shadow-card: var(--shadow-card);
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC",
+    "Noto Sans SC", "Source Han Sans SC", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html {
+    color-scheme: light;
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+  body {
+    min-height: 100dvh;
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow-x: hidden;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: color-mix(in oklab, var(--primary) 30%, transparent);
+  }
+  button,
+  [role="button"] {
+    cursor: pointer;
+  }
+}
+
+@utility scrollbar-none {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+@utility pt-safe {
+  padding-top: env(safe-area-inset-top);
+}
+
+/* Markdown（公告、简介、设置预览） */
+.prose-kawaii {
+  font-size: 0.875rem;
+  line-height: 1.75;
+  overflow-wrap: anywhere;
+}
+.prose-kawaii > * + * {
+  margin-top: 0.6em;
+}
+.prose-kawaii a {
+  color: var(--primary-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.prose-kawaii h1,
+.prose-kawaii h2,
+.prose-kawaii h3 {
+  font-weight: 600;
+  line-height: 1.4;
+}
+.prose-kawaii h1 {
+  font-size: 1.125rem;
+}
+.prose-kawaii h2 {
+  font-size: 1rem;
+}
+.prose-kawaii ul {
+  list-style: disc;
+  padding-left: 1.25rem;
+}
+.prose-kawaii ol {
+  list-style: decimal;
+  padding-left: 1.25rem;
+}
+.prose-kawaii code {
+  font-family: var(--font-mono);
+  font-size: 0.8em;
+  background: var(--muted);
+  border-radius: 4px;
+  padding: 0.1em 0.35em;
+}
+.prose-kawaii blockquote {
+  border-left: 3px solid var(--primary);
+  padding-left: 0.75rem;
+  color: var(--muted-foreground);
+}
+
+/* 视频：原生控件 + 主题色 */
+video.kawaii-video {
+  accent-color: var(--primary);
+}
