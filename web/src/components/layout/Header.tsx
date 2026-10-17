@@ -1,5 +1,5 @@
 import { NavLink, Link, useLocation, useNavigate } from "react-router-dom"
-import { LogIn, LogOut, Search, Shield, User as UserIcon } from "lucide-react"
+import { LogIn, LogOut, Shield, User as UserIcon } from "lucide-react"
 import { Logo } from "./Logo"
 import { ThemeToggle } from "./ThemeToggle"
 import { Container } from "./Container"
@@ -20,7 +20,6 @@ import { cn } from "@/lib/utils"
 const nav = [
   { to: "/", label: "首页", end: true },
   { to: "/latest", label: "最新种子" },
-  { to: "/search", label: "搜索" },
 ]
 
 export function Header() {
@@ -51,11 +50,6 @@ export function Header() {
           {!onSearch && <TorrentSearchBox size="sm" />}
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-0.5 md:ml-0">
-          <Button asChild variant="ghost" size="icon" className="text-muted-foreground md:hidden" aria-label="搜索">
-            <Link to="/search">
-              <Search className="!size-[18px]" />
-            </Link>
-          </Button>
           <ThemeToggle />
           <UserMenu />
         </div>

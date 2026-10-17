@@ -1,7 +1,7 @@
 // VITE_MOCK=1 时安装：拦截 /api/v1/* 的 fetch，返回 fixtures 数据（只在 dev/mock 构建中被动态 import）。
 // 切换身份：?mock_user=guest|member|vip|admin（保存在 sessionStorage）；默认 admin。
 import * as fx from "./fixtures"
-import type { AdminUser, MeResponse, PlayResponse, QBServer, Rule, Torrent, User } from "@/lib/types"
+import type { AdminUser, GrantRole, MeResponse, PermissionItem, PlayResponse, QBServer, Rule, Torrent, User } from "@/lib/types"
 
 type Handler = (ctx: { params: Record<string, string>; query: URLSearchParams; body: any }) => unknown
 
@@ -30,7 +30,51 @@ function currentUser(): User | null {
     created_at: "2024-03-01T08:00:00Z",
   }
 }
-const me = (): MeResponse => ({ user: currentUser() })
+// ---- 接口权限（模拟后端 perms.go 的语义：guest < member < vip < admin，低等级授权向上继承）----
+const ROLES: GrantRole[] = ["guest", "member", "vip"]
+const RANK: Record<string, number> = { guest: 0, member: 1, vip: 2, admin: 3 }
+const GRANTS_KEY = "pk-mock-grants"
+const savedGrants = JSON.parse(sessionStorage.getItem(GRANTS_KEY) ?? "{}") as Record<string, GrantRole[]>
+const grants: Record<string, Set<GrantRole>> = Object.fromEntries(
+  fx.permissionSpecs
+    .filter((s) => s.access === "configurable" || s.access === "user")
+    .map((s) => [s.key, new Set(savedGrants[s.key] ?? ((s.default_roles ?? []) as GrantRole[]))]),
+)
+const persistGrants = () => sessionStorage.setItem(GRANTS_KEY, JSON.stringify(Object.fromEntries(Object.entries(grants).map(([k, v]) => [k, [...v]]))))
+
+function roleOf(u: User | null): string {
+  if (!u) return "guest"
+  if (u.role === "vip" && u.vip_until && new Date(u.vip_until).getTime() < Date.now()) return "member"
+  return u.role
+}
+
+function allowed(role: string, key: string): boolean {
+  const s = fx.permissionSpecs.find((x) => x.key === key)
+  if (!s) return false
+  if (role === "admin" || s.access === "public") return true
+  if (s.access === "admin") return false
+  if (s.access === "user" && role === "guest") return false
+  return [...(grants[key] ?? [])].some((g) => RANK[g] <= RANK[role] && !(s.access === "user" && g === "guest"))
+}
+
+function requirePerm(key: string) {
+  const u = currentUser()
+  if (allowed(roleOf(u), key)) return
+  if (!u) throw new HttpError(401, "login_required", "请先登录")
+  throw new HttpError(403, "forbidden", "当前账号无权使用该功能")
+}
+
+const permissionsView = () => ({
+  roles: ROLES,
+  items: fx.permissionSpecs.map((s): PermissionItem => ({ ...s, granted: { guest: !!grants[s.key]?.has("guest"), member: !!grants[s.key]?.has("member"), vip: !!grants[s.key]?.has("vip") } })),
+})
+
+const me = (): MeResponse => {
+  const u = currentUser()
+  const role = roleOf(u)
+  const permissions = fx.permissionSpecs.filter((s) => s.access !== "public" && s.access !== "admin" && allowed(role, s.key)).map((s) => s.key).sort()
+  return { user: u, permissions }
+}
 
 const anime = fx.buildAnime()
 const torrents: Torrent[] = [...anime.flatMap((a) => (a.latest_torrent ? [a.latest_torrent] : [])), ...fx.buildTorrents()]
@@ -80,16 +124,19 @@ const routes: [string, string, Handler][] = [
     return {}
   }],
   ["POST", "/me/password", ({ body }) => {
+    requirePerm("POST /api/v1/me/password")
     if (body.old_password === "wrong") throw new HttpError(400, "invalid_password", "原密码错误")
     return {}
   }],
   ["POST", "/me/redeem", ({ body }) => {
+    requirePerm("POST /api/v1/me/redeem")
     if (!String(body.code).startsWith("VIP-")) throw new HttpError(400, "invalid_code", "兑换码无效或已使用")
     sessionStorage.setItem(USER_KEY, "vip")
     return me()
   }],
-  ["GET", "/schedule", () => ({ generated_at: new Date().toISOString(), season: "2026-10", items: anime.map(fx.toScheduleItem) })],
+  ["GET", "/schedule", () => (requirePerm("GET /api/v1/schedule"), { generated_at: new Date().toISOString(), season: "2026-10", items: anime.map(fx.toScheduleItem) })],
   ["GET", "/anime/:key", ({ params }) => {
+    requirePerm("GET /api/v1/anime/{key}")
     const a = anime.find((x) => x.key === params.key)
     if (!a) throw new HttpError(404, "not_found", "番剧不存在")
     const name = (a.title_cn || a.title).slice(0, 4)
@@ -105,13 +152,15 @@ const routes: [string, string, Handler][] = [
       : []
     return { anime: a, torrents: [...(a.latest_torrent ? [a.latest_torrent] : []), ...related, ...eps] }
   }],
-  ["GET", "/torrents/latest", ({ query }) => page(torrents, Number(query.get("page") || 1))],
+  ["GET", "/torrents/latest", ({ query }) => (requirePerm("GET /api/v1/torrents/latest"), page(torrents, Number(query.get("page") || 1)))],
   ["GET", "/torrents/search", ({ query }) => {
+    requirePerm("GET /api/v1/torrents/search")
     const kw = (query.get("q") || "").toLowerCase().split(/\s+/).filter(Boolean)
     const list = torrents.filter((t) => kw.every((k) => t.title.toLowerCase().includes(k) || t.team?.name.toLowerCase().includes(k)))
     return page(list, Number(query.get("page") || 1))
   }],
   ["POST", "/play", ({ body }) => {
+    requirePerm("POST /api/v1/play")
     const t = findTorrent(body)
     const u = currentUser()
     const action = t?.access.action ?? "allow"
@@ -126,16 +175,42 @@ const routes: [string, string, Handler][] = [
       infohash: ih,
       name,
       magnet: body.magnet && !t ? body.magnet : `magnet:?xt=urn:btih:${ih}&dn=${encodeURIComponent(name)}&tr=${encodeURIComponent("wss://tracker.projectk.org")}`,
-      seeded_by: ["ams"],
+      seeded_by: [],
       webseeds: [],
       meta: a ? { anime_key: a.key, episode: a.episodes_aired } : null,
     }
     return res
   }],
-  ["POST", "/report", () => ({})],
+  ["POST", "/torrents/:ih/seed", ({ params }) => {
+    requirePerm("POST /api/v1/torrents/{ih}/seed")
+    const t = torrents.find((x) => x.infohash === params.ih.toLowerCase())
+    if (t?.access.action === "block") throw new HttpError(451, "blocked", t.access.reason || "该资源已被屏蔽")
+    if (t && t.size_bytes > fx.site.max_auto_size_bytes) throw new HttpError(413, "too_large", `该种子过大（超过 ${fx.site.max_auto_size_bytes >> 20} MB），服务器不参与做种`)
+    return { seeded_by: ["ams"] }
+  }],
+  ["POST", "/torrents/:ih/webseed", ({ params }) => {
+    requirePerm("POST /api/v1/torrents/{ih}/webseed")
+    return { webseeds: [`${location.origin}/webseed/ams/${params.ih}/`], delay_sec: 3 }
+  }],
+  ["POST", "/report", () => (requirePerm("POST /api/v1/report"), {})],
 
   // ---- admin ----
   ["GET", "/admin/stats", () => (requireAdmin(), fx.stats())],
+  ["GET", "/admin/permissions", () => (requireAdmin(), permissionsView())],
+  ["PUT", "/admin/permissions", ({ body }) => {
+    requireAdmin()
+    const input = (body.grants ?? {}) as Record<string, string[]>
+    for (const [key, roles] of Object.entries(input)) {
+      const s = fx.permissionSpecs.find((x) => x.key === key)
+      if (!s) throw new HttpError(400, "bad_request", `未知接口: ${key}`)
+      if (s.access !== "configurable" && s.access !== "user") throw new HttpError(400, "bad_request", `该接口权限不可修改: ${key}`)
+      if (s.access === "user" && roles.includes("guest")) throw new HttpError(400, "bad_request", `该接口需要登录，不能授权给游客: ${key}`)
+      if (roles.some((r) => !ROLES.includes(r as GrantRole))) throw new HttpError(400, "bad_request", `未知等级: ${roles.join(",")}`)
+    }
+    for (const [key, roles] of Object.entries(input)) grants[key] = new Set(roles as GrantRole[])
+    persistGrants()
+    return permissionsView()
+  }],
   ["GET", "/admin/settings", () => (requireAdmin(), settingsView())],
   ["PUT", "/admin/settings", ({ body }) => {
     for (const [k, v] of Object.entries(body.values ?? {})) {

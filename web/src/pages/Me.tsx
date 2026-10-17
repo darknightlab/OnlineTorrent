@@ -11,7 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Field, Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/toast"
 import { api } from "@/lib/api"
-import { useLogout, useSetMe, useUser } from "@/lib/queries"
+import { PERM, useCan, useLogout, useSetMe, useUser } from "@/lib/queries"
 import { formatDate } from "@/lib/format"
 import { useDocumentTitle } from "@/lib/hooks"
 
@@ -20,6 +20,8 @@ export default function MePage() {
   const { user, loading } = useUser()
   const logout = useLogout()
   const navigate = useNavigate()
+  const canRedeem = useCan(PERM.redeem)
+  const canPassword = useCan(PERM.password)
   if (loading) return <PageLoading />
   if (!user) return <Navigate replace to="/login?next=/me" />
 
@@ -64,10 +66,12 @@ export default function MePage() {
         </dl>
       </Card>
 
-      <div className="grid gap-4 md:grid-cols-2">
-        <RedeemCard />
-        <PasswordCard />
-      </div>
+      {(canRedeem || canPassword) && (
+        <div className={canRedeem && canPassword ? "grid gap-4 md:grid-cols-2" : "grid gap-4"}>
+          {canRedeem && <RedeemCard />}
+          {canPassword && <PasswordCard />}
+        </div>
+      )}
 
       <Card>
         <CardHeader className="pb-3">

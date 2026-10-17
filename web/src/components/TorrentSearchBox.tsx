@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react"
 import { useNavigate } from "react-router-dom"
-import { ArrowRight, Magnet, Search } from "lucide-react"
+import { Magnet, Search } from "lucide-react"
 import { cn, parseTorrentInput, watchHref } from "@/lib/utils"
 import { useMediaQuery } from "@/lib/hooks"
 
@@ -38,16 +38,9 @@ export function TorrentSearchBox({
   const Icon = parsed ? Magnet : Search
   const lg = size === "lg"
   const wide = useMediaQuery("(min-width: 640px)")
+  const label = parsed ? "立即播放" : "搜索"
   return (
     <form role="search" onSubmit={submit} className={cn("relative w-full", className)}>
-      <Icon
-        aria-hidden
-        className={cn(
-          "pointer-events-none absolute top-1/2 -translate-y-1/2 text-muted-foreground",
-          lg ? "left-4 h-5 w-5" : "left-3 h-4 w-4",
-          parsed && "text-primary-text",
-        )}
-      />
       <input
         value={value}
         onChange={(e) => setValue(e.target.value)}
@@ -60,10 +53,10 @@ export function TorrentSearchBox({
         placeholder={placeholder ?? (lg ? (wide ? "粘贴磁力链接 / infohash 立即播放，或输入关键词搜索" : "搜索或粘贴磁力链接") : "搜索种子或粘贴磁力链接")}
         className={cn(
           "w-full border border-input bg-card text-foreground shadow-sm transition-colors placeholder:text-muted-foreground/80 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/25 [&::-webkit-search-cancel-button]:hidden",
-          lg ? "h-12 rounded-xl pl-11 pr-[7.25rem] sm:pl-12 text-[15px] sm:h-14 sm:pr-32 sm:text-base" : "h-9 rounded-lg bg-muted/60 pl-9 pr-3 text-sm focus:bg-card",
+          lg ? "h-12 rounded-xl pl-4 pr-[7.25rem] text-[15px] sm:h-14 sm:pl-5 sm:pr-32 sm:text-base" : "h-9 rounded-lg bg-muted/60 pl-3 pr-10 text-sm focus:bg-card",
         )}
       />
-      {lg && (
+      {lg ? (
         <button
           type="submit"
           className={cn(
@@ -71,8 +64,20 @@ export function TorrentSearchBox({
             parsed ? "bg-primary hover:bg-primary-hover" : "bg-accent hover:bg-accent-hover",
           )}
         >
-          {parsed ? "立即播放" : "搜索"}
-          <ArrowRight className="h-4 w-4" />
+          <Icon className="h-4 w-4" />
+          {label}
+        </button>
+      ) : (
+        <button
+          type="submit"
+          aria-label={label}
+          title={label}
+          className={cn(
+            "absolute right-0.5 top-1/2 inline-flex h-8 w-9 -translate-y-1/2 items-center justify-center rounded-md transition-colors hover:bg-muted",
+            parsed ? "text-primary-text" : "text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <Icon className="h-4 w-4" />
         </button>
       )}
     </form>

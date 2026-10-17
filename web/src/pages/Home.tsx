@@ -1,8 +1,7 @@
 import { useMemo, useState } from "react"
 import { Link, Navigate, useLocation } from "react-router-dom"
-import { CalendarDays, ChevronRight, Flame, Lightbulb, Megaphone, MonitorPlay, Share2, Zap } from "lucide-react"
+import { CalendarDays, ChevronRight, Flame, Lightbulb, Megaphone } from "lucide-react"
 import { Container } from "@/components/layout/Container"
-import { TorrentSearchBox } from "@/components/TorrentSearchBox"
 import { AnimeCard, AnimeCardSkeleton } from "@/components/AnimeCard"
 import { TorrentList, TorrentListSkeleton, TorrentTableHead } from "@/components/TorrentList"
 import { EmptyState, ErrorState, SectionHeader } from "@/components/states"
@@ -23,7 +22,6 @@ export default function Home() {
   if (new URLSearchParams(loc.search).has("uri")) return <Navigate replace to={`/watch${loc.search}`} />
   return (
     <Container className="space-y-6 py-4 sm:space-y-8 sm:py-6">
-      <Hero />
       {/* 窄屏：公告放在时间表之前，避免被埋在长列表下方 */}
       <Announcement className="xl:hidden" />
       <ScheduleSection />
@@ -35,44 +33,6 @@ export default function Home() {
         </aside>
       </div>
     </Container>
-  )
-}
-
-function Hero() {
-  return (
-    <section
-      aria-labelledby="hero-title"
-      className="relative overflow-hidden rounded-xl border bg-card px-3.5 py-4 shadow-card sm:px-8 sm:py-7"
-    >
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 bg-[radial-gradient(55%_130%_at_100%_0%,var(--primary-soft),transparent_70%),radial-gradient(45%_120%_at_0%_100%,var(--accent-soft),transparent_70%)]"
-      />
-      <div className="relative mx-auto max-w-3xl text-center">
-        <h1 id="hero-title" className="text-lg font-bold tracking-tight sm:text-2xl">
-          在浏览器里，<span className="text-primary-text">直接看番</span>
-        </h1>
-        <p className="mt-1 text-xs text-muted-foreground sm:mt-1.5 sm:text-sm">
-          <span className="sm:hidden">粘贴磁力链接，基于 WebTorrent 边下边播</span>
-          <span className="hidden sm:inline">粘贴磁力链接或 infohash，基于 WebTorrent 边下边播，无需安装任何客户端</span>
-        </p>
-        <TorrentSearchBox className="mt-3.5 sm:mt-5" />
-        <ul className="mt-3 hidden flex-wrap sm:flex items-center justify-center gap-x-4 gap-y-1 text-[12px] text-muted-foreground">
-          <li className="inline-flex items-center gap-1">
-            <Zap className="h-3.5 w-3.5 text-primary-text" />
-            首尾块优先，秒开时长
-          </li>
-          <li className="inline-flex items-center gap-1">
-            <MonitorPlay className="h-3.5 w-3.5 text-primary-text" />
-            支持拖动进度
-          </li>
-          <li className="inline-flex items-center gap-1">
-            <Share2 className="h-3.5 w-3.5 text-primary-text" />
-            一键分享播放链接
-          </li>
-        </ul>
-      </div>
-    </section>
   )
 }
 

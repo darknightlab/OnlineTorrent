@@ -39,7 +39,7 @@ export default function WatchPage() {
         <div className="pt-3 sm:pt-0">
           <GateFrame subject={state.status === "loading" ? undefined : hint?.title}>
             {state.status === "loading" && (
-              <Gate icon={<Loader2 className="h-7 w-7 animate-spin text-primary" />} title="正在请求播放…" description={hint?.title ?? "服务器正在检查资源并准备做种"} />
+              <Gate icon={<Loader2 className="h-7 w-7 animate-spin text-primary" />} title="正在请求播放…" description={hint?.title ?? "服务器正在检查资源"} />
             )}
             {state.status === "login" && (
               <Gate

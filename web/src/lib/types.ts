@@ -37,6 +37,8 @@ export interface User {
 
 export interface MeResponse {
   user: User | null
+  /** 当前用户（未登录为游客）可调用的接口权限键，如 "POST /api/v1/play"；公开与后台接口不在其中 */
+  permissions: string[]
 }
 
 export interface RegisterRequest {
@@ -133,11 +135,22 @@ export interface PlayResponse {
   infohash: string
   name: string
   magnet: string
+  /** 恒为 []：服务器做种改由 POST /torrents/{ih}/seed 单独请求 */
   seeded_by: string[]
+  /** 恒为 []：WebSeed 改由 POST /torrents/{ih}/webseed 单独请求 */
+  webseeds: string[]
+  meta: { anime_key: string; episode: number } | null
+}
+
+export interface SeedResponse {
+  seeded_by: string[]
+}
+
+export interface WebseedResponse {
+  /** 管理员关闭 WebSeed 时为 [] */
   webseeds: string[]
   /** 播放开始后多少秒再加入 webseed */
-  webseed_delay_sec?: number
-  meta: { anime_key: string; episode: number } | null
+  delay_sec: number
 }
 
 export interface ReportRequest {
@@ -327,6 +340,35 @@ export interface AdminStats {
   qb_online: number
   qb_total: number
   pending_reviews: number
+}
+
+// ---------- 接口权限 ----------
+
+/** 可授权的等级（admin 始终放行） */
+export type GrantRole = "guest" | "member" | "vip"
+/** public=所有人固定；configurable=游客/会员/大会员可配；user=需登录，会员/大会员可配；admin=仅管理员固定 */
+export type RouteAccess = "public" | "configurable" | "user" | "admin"
+
+export interface PermissionItem {
+  /** "METHOD /path" */
+  key: string
+  method: string
+  path: string
+  group: string
+  label: string
+  access: RouteAccess
+  default_roles: string[] | null
+  /** 显式授权（不含继承） */
+  granted: Record<GrantRole, boolean>
+}
+
+export interface PermissionsResponse {
+  roles: GrantRole[]
+  items: PermissionItem[]
+}
+
+export interface PermissionsUpdate {
+  grants: Record<string, GrantRole[]>
 }
 
 /** 列表接口统一处理：后端可能返回数组或分页对象 */

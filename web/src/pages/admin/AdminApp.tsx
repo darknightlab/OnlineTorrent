@@ -5,6 +5,7 @@ import {
   ClipboardCheck,
   Gauge,
   History,
+  KeySquare,
   Menu,
   ScrollText,
   Server,
@@ -23,6 +24,7 @@ import { useDocumentTitle } from "@/lib/hooks"
 import { Navigate } from "react-router-dom"
 import Overview from "./Overview"
 import SettingsPage from "./Settings"
+import PermissionsPage from "./Permissions"
 import QBServers from "./QBServers"
 import UsersPage from "./Users"
 import Codes from "./Codes"
@@ -33,6 +35,7 @@ import { Audit, Plays } from "./Logs"
 const NAV = [
   { to: "/admin", label: "概览", icon: Gauge, end: true },
   { to: "/admin/settings", label: "站点设置", icon: Settings2 },
+  { to: "/admin/permissions", label: "接口权限", icon: KeySquare },
   { to: "/admin/qb", label: "qB 服务器", icon: Server },
   { to: "/admin/users", label: "用户", icon: Users },
   { to: "/admin/codes", label: "邀请码 / 兑换码", icon: Ticket },
@@ -108,6 +111,7 @@ export default function AdminApp() {
           <Routes>
             <Route index element={<Overview />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="permissions" element={<PermissionsPage />} />
             <Route path="qb" element={<QBServers />} />
             <Route path="users" element={<UsersPage />} />
             <Route path="codes" element={<Codes />} />

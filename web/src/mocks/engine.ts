@@ -120,6 +120,7 @@ class MockSession implements Session {
         { id: "b", type: "webrtc", addr: "183.17.xx.xx:51413", downloadSpeed: this.speed * 0.25, uploadSpeed: this.speed * 0.12 },
         { id: "c", type: "webrtc", addr: "240e:3b7:xx::1", downloadSpeed: this.speed * 0.13, uploadSpeed: this.speed * 0.06 },
         ...(peers > 3 ? [{ id: "d", type: "webrtc" as const, addr: "116.21.xx.xx:6881", downloadSpeed: 0, uploadSpeed: 0 }] : []),
+        ...this.webseeds.map((u, i) => ({ id: `ws${i}`, type: "webSeed" as const, addr: u, downloadSpeed: this.speed * 0.3, uploadSpeed: 0 })),
       ],
     }
   }
@@ -138,7 +139,13 @@ class MockSession implements Session {
     return null
   }
 
-  addWebSeeds() {}
+  addWebSeeds(urls: string[]) {
+    for (const u of urls) {
+      this.webseeds.push(u)
+      this.emitLog("info", "已启用 HTTP WebSeed 加速")
+    }
+  }
+  private webseeds: string[] = []
 
   destroy() {
     window.clearInterval(this.timer)

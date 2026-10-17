@@ -11,6 +11,10 @@ import type {
   LoginRequest,
   MeResponse,
   Paged,
+  PermissionsResponse,
+  PermissionsUpdate,
+  SeedResponse,
+  WebseedResponse,
   PlayRecord,
   PlayRequest,
   PlayResponse,
@@ -135,12 +139,18 @@ export const api = {
   search: (q: string, page = 1, s?: AbortSignal) => get<Paged<Torrent>>(`/torrents/search${qs({ q, page })}`, s),
   play: (b: PlayRequest) => post<PlayResponse>("/play", b),
   report: (b: ReportRequest) => post<Record<string, never>>("/report", b),
+  /** 请求服务器下载做种（权限 "POST /api/v1/torrents/{ih}/seed"） */
+  seed: (ih: string) => post<SeedResponse>(`/torrents/${encodeURIComponent(ih)}/seed`),
+  /** 获取 HTTP WebSeed（权限 "POST /api/v1/torrents/{ih}/webseed"） */
+  webseed: (ih: string) => post<WebseedResponse>(`/torrents/${encodeURIComponent(ih)}/webseed`),
 
   // 后台
   admin: {
     stats: () => get<AdminStats>("/admin/stats"),
     settings: () => get<SettingsResponse>("/admin/settings"),
     saveSettings: (b: SettingsUpdate) => put<SettingsResponse>("/admin/settings", b),
+    permissions: () => get<PermissionsResponse>("/admin/permissions"),
+    savePermissions: (b: PermissionsUpdate) => put<PermissionsResponse>("/admin/permissions", b),
 
     qbServers: () => get<ListLike<QBServer>>("/admin/qb-servers"),
     createQB: (b: QBServerInput) => post<QBServer>("/admin/qb-servers", b),

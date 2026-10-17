@@ -8,6 +8,7 @@ import type {
   AnimeDetail,
   AuditEntry,
   InviteCode,
+  PermissionItem,
   PlayRecord,
   QBServer,
   RedeemCode,
@@ -284,3 +285,63 @@ export const audit: AuditEntry[] = Array.from({ length: 36 }, (_, i) => ({
 export function stats(): AdminStats {
   return { users: users.length, plays_24h: 1284, qb_online: qbServers.filter((q) => q.online).length, qb_total: qbServers.length, pending_reviews: reviews.filter((r) => r.status === "pending").length }
 }
+
+// ---------- 接口权限（与后端 internal/api 中 s.route(...) 注册保持一致） ----------
+
+type Spec = Omit<PermissionItem, "granted">
+const spec = (method: string, path: string, access: PermissionItem["access"], group: string, label: string, default_roles: string[] | null = null): Spec => ({
+  key: `${method} ${path}`,
+  method,
+  path,
+  group,
+  label,
+  access,
+  default_roles,
+})
+const adm = (method: string, path: string, label: string) => spec(method, `/api/v1/admin${path}`, "admin", "后台", label)
+
+export const permissionSpecs: Spec[] = [
+  spec("GET", "/api/v1/site", "public", "账号", "站点信息"),
+  spec("GET", "/api/v1/me", "public", "账号", "当前用户与权限"),
+  spec("POST", "/api/v1/auth/register", "public", "账号", "注册"),
+  spec("POST", "/api/v1/auth/login", "public", "账号", "登录"),
+  spec("POST", "/api/v1/auth/logout", "public", "账号", "退出登录"),
+  spec("POST", "/api/v1/me/password", "user", "账号", "修改密码", ["member"]),
+  spec("POST", "/api/v1/me/redeem", "user", "账号", "使用兑换码", ["member"]),
+  spec("GET", "/api/v1/schedule", "configurable", "浏览", "新番时间表", ["guest"]),
+  spec("GET", "/api/v1/anime/{key}", "configurable", "浏览", "番剧详情", ["guest"]),
+  spec("GET", "/api/v1/torrents/latest", "configurable", "浏览", "最新种子", ["guest"]),
+  spec("GET", "/api/v1/torrents/search", "configurable", "浏览", "搜索种子", ["guest"]),
+  spec("POST", "/api/v1/play", "configurable", "播放", "打开种子（策略判定 + 磁力）", ["guest"]),
+  spec("POST", "/api/v1/torrents/{ih}/seed", "configurable", "播放", "让服务器下载做种（消耗服务器资源）", ["member"]),
+  spec("POST", "/api/v1/torrents/{ih}/webseed", "configurable", "播放", "获取 HTTP WebSeed 加速（消耗服务器流量）", ["member"]),
+  spec("POST", "/api/v1/report", "user", "播放", "举报种子", ["member"]),
+  adm("GET", "/stats", "概览 · 查看"),
+  adm("GET", "/settings", "站点设置 · 查看"),
+  adm("PUT", "/settings", "站点设置 · 修改"),
+  adm("GET", "/qb-servers", "qB 服务器 · 查看"),
+  adm("POST", "/qb-servers", "qB 服务器 · 新建/操作"),
+  adm("PUT", "/qb-servers/{id}", "qB 服务器 · 修改"),
+  adm("DELETE", "/qb-servers/{id}", "qB 服务器 · 删除"),
+  adm("POST", "/qb-servers/{id}/test", "qB 服务器 · 新建/操作"),
+  adm("GET", "/users", "用户 · 查看"),
+  adm("PUT", "/users/{id}", "用户 · 修改"),
+  adm("GET", "/invites", "邀请码 · 查看"),
+  adm("POST", "/invites", "邀请码 · 新建/操作"),
+  adm("PUT", "/invites/{id}", "邀请码 · 修改"),
+  adm("GET", "/redeem-codes", "兑换码 · 查看"),
+  adm("POST", "/redeem-codes", "兑换码 · 新建/操作"),
+  adm("GET", "/rules", "策略规则 · 查看"),
+  adm("POST", "/rules", "策略规则 · 新建/操作"),
+  adm("PUT", "/rules/{id}", "策略规则 · 修改"),
+  adm("DELETE", "/rules/{id}", "策略规则 · 删除"),
+  adm("POST", "/policy/test", "策略测试 · 新建/操作"),
+  adm("GET", "/reviews", "审核队列 · 查看"),
+  adm("PUT", "/reviews/{id}", "审核队列 · 修改"),
+  adm("GET", "/plays", "播放记录 · 查看"),
+  adm("GET", "/audit", "审计日志 · 查看"),
+  adm("GET", "/permissions", "接口权限 · 查看"),
+  adm("PUT", "/permissions", "接口权限 · 修改"),
+  { key: "GET /meta/v1/", method: "GET", path: "/meta/v1/…", group: "映射库", label: "读取映射库（作品 / 种子文件映射）", access: "configurable", default_roles: ["guest"] },
+  { key: "PUT /meta/v1/", method: "PUT", path: "/meta/v1/torrents/{ih}/files/{idx}", group: "映射库", label: "纠正映射", access: "admin", default_roles: null },
+]

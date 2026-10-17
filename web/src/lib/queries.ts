@@ -49,6 +49,34 @@ export function useUser() {
   return { user: q.data?.user ?? null, loading: q.isPending, error: q.error }
 }
 
+/** 常用接口权限键（与后端路由注册的 "METHOD /pattern" 一致） */
+export const PERM = {
+  schedule: "GET /api/v1/schedule",
+  anime: "GET /api/v1/anime/{key}",
+  latest: "GET /api/v1/torrents/latest",
+  search: "GET /api/v1/torrents/search",
+  play: "POST /api/v1/play",
+  seed: "POST /api/v1/torrents/{ih}/seed",
+  webseed: "POST /api/v1/torrents/{ih}/webseed",
+  report: "POST /api/v1/report",
+  password: "POST /api/v1/me/password",
+  redeem: "POST /api/v1/me/redeem",
+  metaRead: "GET /meta/v1/",
+} as const
+
+/** 当前身份是否可调用某接口；管理员放行所有接口 */
+export function can(me: MeResponse | null | undefined, key: string): boolean {
+  if (!me) return false
+  if (me.user?.role === "admin") return true
+  return (me.permissions ?? []).includes(key)
+}
+
+/** 权限判定 hook：/me 未加载完成时返回 false */
+export function useCan(key: string): boolean {
+  const { data } = useMe()
+  return can(data, key)
+}
+
 export function useSetMe() {
   const qc = useQueryClient()
   return (me: MeResponse) => qc.setQueryData(qk.me, me)
@@ -59,7 +87,7 @@ export function useLogout() {
   return useMutation({
     mutationFn: api.logout,
     onSettled: () => {
-      qc.setQueryData(qk.me, { user: null })
+      qc.setQueryData(qk.me, { user: null, permissions: [] } satisfies MeResponse)
       void qc.invalidateQueries()
     },
   })

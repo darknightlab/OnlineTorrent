@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Link } from "react-router-dom"
+import { Link, useLocation } from "react-router-dom"
 import {
   AlertTriangle,
   ArrowDown,
@@ -22,6 +22,7 @@ import {
   Users,
   Captions,
   Tv,
+  Zap,
 } from "lucide-react"
 import { loadEngine } from "@/player/engine"
 import { isPlayable, likelyUnsupported, type Engine, type FileKind, type FileSnap, type LogLevel, type Session, type TorrentSnap } from "@/player/types"
@@ -33,7 +34,9 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
-import { useAnime, useSiteOrFallback } from "@/lib/queries"
+import { errorMessage } from "@/components/states"
+import { api } from "@/lib/api"
+import { PERM, can, useAnime, useMe, useSiteOrFallback } from "@/lib/queries"
 import type { PlayResponse, Torrent } from "@/lib/types"
 import { formatBytes, formatDuration, formatPercent, formatSpeed } from "@/lib/format"
 import { cn, copyText } from "@/lib/utils"
@@ -87,8 +90,19 @@ export function Player({
   const [needsTap, setNeedsTap] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
   const [tab, setTab] = useState("files")
+  const [seededBy, setSeededBy] = useState<string[]>([])
   const videoRef = useRef<HTMLVideoElement>(null)
   const autoPicked = useRef(false)
+  const loc = useLocation()
+  const here = `${loc.pathname}${loc.search}`
+
+  // 接口权限：服务器做种 / WebSeed / 举报
+  const me = useMe()
+  const meReady = !!me.data
+  const loggedIn = !!me.data?.user
+  const canSeed = can(me.data, PERM.seed)
+  const canWebseed = can(me.data, PERM.webseed)
+  const canReport = can(me.data, PERM.report)
 
   const anime = useAnime(play?.meta?.anime_key ?? "")
   const poster = anime.data?.anime.cover ?? undefined
@@ -106,7 +120,8 @@ export function Player({
     setSnap(null)
     setCurrent(null)
     setLogs([])
-    log("info", direct ? "服务器不可用，直接通过 P2P 网络连接" : `服务器已接受请求${play?.seeded_by?.length ? `，做种节点：${play.seeded_by.join(", ")}` : ""}`)
+    setSeededBy([])
+    log("info", direct ? "服务器不可用，直接通过 P2P 网络连接" : "服务器已接受请求")
     loadEngine()
       .then(async (eng) => {
         if (cancelled) return
@@ -115,15 +130,6 @@ export function Player({
         s = await eng.start(magnet, { announce: site.trackers, iceServers: site.ice_servers as RTCIceServer[] })
         if (cancelled) return s.destroy()
         unsubs.push(s.on("log", log))
-        if (play?.webseeds?.length) {
-          const seeds = play.webseeds
-          const delay = Math.max(0, play.webseed_delay_sec ?? 0)
-          if (delay > 0) log("info", `${delay} 秒后启用 HTTP WebSeed 加速（优先使用 P2P）`)
-          const timer = setTimeout(() => {
-            if (!cancelled && s) s.addWebSeeds(seeds)
-          }, delay * 1000)
-          unsubs.push(() => clearTimeout(timer))
-        }
         setSession(s)
         const ok = await eng.streamingReady()
         if (!cancelled) {
@@ -141,6 +147,48 @@ export function Player({
     // site 配置变化不重启种子
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [magnet])
+
+  // 引擎启动后：有权限时请求服务器做种，再请求 WebSeed（延迟加入，优先 P2P）。失败只记日志，不影响播放。
+  const ih = play?.infohash ?? null
+  useEffect(() => {
+    if (!session || direct || !ih || !meReady) return
+    if (!canSeed && !canWebseed) return
+    let cancelled = false
+    let timer = 0
+    void (async () => {
+      if (canSeed) {
+        try {
+          const r = await api.seed(ih)
+          if (cancelled) return
+          setSeededBy(r.seeded_by ?? [])
+          if (r.seeded_by?.length) log("info", `已请求服务器做种：${r.seeded_by.join(", ")}`)
+          else log("warn", "服务器暂无可用的做种节点，仅使用 P2P 网络")
+        } catch (e) {
+          if (!cancelled) log("warn", `服务器做种未启用：${errorMessage(e)}`)
+        }
+      }
+      if (cancelled || !canWebseed) return
+      try {
+        const r = await api.webseed(ih)
+        if (cancelled || !r.webseeds?.length) return
+        const seeds = r.webseeds
+        const delay = Math.max(0, r.delay_sec ?? 0)
+        if (delay > 0) log("info", `${delay} 秒后启用 HTTP WebSeed 加速（优先使用 P2P）`)
+        timer = window.setTimeout(() => {
+          if (!cancelled) session.addWebSeeds(seeds)
+        }, delay * 1000)
+      } catch (e) {
+        if (!cancelled) log("warn", `WebSeed 加速未启用：${errorMessage(e)}`)
+      }
+    })()
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [session, direct, ih, meReady, canSeed, canWebseed, log])
+
+  /** 无做种权限时的提示：游客引导登录，已登录则说明等级不支持 */
+  const accelHint = !direct && play && meReady && !canSeed ? (loggedIn ? "tier" : "login") : null
 
   // 轮询状态
   useEffect(() => {
@@ -351,13 +399,14 @@ export function Player({
               {snap && <span className="tabular-nums">{formatBytes(snap.length)}</span>}
               {snap && <span>{snap.files.length} 个文件</span>}
               {direct && <Badge variant="warning">直连模式</Badge>}
-              {play?.seeded_by?.length ? (
-                <span className="inline-flex items-center gap-1">
+              {seededBy.length ? (
+                <span className="inline-flex items-center gap-1" title="服务器做种节点">
                   <Server className="h-3 w-3" />
-                  {play.seeded_by.join(" / ")}
+                  {seededBy.join(" / ")}
                 </span>
               ) : null}
             </div>
+            {accelHint && <AccelHint kind={accelHint} next={here} />}
           </div>
           <div className="flex shrink-0 gap-2">
             <Button variant="soft" size="sm" onClick={share} className="flex-1 md:flex-none">
@@ -377,10 +426,19 @@ export function Player({
                 下载
               </Button>
             )}
-            <Button variant="ghost" size="sm" onClick={() => setReportOpen(true)} disabled={!infoHash} className="flex-1 text-muted-foreground md:flex-none">
-              <Flag />
-              举报
-            </Button>
+            {canReport ? (
+              <Button variant="ghost" size="sm" onClick={() => setReportOpen(true)} disabled={!infoHash} className="flex-1 text-muted-foreground md:flex-none">
+                <Flag />
+                举报
+              </Button>
+            ) : meReady && !loggedIn ? (
+              <Button asChild variant="ghost" size="sm" className="flex-1 text-muted-foreground md:flex-none">
+                <Link to={`/login?next=${encodeURIComponent(here)}`} title="登录后可举报该资源">
+                  <Flag />
+                  举报
+                </Link>
+              </Button>
+            ) : null}
           </div>
         </div>
 
@@ -433,7 +491,7 @@ export function Player({
                 )}
               </TabsContent>
               <TabsContent value="peers">
-                <PeersPanel snap={snap} seededBy={play?.seeded_by ?? []} />
+                <PeersPanel snap={snap} seededBy={seededBy} />
               </TabsContent>
               <TabsContent value="info">
                 <InfoPanel snap={snap} infoHash={infoHash} magnet={magnet} torrentURL={session?.torrentFileURL() ?? null} engine={engine} />
@@ -446,8 +504,26 @@ export function Player({
         </Card>
       </aside>
 
-      {infoHash && <ReportDialog open={reportOpen} onOpenChange={setReportOpen} infohash={infoHash} title={title} />}
+      {infoHash && canReport && <ReportDialog open={reportOpen} onOpenChange={setReportOpen} infohash={infoHash} title={title} />}
     </div>
+  )
+}
+
+function AccelHint({ kind, next }: { kind: "login" | "tier"; next: string }) {
+  return (
+    <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
+      <Zap className="h-3.5 w-3.5 shrink-0 text-accent-text" />
+      {kind === "login" ? (
+        <span>
+          登录后服务器可参与做种，播放更快更稳定
+          <Link to={`/login?next=${encodeURIComponent(next)}`} className="ml-1.5 font-medium text-accent-text hover:underline">
+            登录
+          </Link>
+        </span>
+      ) : (
+        <span>当前等级不支持服务器加速</span>
+      )}
+    </p>
   )
 }
 
