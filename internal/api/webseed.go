@@ -18,9 +18,8 @@ import (
 // HTTP WebSeed (BEP 19) backed by qBittorrent's torrents/downloadFile (qB ≥ 5.3).
 //
 // URL: /webseed/{exp}.{sig}/{infohash}/{file path...}
-// sig = base64url(HMAC-SHA256(secret, infohash "|" exp))[:22]. URLs are handed out by /play
-// only to users whose role satisfies webseed.min_role and only after the policy allowed
-// the torrent, so the webseed endpoint itself only checks the signature and expiry.
+// sig = base64url(HMAC-SHA256(secret, infohash "|" exp))[:22]. URLs are handed out by POST /api/v1/torrents/{ih}/webseed
+// (route permission) only after the policy allowed the torrent for that user, so the webseed endpoint itself only checks the signature and expiry.
 // Only files that a qB server has fully downloaded are served.
 
 const webseedTTL = 6 * time.Hour
@@ -31,12 +30,10 @@ func (s *Server) webseedSig(ih string, exp int64) string {
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))[:22]
 }
 
-// webseedURLs returns signed webseed URLs for a user, or nil if not eligible.
-func (s *Server) webseedURLs(r *http.Request, u *store.User, ih string) []string {
+// webseedURLs returns signed webseed URLs, or nil if webseeds are disabled. Who may obtain
+// them is decided by the route permission of POST /api/v1/torrents/{ih}/webseed.
+func (s *Server) webseedURLs(r *http.Request, ih string) []string {
 	if !s.St.Bool(store.KeyWebseedEnabled) || s.St.Str(store.KeyWebseedSecret) == "" {
-		return nil
-	}
-	if store.RoleRank(u.EffectiveRole()) < store.RoleRank(s.St.Str(store.KeyWebseedMinRole)) {
 		return nil
 	}
 	exp := time.Now().Add(webseedTTL).Unix()

@@ -17,20 +17,26 @@ import (
 )
 
 func (s *Server) routes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/v1/site", s.h(s.getSite))
-	mux.HandleFunc("GET /api/v1/me", s.h(s.getMe))
-	mux.HandleFunc("POST /api/v1/auth/register", s.h(s.register))
-	mux.HandleFunc("POST /api/v1/auth/login", s.h(s.login))
-	mux.HandleFunc("POST /api/v1/auth/logout", s.h(s.logout))
-	mux.HandleFunc("POST /api/v1/me/password", s.authed(s.changePassword))
-	mux.HandleFunc("POST /api/v1/me/redeem", s.authed(s.redeem))
+	pub := func(method, path, label string, h handler) {
+		s.route(mux, method, path, AccessPublic, "账号", label, nil, h)
+	}
+	pub("GET", "/api/v1/site", "站点信息", s.getSite)
+	pub("GET", "/api/v1/me", "当前用户与权限", s.getMe)
+	pub("POST", "/api/v1/auth/register", "注册", s.register)
+	pub("POST", "/api/v1/auth/login", "登录", s.login)
+	pub("POST", "/api/v1/auth/logout", "退出登录", s.logout)
+	s.route(mux, "POST", "/api/v1/me/password", AccessUser, "账号", "修改密码", []string{store.RoleMember}, s.changePassword)
+	s.route(mux, "POST", "/api/v1/me/redeem", AccessUser, "账号", "使用兑换码", []string{store.RoleMember}, s.redeem)
 
-	mux.HandleFunc("GET /api/v1/schedule", s.h(s.getSchedule))
-	mux.HandleFunc("GET /api/v1/anime/{key}", s.h(s.getAnime))
-	mux.HandleFunc("GET /api/v1/torrents/latest", s.h(s.getLatest))
-	mux.HandleFunc("GET /api/v1/torrents/search", s.h(s.getSearch))
-	mux.HandleFunc("POST /api/v1/play", s.h(s.play))
-	mux.HandleFunc("POST /api/v1/report", s.authed(s.report))
+	s.route(mux, "GET", "/api/v1/schedule", AccessConfigurable, "浏览", "新番时间表", []string{store.RoleGuest}, s.getSchedule)
+	s.route(mux, "GET", "/api/v1/anime/{key}", AccessConfigurable, "浏览", "番剧详情", []string{store.RoleGuest}, s.getAnime)
+	s.route(mux, "GET", "/api/v1/torrents/latest", AccessConfigurable, "浏览", "最新种子", []string{store.RoleGuest}, s.getLatest)
+	s.route(mux, "GET", "/api/v1/torrents/search", AccessConfigurable, "浏览", "搜索种子", []string{store.RoleGuest}, s.getSearch)
+
+	s.route(mux, "POST", "/api/v1/play", AccessConfigurable, "播放", "打开种子（策略判定 + 磁力）", []string{store.RoleGuest}, s.play)
+	s.route(mux, "POST", "/api/v1/torrents/{ih}/seed", AccessConfigurable, "播放", "让服务器下载做种（消耗服务器资源）", []string{store.RoleMember}, s.seed)
+	s.route(mux, "POST", "/api/v1/torrents/{ih}/webseed", AccessConfigurable, "播放", "获取 HTTP WebSeed 加速（消耗服务器流量）", []string{store.RoleMember}, s.webseed)
+	s.route(mux, "POST", "/api/v1/report", AccessUser, "播放", "举报种子", []string{store.RoleMember}, s.report)
 
 	s.adminRoutes(mux)
 }
@@ -69,6 +75,8 @@ func (s *Server) getSite(w http.ResponseWriter, r *http.Request) error {
 
 type meResp struct {
 	User *meUser `json:"user"`
+	// route permission keys this user may call, e.g. "POST /api/v1/torrents/{ih}/seed"
+	Permissions []string `json:"permissions"`
 }
 
 type meUser struct {
@@ -76,15 +84,16 @@ type meUser struct {
 	EffectiveRole string `json:"effective_role"`
 }
 
-func meOf(u *store.User) meResp {
-	if u == nil {
-		return meResp{}
+func (s *Server) meOf(u *store.User) meResp {
+	out := meResp{Permissions: s.permissionsFor(roleOf(u))}
+	if u != nil {
+		out.User = &meUser{User: u, EffectiveRole: u.EffectiveRole()}
 	}
-	return meResp{User: &meUser{User: u, EffectiveRole: u.EffectiveRole()}}
+	return out
 }
 
 func (s *Server) getMe(w http.ResponseWriter, r *http.Request) error {
-	httpx.JSON(w, 200, meOf(userOf(r)))
+	httpx.JSON(w, 200, s.meOf(userOf(r)))
 	return nil
 }
 
@@ -193,7 +202,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) error {
 	if err := s.setSession(w, r, u); err != nil {
 		return err
 	}
-	httpx.JSON(w, 200, meOf(u))
+	httpx.JSON(w, 200, s.meOf(u))
 	return nil
 }
 
@@ -224,7 +233,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) error {
 	if err := s.setSession(w, r, u); err != nil {
 		return err
 	}
-	httpx.JSON(w, 200, meOf(u))
+	httpx.JSON(w, 200, s.meOf(u))
 	return nil
 }
 
@@ -272,7 +281,7 @@ func (s *Server) redeem(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	s.audit(r, "user.redeem", u.Username, in.Code)
-	httpx.JSON(w, 200, meOf(u))
+	httpx.JSON(w, 200, s.meOf(u))
 	return nil
 }
 

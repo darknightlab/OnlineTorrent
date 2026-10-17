@@ -6,6 +6,10 @@
 - 限流（429 `rate_limited`）：按 IP 计（IPv6 按 /64）。登录另按账号计：15 分钟内失败 5 次即暂时锁定。
 - 时间：RFC3339 字符串（UTC）。大小：字节 `int64`。
 - 角色：`guest`（未登录）< `member` < `vip` < `admin`。
+- **接口权限**（同 YotsubaNews）：每个接口注册时带权限键 `"METHOD /path/pattern"`、访问类型和默认授权。访问类型：
+  `public`（所有人，不可改：site/me/登录/注册/退出）、`configurable`（游客/会员/大会员可在后台勾选）、`user`（必须登录，会员/大会员可勾选）、`admin`（仅管理员，不可改）。
+  授权给某等级即自动包含更高等级；管理员通过所有接口。默认值只在接口第一次出现时写入，之后以后台设置为准。
+  无权限：游客 401 `login_required`，已登录 403 `forbidden`。
 
 ## 公共
 
@@ -18,10 +22,12 @@
   "max_auto_size_bytes": 2147483648 }
 ```
 
-### `GET /me` → `{"user": null}` 或
+### `GET /me` → `{"user": null, "permissions": [...]}` 或
 ```json
-{ "user": { "id": 1, "username": "a", "email": "a@x", "role": "member", "vip_until": null, "created_at": "..." } }
+{ "user": { "id": 1, "username": "a", "email": "a@x", "role": "member", "effective_role": "member", "vip_until": null, "created_at": "..." },
+  "permissions": ["GET /api/v1/schedule", "POST /api/v1/play", "POST /api/v1/torrents/{ih}/seed", "..."] }
 ```
+`permissions` 为当前身份可调用的非公开、非后台接口权限键，前端据此决定是否请求服务器做种 / WebSeed、是否显示举报等。
 
 ### `POST /auth/register` `{username, email, password, invite_code?, turnstile_token?}` → `/me` 结构（并登录）
 ### `POST /auth/login` `{identifier, password}` → `/me` 结构
@@ -76,21 +82,29 @@ Torrent：
 ```
 
 ### `POST /play` `{ "magnet": "magnet:?..." }` 或 `{ "infohash": "..." }` 或 `{ "torrent_id": "bangumi.moe id" }`
-服务端：解析 → 策略判定 → 允许则推送给 qB 池做种 → 返回带 wss tracker 的磁力。
+服务端：解析 → 策略判定 → 返回带 wss tracker 的磁力（**不再推送给 qB**，见下方 seed）。默认游客可用。
 - 200：
 ```json
 { "access": {"action":"allow","reason":""},
   "infohash": "...", "name": "...", "magnet": "magnet:?xt=...&tr=wss://...",
-  "seeded_by": ["ams"], "webseeds": [] ,
+  "seeded_by": [], "webseeds": [] ,           // 恒为空，保留字段兼容
   "meta": { "anime_key": "bgm:123", "episode": 2 } }   // meta 可空
 ```
-- 401 `{"error":{"code":"login_required"}}`，402 `{"error":{"code":"vip_required"}}`，451 `{"error":{"code":"blocked","message":"原因"}}`，413 `{"error":{"code":"too_large"}}`（超过设置 `play.max_push_size_mb`）。
+- 401 `{"error":{"code":"login_required"}}`，402 `{"error":{"code":"vip_required"}}`，451 `{"error":{"code":"blocked","message":"原因"}}`。
 - 用户磁力里的 `tr=` 一律丢弃（只用站点配置的 tracker）；`dn=` 只作为未受信标题参与判定（用户磁力最低权限始终生效），不写入种子标题，真实标题以 qB 元数据为准。
 - 用户提交的种子获取元数据后会被复查；此外后台每 10 分钟用 qB 中的真实名称与文件列表复查本站分类下所有种子，命中屏蔽规则或超过大小上限的会被移除。
+
+### `POST /torrents/{ih}/seed` → `{"seeded_by": ["ams"]}`
+让所有在线 qB 下载并做种（消耗服务器带宽 / 磁盘）。默认仅会员及以上。种子须先经 `/play` 打开过；会对当前用户重新做策略判定。超过 `play.max_push_size_mb` 返回 413 `too_large`。
+
+### `POST /torrents/{ih}/webseed` → `{"webseeds": ["https://www.projectk.org/webseed/{exp}.{sig}/{ih}/"], "delay_sec": 8}`
+签名的 HTTP WebSeed 地址（6 小时有效，只服务 qB 已完整下载的文件）。默认仅会员及以上；后台关闭 WebSeed 时返回空数组。前端应在 `delay_sec` 秒后再加入，优先 P2P。
 
 ### `POST /report` `{infohash, reason}` → `{}`  需登录。举报 → 进入审核队列（标题取自服务端记录，不接受客户端提供；reason 最长 500 字）
 
 ## 后台 `/admin/*`（仅 admin）
+- `GET /admin/permissions` → `{"roles":["guest","member","vip"], "items":[{key, method, path, group, label, access, default_roles, granted:{guest,member,vip}}]}`
+- `PUT /admin/permissions` `{"grants": {"POST /api/v1/torrents/{ih}/seed": ["member"], ...}}` → 同 GET（只能改 configurable / user 类型；user 类型不能授权给 guest）
 - `GET/PUT /admin/settings` 全部站点设置（KV 对象，字段见 `GET` 返回）
 - `GET/POST /admin/qb-servers`，`PUT/DELETE /admin/qb-servers/{id}`，`POST /admin/qb-servers/{id}/test`
   QBServer: `{id,name,url,username,password(写入时),api_key(写入时),category,enabled,seeding_time_limit_min,ratio_limit,max_active,online,version,last_error,last_check_at}`

@@ -33,11 +33,10 @@ type playResp struct {
 	Infohash string        `json:"infohash"`
 	Name     string        `json:"name"`
 	Magnet   string        `json:"magnet"`
-	SeededBy []string      `json:"seeded_by"`
-	Webseeds []string      `json:"webseeds"`
-	// seconds the client should wait before adding webseeds (prefer P2P first)
-	WebseedDelaySec int       `json:"webseed_delay_sec"`
-	Meta            *playMeta `json:"meta"`
+	// kept for compatibility: /play no longer pushes; see POST /torrents/{ih}/seed
+	SeededBy []string  `json:"seeded_by"`
+	Webseeds []string  `json:"webseeds"`
+	Meta     *playMeta `json:"meta"`
 }
 
 func denyError(d policy.Decision, u *store.User) error {
@@ -122,10 +121,6 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request) error {
 		s.St.AddPlay(ctx, store.Play{Infohash: t.Infohash, Title: t.Title, IP: httpx.ClientIP(r), Action: d.Action}, uid(u))
 		return denyError(d, u)
 	}
-	if limit := s.maxPushBytes(); limit > 0 && t.SizeBytes > limit {
-		return httpx.E(http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("该种子过大（超过 %d MB），暂不支持在线播放", limit>>20))
-	}
-
 	var tags []string
 	for _, g := range t.Tags {
 		tags = append(tags, g.Name)
@@ -141,31 +136,11 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request) error {
 		rec.UserTitle = userTitle
 	}
 	_ = s.St.UpsertTorrent(ctx, rec)
-
-	trackers := s.St.List(store.KeyTrackers)
-	timeout := time.Duration(s.St.Num(store.KeyQBAddTimeoutSec)) * time.Second
-	if timeout <= 0 {
-		timeout = 8 * time.Second
-	}
-	push := s.Pool.Push(ctx, t.Infohash, t.Title, trackers, timeout)
-	s.St.AddPlay(ctx, store.Play{Infohash: t.Infohash, Title: t.Title, IP: httpx.ClientIP(r), Action: policy.Allow, SeededBy: strings.Join(push.SeededBy, ",")}, uid(u))
-	if len(push.Errors) > 0 {
-		s.Log.Warn("push errors", "ih", t.Infohash, "errors", push.Errors)
-	}
-	// user-submitted torrents: re-check once the file list is known
-	if t.Source != "bangumi.moe" && len(t.FileList) == 0 && len(push.SeededBy) > 0 {
-		s.startPostCheck(t.Infohash, uid(u))
-	}
+	s.St.AddPlay(ctx, store.Play{Infohash: t.Infohash, Title: t.Title, IP: httpx.ClientIP(r), Action: policy.Allow}, uid(u))
 
 	resp := playResp{
 		Access: d.Access(), Infohash: t.Infohash, Name: t.Title,
-		Magnet: magnet.Build(t.Infohash, t.Title, trackers), SeededBy: push.SeededBy, Webseeds: []string{},
-		WebseedDelaySec: int(s.St.Num(store.KeyWebseedDelaySec)),
-	}
-	if len(push.SeededBy) > 0 {
-		if ws := s.webseedURLs(r, u, t.Infohash); ws != nil {
-			resp.Webseeds = ws
-		}
+		Magnet: magnet.Build(t.Infohash, t.Title, s.St.List(store.KeyTrackers)), SeededBy: []string{}, Webseeds: []string{},
 	}
 	if tm, err := s.Meta.GetTorrentMap(ctx, t.Infohash); err == nil {
 		for _, f := range tm.Files {
@@ -253,5 +228,79 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	httpx.JSON(w, 200, map[string]any{})
+	return nil
+}
+
+// recordedSubject loads a torrent previously resolved by /play and re-evaluates policy for
+// the current user. Seed/webseed endpoints therefore never act on unknown torrents.
+func (s *Server) recordedSubject(r *http.Request) (*store.TorrentRecord, policy.Subject, error) {
+	ih, ok := magnet.NormalizeInfohash(r.PathValue("ih"))
+	if !ok {
+		return nil, policy.Subject{}, httpx.E(400, "bad_request", "infohash 无效")
+	}
+	rec, err := s.St.GetTorrent(r.Context(), ih)
+	if err != nil {
+		return nil, policy.Subject{}, err
+	}
+	if rec == nil {
+		return nil, policy.Subject{}, httpx.E(404, "not_found", "请先通过 /play 打开该种子")
+	}
+	title := rec.Title
+	if title == "" {
+		title = rec.UserTitle
+	}
+	sub := policy.Subject{Infohash: ih, Title: title, Files: rec.Files, Team: rec.Team, Tags: rec.Tags, Trusted: rec.Source == "bangumi.moe"}
+	d, err := s.Policy.Decide(r.Context(), userOf(r), sub)
+	if err != nil {
+		return nil, sub, err
+	}
+	if !d.Allowed {
+		return nil, sub, denyError(d, userOf(r))
+	}
+	return rec, sub, nil
+}
+
+// seed asks every online qB server to download and seed the torrent (route permission
+// "POST /api/v1/torrents/{ih}/seed", default: members).
+func (s *Server) seed(w http.ResponseWriter, r *http.Request) error {
+	if !s.limiter.allow("seed:"+ipKey(r), 20, 10*time.Second) {
+		return errRateLimited
+	}
+	rec, sub, err := s.recordedSubject(r)
+	if err != nil {
+		return err
+	}
+	if limit := s.maxPushBytes(); limit > 0 && rec.Size > limit {
+		return httpx.E(http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("该种子过大（超过 %d MB），服务器不参与做种", limit>>20))
+	}
+	timeout := time.Duration(s.St.Num(store.KeyQBAddTimeoutSec)) * time.Second
+	if timeout <= 0 {
+		timeout = 8 * time.Second
+	}
+	push := s.Pool.Push(r.Context(), rec.Infohash, sub.Title, s.St.List(store.KeyTrackers), timeout)
+	if len(push.Errors) > 0 {
+		s.Log.Warn("push errors", "ih", rec.Infohash, "errors", push.Errors)
+	}
+	u := userOf(r)
+	s.St.AddPlay(r.Context(), store.Play{Infohash: rec.Infohash, Title: sub.Title, IP: httpx.ClientIP(r), Action: "seed", SeededBy: strings.Join(push.SeededBy, ",")}, uid(u))
+	// user-submitted torrents: re-check once qB has the real file list
+	if rec.Source != "bangumi.moe" && len(rec.Files) == 0 && len(push.SeededBy) > 0 {
+		s.startPostCheck(rec.Infohash, uid(u))
+	}
+	httpx.JSON(w, 200, map[string]any{"seeded_by": push.SeededBy})
+	return nil
+}
+
+// webseed returns signed HTTP webseed URLs (route permission "POST /api/v1/torrents/{ih}/webseed").
+func (s *Server) webseed(w http.ResponseWriter, r *http.Request) error {
+	rec, _, err := s.recordedSubject(r)
+	if err != nil {
+		return err
+	}
+	urls := s.webseedURLs(r, rec.Infohash)
+	if urls == nil {
+		urls = []string{}
+	}
+	httpx.JSON(w, 200, map[string]any{"webseeds": urls, "delay_sec": int(s.St.Num(store.KeyWebseedDelaySec))})
 	return nil
 }

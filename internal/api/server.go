@@ -35,6 +35,7 @@ type Server struct {
 	BaseCtx context.Context
 
 	limiter *limiter
+	perms   permState
 	bg      sync.WaitGroup // background goroutines started by handlers
 
 	postChecks sync.Map      // infohash -> struct{}: post-checks in flight
@@ -71,13 +72,21 @@ func (s *Server) Handler() http.Handler {
 	s.checked = map[string]uint64{}
 	mux := http.NewServeMux()
 	s.routes(mux)
-	mux.Handle("/meta/v1/", s.Meta.Handler(func(r *http.Request) (string, bool) {
+	metaH := s.Meta.Handler(func(r *http.Request) (string, bool) {
 		u := userOf(r)
 		if u == nil || u.Role != store.RoleAdmin || !csrfOK(r) {
 			return "", false
 		}
 		return u.Username, true
-	}))
+	})
+	// reads are one configurable permission; writes are admin-only (checked by the meta authz)
+	s.perms.add(RouteSpec{Key: "GET /meta/v1/", Method: "GET", Path: "/meta/v1/…", Group: "映射库", Label: "读取映射库（作品 / 种子文件映射）", Access: AccessConfigurable, DefaultRoles: []string{store.RoleGuest}})
+	s.perms.add(RouteSpec{Key: "PUT /meta/v1/", Method: "PUT", Path: "/meta/v1/torrents/{ih}/files/{idx}", Group: "映射库", Label: "纠正映射", Access: AccessAdmin})
+	mux.Handle("GET /meta/v1/", s.checkPerm("GET /meta/v1/", metaH.ServeHTTP))
+	mux.Handle("PUT /meta/v1/", s.checkPerm("PUT /meta/v1/", metaH.ServeHTTP))
+	if err := s.loadPerms(s.BaseCtx); err != nil {
+		s.Log.Error("load route permissions", "err", err)
+	}
 	mux.HandleFunc("/webseed/", s.serveWebseed)
 	mux.Handle("/", s.spa())
 	return s.withUser(mux)
@@ -132,29 +141,6 @@ func (s *Server) h(f handler) http.HandlerFunc {
 			httpx.Fail(w, err)
 		}
 	}
-}
-
-// admin wraps a handler requiring role admin.
-func (s *Server) admin(f handler) http.HandlerFunc {
-	return s.h(func(w http.ResponseWriter, r *http.Request) error {
-		u := userOf(r)
-		if u == nil {
-			return httpx.E(401, "login_required", "请先登录")
-		}
-		if u.Role != store.RoleAdmin {
-			return httpx.E(403, "forbidden", "需要管理员权限")
-		}
-		return f(w, r)
-	})
-}
-
-func (s *Server) authed(f handler) http.HandlerFunc {
-	return s.h(func(w http.ResponseWriter, r *http.Request) error {
-		if userOf(r) == nil {
-			return httpx.E(401, "login_required", "请先登录")
-		}
-		return f(w, r)
-	})
 }
 
 func (s *Server) audit(r *http.Request, action, target, detail string) {

@@ -16,35 +16,35 @@ import (
 )
 
 func (s *Server) adminRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/v1/admin/stats", s.admin(s.adminStats))
-	mux.HandleFunc("GET /api/v1/admin/settings", s.admin(s.adminGetSettings))
-	mux.HandleFunc("PUT /api/v1/admin/settings", s.admin(s.adminPutSettings))
-
-	mux.HandleFunc("GET /api/v1/admin/qb-servers", s.admin(s.adminListQB))
-	mux.HandleFunc("POST /api/v1/admin/qb-servers", s.admin(s.adminSaveQB))
-	mux.HandleFunc("PUT /api/v1/admin/qb-servers/{id}", s.admin(s.adminSaveQB))
-	mux.HandleFunc("DELETE /api/v1/admin/qb-servers/{id}", s.admin(s.adminDeleteQB))
-	mux.HandleFunc("POST /api/v1/admin/qb-servers/{id}/test", s.admin(s.adminTestQB))
-
-	mux.HandleFunc("GET /api/v1/admin/users", s.admin(s.adminListUsers))
-	mux.HandleFunc("PUT /api/v1/admin/users/{id}", s.admin(s.adminUpdateUser))
-
-	mux.HandleFunc("GET /api/v1/admin/invites", s.admin(s.adminListInvites))
-	mux.HandleFunc("POST /api/v1/admin/invites", s.admin(s.adminCreateInvite))
-	mux.HandleFunc("PUT /api/v1/admin/invites/{id}", s.admin(s.adminUpdateInvite))
-	mux.HandleFunc("GET /api/v1/admin/redeem-codes", s.admin(s.adminListRedeem))
-	mux.HandleFunc("POST /api/v1/admin/redeem-codes", s.admin(s.adminCreateRedeem))
-
-	mux.HandleFunc("GET /api/v1/admin/rules", s.admin(s.adminListRules))
-	mux.HandleFunc("POST /api/v1/admin/rules", s.admin(s.adminSaveRule))
-	mux.HandleFunc("PUT /api/v1/admin/rules/{id}", s.admin(s.adminSaveRule))
-	mux.HandleFunc("DELETE /api/v1/admin/rules/{id}", s.admin(s.adminDeleteRule))
-	mux.HandleFunc("POST /api/v1/admin/policy/test", s.admin(s.adminPolicyTest))
-
-	mux.HandleFunc("GET /api/v1/admin/reviews", s.admin(s.adminListReviews))
-	mux.HandleFunc("PUT /api/v1/admin/reviews/{id}", s.admin(s.adminResolveReview))
-	mux.HandleFunc("GET /api/v1/admin/plays", s.admin(s.adminListPlays))
-	mux.HandleFunc("GET /api/v1/admin/audit", s.admin(s.adminListAudit))
+	adm := func(method, path, label string, h handler) {
+		s.route(mux, method, path, AccessAdmin, "后台", label, nil, h)
+	}
+	adm("GET", "/api/v1/admin/stats", "概览 · 查看", s.adminStats)
+	adm("GET", "/api/v1/admin/settings", "站点设置 · 查看", s.adminGetSettings)
+	adm("PUT", "/api/v1/admin/settings", "站点设置 · 修改", s.adminPutSettings)
+	adm("GET", "/api/v1/admin/qb-servers", "qB 服务器 · 查看", s.adminListQB)
+	adm("POST", "/api/v1/admin/qb-servers", "qB 服务器 · 新建/操作", s.adminSaveQB)
+	adm("PUT", "/api/v1/admin/qb-servers/{id}", "qB 服务器 · 修改", s.adminSaveQB)
+	adm("DELETE", "/api/v1/admin/qb-servers/{id}", "qB 服务器 · 删除", s.adminDeleteQB)
+	adm("POST", "/api/v1/admin/qb-servers/{id}/test", "qB 服务器 · 新建/操作", s.adminTestQB)
+	adm("GET", "/api/v1/admin/users", "用户 · 查看", s.adminListUsers)
+	adm("PUT", "/api/v1/admin/users/{id}", "用户 · 修改", s.adminUpdateUser)
+	adm("GET", "/api/v1/admin/invites", "邀请码 · 查看", s.adminListInvites)
+	adm("POST", "/api/v1/admin/invites", "邀请码 · 新建/操作", s.adminCreateInvite)
+	adm("PUT", "/api/v1/admin/invites/{id}", "邀请码 · 修改", s.adminUpdateInvite)
+	adm("GET", "/api/v1/admin/redeem-codes", "兑换码 · 查看", s.adminListRedeem)
+	adm("POST", "/api/v1/admin/redeem-codes", "兑换码 · 新建/操作", s.adminCreateRedeem)
+	adm("GET", "/api/v1/admin/rules", "策略规则 · 查看", s.adminListRules)
+	adm("POST", "/api/v1/admin/rules", "策略规则 · 新建/操作", s.adminSaveRule)
+	adm("PUT", "/api/v1/admin/rules/{id}", "策略规则 · 修改", s.adminSaveRule)
+	adm("DELETE", "/api/v1/admin/rules/{id}", "策略规则 · 删除", s.adminDeleteRule)
+	adm("POST", "/api/v1/admin/policy/test", "策略测试 · 新建/操作", s.adminPolicyTest)
+	adm("GET", "/api/v1/admin/reviews", "审核队列 · 查看", s.adminListReviews)
+	adm("PUT", "/api/v1/admin/reviews/{id}", "审核队列 · 修改", s.adminResolveReview)
+	adm("GET", "/api/v1/admin/plays", "播放记录 · 查看", s.adminListPlays)
+	adm("GET", "/api/v1/admin/audit", "审计日志 · 查看", s.adminListAudit)
+	adm("GET", "/api/v1/admin/permissions", "接口权限 · 查看", s.adminGetPermissions)
+	adm("PUT", "/api/v1/admin/permissions", "接口权限 · 修改", s.adminPutPermissions)
 }
 
 func pathID(r *http.Request) int64 {

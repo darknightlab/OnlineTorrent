@@ -158,4 +158,17 @@ ALTER TABLE torrents ADD COLUMN user_title TEXT NOT NULL DEFAULT '';
 CREATE INDEX audit_created ON audit(created_at);
 CREATE INDEX reviews_resolved ON reviews(resolved_at) WHERE status != 'pending';
 `,
+	// 3: per-route permissions (admin panel "接口权限"). route_seeds remembers which routes
+	// already received their default grants so later admin removals stick.
+	`
+CREATE TABLE role_permissions (
+	role  TEXT NOT NULL CHECK (role IN ('guest','member','vip')),
+	route TEXT NOT NULL,
+	PRIMARY KEY (role, route)
+);
+CREATE TABLE route_seeds (
+	route     TEXT PRIMARY KEY,
+	seeded_at TEXT NOT NULL
+);
+`,
 }
