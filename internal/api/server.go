@@ -5,7 +5,9 @@ import (
 	"context"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"path"
 	"strings"
 	"sync"
@@ -88,6 +90,10 @@ func csrfOK(r *http.Request) bool {
 func (s *Server) withUser(next http.Handler) http.Handler {
 	guarded := s.guard(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if target, ok := s.canonicalRedirect(r); ok {
+			http.Redirect(w, r, target, http.StatusMovedPermanently)
+			return
+		}
 		if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
 			if u, err := s.St.SessionUser(r.Context(), c.Value); err == nil {
 				r = r.WithContext(context.WithValue(r.Context(), userKey, u))
@@ -274,4 +280,21 @@ func (l *limiter) take(key string, burst float64, every time.Duration) {
 	} else {
 		b.tokens = 0
 	}
+}
+
+// canonicalRedirect sends the bare domain (e.g. projectk.org) to the configured
+// site URL (e.g. https://www.projectk.org), keeping path and query.
+func (s *Server) canonicalRedirect(r *http.Request) (string, bool) {
+	base, err := url.Parse(strings.TrimRight(s.St.Str(store.KeySiteBaseURL), "/"))
+	if err != nil || base.Host == "" || !strings.HasPrefix(base.Host, "www.") {
+		return "", false
+	}
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	if !strings.EqualFold(host, strings.TrimPrefix(base.Host, "www.")) {
+		return "", false
+	}
+	return base.Scheme + "://" + base.Host + r.URL.RequestURI(), true
 }

@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/darknightlab/onlinetorrent/internal/store"
 )
 
 func TestLimiterEvictsFullBuckets(t *testing.T) {
@@ -57,5 +60,22 @@ func TestCrossSiteRejected(t *testing.T) {
 	h.ServeHTTP(w, req)
 	if w.Code != 204 {
 		t.Errorf("same-origin: %d", w.Code)
+	}
+}
+
+func TestCanonicalRedirect(t *testing.T) {
+	st, err := store.Open(filepath.Join(t.TempDir(), "r.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	s := &Server{St: st}
+	r := httptest.NewRequest("GET", "http://projectk.org/watch?t=1", nil)
+	if got, ok := s.canonicalRedirect(r); !ok || got != "https://www.projectk.org/watch?t=1" {
+		t.Fatalf("got %q %v", got, ok)
+	}
+	r = httptest.NewRequest("GET", "http://www.projectk.org/", nil)
+	if _, ok := s.canonicalRedirect(r); ok {
+		t.Fatal("www must not redirect")
 	}
 }
