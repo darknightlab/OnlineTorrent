@@ -198,5 +198,7 @@ GitHub release 支持 Range（不支持后缀式 `bytes=-N`，要用绝对区间
 - NSFW：dump 里是条目的独立布尔字段 `nsfw`，导入时原样存入 works 的独立列 `nsfw`（与标签分开）。默认不做任何处理，后续再决定是否作为策略规则字段使用。
 - 系列页 `/series/{provider}/{id}`。
 
-### 顺序
-等「特殊集」功能完成并部署后再实施，避免同时改映射库。
+### 实施状态（2026-10-18）
+- 已实现：`internal/meta/bgmarchive_zip.go`（HTTP Range 读 zip，zip64、CRC32 校验）、`bgmarchive.go`（导入）、`episodes_bgm.go`（官方章节、已播集数、分割放送换算，读取侧换算）、`internal/catalog/archive.go`（每 6 小时检查 latest.json）、后台 `GET/POST /api/v1/admin/bgm-archive[/run]`、设置 `bgm_archive.enabled`。
+- 开发机实测（dump-2026-10-13）：85 秒、内存约 45 MB；动画条目 31174、章节 347689、关联 29893；meta.db 5.7 MB → 89 MB。
+- 合并：别名分来源存（bd_aliases / bgm_aliases）后取并集；中文名、简介以 bangumi 为准；放送时间、类型、日期以 bangumi-data 为准；本站数字 ID 不变。

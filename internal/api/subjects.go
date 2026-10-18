@@ -26,6 +26,11 @@ type subjectOut struct {
 	Official string            `json:"official_site"`
 	External map[string]string `json:"external"`
 	Tags     []string          `json:"tags"`
+	MetaTags []string          `json:"meta_tags"`
+	NSFW     bool              `json:"nsfw"`
+	Score    float64           `json:"score,omitempty"`
+	Rank     int               `json:"rank,omitempty"`
+	Eps      int               `json:"eps,omitempty"` // planned episode count (bgm 话数)
 }
 
 func (s *Server) resolveSubject(r *http.Request) (*meta.Work, error) {
@@ -49,6 +54,12 @@ func (s *Server) subjectCard(r *http.Request, work *meta.Work, detail bool) subj
 	item := s.Cat.ScheduleItemByKey(work.Key) // includes latest torrent / episode
 	if item == nil {
 		item, _ = s.Cat.ItemFor(work, time.Now())
+		// not on the current schedule: official air dates are better than the weekly estimate
+		if item != nil && detail {
+			if n, ok := s.Meta.AiredOfficial(r.Context(), work.Key, time.Now()); ok {
+				item.EpisodesAired = n
+			}
+		}
 	}
 	if item == nil {
 		item = &catalog.ScheduleItem{Key: work.Key, SubjectID: work.ID, Title: work.Title, TitleCN: work.TitleCN, Cover: s.Cat.CoverFor(work)}
@@ -61,7 +72,15 @@ func (s *Server) subjectCard(r *http.Request, work *meta.Work, detail bool) subj
 		}
 		item.LatestTorrent = &lt
 	}
-	return subjectOut{ScheduleItem: item, Summary: work.Summary, Type: work.Type, Official: work.Official, External: work.External, Tags: []string{}}
+	out := subjectOut{ScheduleItem: item, Summary: work.Summary, Type: work.Type, Official: work.Official, External: work.External,
+		Tags: work.Tags, MetaTags: work.MetaTags, NSFW: work.NSFW, Score: work.Score, Rank: work.Rank, Eps: work.Eps}
+	if out.Tags == nil {
+		out.Tags = []string{}
+	}
+	if out.MetaTags == nil {
+		out.MetaTags = []string{}
+	}
+	return out
 }
 
 const subjectTorrentLimit = 100
@@ -95,21 +114,32 @@ var (
 
 // episodeItem is one entry of the episode list (选集).
 type episodeItem struct {
-	Key     string  `json:"key"`
-	Kind    string  `json:"kind"` // main|sp|ncop|nced|pv|cm
-	Number  float64 `json:"number"`
-	Label   string  `json:"label"`
-	Sources int     `json:"sources"`         // mapped files
-	Aired   *bool   `json:"aired,omitempty"` // main episodes only: within the aired count of the schedule
+	Key      string  `json:"key"`
+	Kind     string  `json:"kind"` // main|sp|ncop|nced|pv|cm
+	Number   float64 `json:"number"`
+	Label    string  `json:"label"`
+	Sources  int     `json:"sources"`         // mapped files
+	Aired    *bool   `json:"aired,omitempty"` // main episodes only
+	Title    string  `json:"title,omitempty"` // official episode title (Chinese if known)
+	TitleJA  string  `json:"title_ja,omitempty"`
+	Airdate  string  `json:"airdate,omitempty"` // YYYY-MM-DD (official)
+	Official bool    `json:"official"`          // listed by bangumi
 }
 
 // maxListedEpisodes bounds the 1..n range of main episodes in the list.
 const maxListedEpisodes = 2000
 
-// episodeList merges the aired main episodes (1..max(episodes_aired, highest mapped integer
-// episode)) with every episode key that has mapped files (decimals, 0, specials).
-func episodeList(aired int, mapped []meta.EpisodeCount) []episodeItem {
+// episodeList merges official episodes (bangumi Archive; may be empty), the aired main
+// episodes (1..max(episodes_aired, highest mapped integer episode) when there is no official
+// main episode list) and every episode key that has mapped files.
+func episodeList(aired int, official []meta.OfficialEpisode, mapped []meta.EpisodeCount, today string) []episodeItem {
 	counts := map[meta.EpisodeKey]int{}
+	off := map[meta.EpisodeKey]meta.OfficialEpisode{}
+	hasMain := false
+	for _, o := range official {
+		off[o.Key] = o
+		hasMain = hasMain || o.Key.Kind == meta.KeyMain
+	}
 	top := aired
 	for _, m := range mapped {
 		counts[m.Key] = m.Files
@@ -118,23 +148,49 @@ func episodeList(aired int, mapped []meta.EpisodeCount) []episodeItem {
 		}
 	}
 	top = min(top, maxListedEpisodes)
-	keys := make([]meta.EpisodeKey, 0, top+len(mapped))
+	keys := make([]meta.EpisodeKey, 0, top+len(mapped)+len(official))
 	seen := map[meta.EpisodeKey]bool{}
-	for n := 1; n <= top; n++ {
-		k := meta.EpisodeKey{Kind: meta.KeyMain, Number: float64(n)}
-		keys, seen[k] = append(keys, k), true
+	add := func(k meta.EpisodeKey) {
+		if !seen[k] {
+			keys, seen[k] = append(keys, k), true
+		}
+	}
+	for _, o := range official {
+		add(o.Key)
+	}
+	if !hasMain {
+		for n := 1; n <= top; n++ {
+			add(meta.EpisodeKey{Kind: meta.KeyMain, Number: float64(n)})
+		}
 	}
 	for _, m := range mapped {
-		if !seen[m.Key] {
-			keys, seen[m.Key] = append(keys, m.Key), true
-		}
+		add(m.Key)
 	}
 	sort.SliceStable(keys, func(i, j int) bool { return meta.LessKey(keys[i], keys[j]) })
 	out := make([]episodeItem, len(keys))
 	for i, k := range keys {
 		it := episodeItem{Key: k.String(), Kind: k.Kind, Number: k.Number, Label: k.Label(), Sources: counts[k]}
+		o, isOff := off[k]
+		if isOff {
+			it.Official, it.Airdate = true, o.Airdate
+			it.Title, it.TitleJA = o.NameCN, o.Name
+			if it.Title == "" {
+				it.Title, it.TitleJA = o.Name, ""
+			}
+		}
 		if k.Kind == meta.KeyMain {
-			a := k.Number >= 1 && k.Number <= float64(aired)
+			var a bool
+			switch {
+			case isOff && o.Airdate != "":
+				a = o.Airdate <= today
+			case hasMain && isOff:
+				a = aired > 0 // undated official episode: aired if the work has started
+			default:
+				a = k.Number >= 1 && k.Number <= float64(aired)
+			}
+			if counts[k] > 0 {
+				a = true // resources exist, so it has aired
+			}
 			it.Aired = &a
 		}
 		out[i] = it
@@ -153,13 +209,21 @@ func (s *Server) getEpisodes(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
+	official, err := s.Meta.OfficialEpisodes(r.Context(), work.Key)
+	if err != nil {
+		return err
+	}
+	now := time.Now()
 	aired := 0
 	if item := s.Cat.ScheduleItemByKey(work.Key); item != nil {
 		aired = item.EpisodesAired
-	} else if item, _ := s.Cat.ItemFor(work, time.Now()); item != nil {
+	} else if n, ok := s.Meta.AiredOfficial(r.Context(), work.Key, now); ok {
+		aired = n
+	} else if item, _ := s.Cat.ItemFor(work, now); item != nil {
 		aired = item.EpisodesAired
 	}
-	httpx.JSON(w, 200, map[string]any{"items": episodeList(aired, mapped)})
+	today := now.In(time.FixedZone("JST", 9*3600)).Format("2006-01-02")
+	httpx.JSON(w, 200, map[string]any{"items": episodeList(aired, official, mapped, today)})
 	return nil
 }
 

@@ -395,6 +395,7 @@ func FromCatalogList(rs []*meta.CatalogTorrent) []*Torrent {
 
 // Run starts background jobs; Wait blocks until they exit after ctx is done.
 func (c *Catalog) Run(ctx context.Context) {
+	c.wg.Go(func() { c.archiveLoop(ctx) })
 	c.wg.Go(func() {
 		c.refreshBangumiData(ctx)
 		t := time.NewTicker(12 * time.Hour)

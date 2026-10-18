@@ -17,7 +17,7 @@ func TestEpisodeList(t *testing.T) {
 		{Key: meta.EpisodeKey{Kind: meta.KeyNCOP, Number: 1}, Files: 2},
 		{Key: meta.EpisodeKey{Kind: meta.KeySP, Number: 1}, Files: 1},
 	}
-	items := episodeList(3, mapped)
+	items := episodeList(3, nil, mapped, "2026-10-18")
 	var keys []string
 	for _, it := range items {
 		keys = append(keys, it.Key)
@@ -28,13 +28,14 @@ func TestEpisodeList(t *testing.T) {
 	if items[0].Sources != 1 || items[1].Sources != 0 || items[2].Sources != 3 || items[7].Sources != 2 {
 		t.Errorf("sources: %+v", items)
 	}
-	if !*items[1].Aired || *items[0].Aired || *items[5].Aired || items[6].Aired != nil {
+	// episodes with resources count as aired even beyond the schedule estimate (0, 4)
+	if !*items[1].Aired || !*items[0].Aired || !*items[5].Aired || items[6].Aired != nil {
 		t.Errorf("aired: %+v %+v %+v", items[0], items[1], items[5])
 	}
 	if items[3].Label != "第 2.5 话" || items[6].Label != "SP1" || items[7].Kind != "ncop" {
 		t.Errorf("labels: %+v", items)
 	}
-	if got := episodeList(0, nil); len(got) != 0 {
+	if got := episodeList(0, nil, nil, "2026-10-18"); len(got) != 0 {
 		t.Errorf("empty: %+v", got)
 	}
 }
@@ -119,5 +120,30 @@ func TestEpisodesEndpoints(t *testing.T) {
 	tm.Files = tm.Files[2:] // only specials
 	if m := playMetaOf(tm); m == nil || m.Key != "ncop1" || m.Label != "NCOP1" || m.Episode != nil || m.FileIndex != 2 {
 		t.Errorf("play meta specials: %+v", m)
+	}
+}
+
+func TestEpisodeListOfficial(t *testing.T) {
+	official := []meta.OfficialEpisode{
+		{Key: meta.EpisodeKey{Kind: meta.KeyMain, Number: 13}, NameCN: "第十三集", Name: "十三", Airdate: "2026-10-04"},
+		{Key: meta.EpisodeKey{Kind: meta.KeyMain, Number: 14}, Name: "十四", Airdate: "2026-10-11"},
+		{Key: meta.EpisodeKey{Kind: meta.KeyMain, Number: 15}, Airdate: "2026-10-25"},
+		{Key: meta.EpisodeKey{Kind: meta.KeySP, Number: 1}, Name: "特別編"},
+	}
+	mapped := []meta.EpisodeCount{{Key: meta.EpisodeKey{Kind: meta.KeyMain, Number: 13}, Files: 2}}
+	items := episodeList(2, official, mapped, "2026-10-18")
+	var keys []string
+	for _, it := range items {
+		keys = append(keys, it.Key)
+	}
+	// official list replaces the 1..aired range
+	if strings.Join(keys, ",") != "13,14,15,sp1" {
+		t.Fatalf("keys %v", keys)
+	}
+	if items[0].Title != "第十三集" || items[0].TitleJA != "十三" || items[1].Title != "十四" || items[1].TitleJA != "" || !items[0].Official || items[0].Sources != 2 {
+		t.Errorf("titles %+v %+v", items[0], items[1])
+	}
+	if !*items[1].Aired || *items[2].Aired || items[3].Aired != nil {
+		t.Errorf("aired %+v", items)
 	}
 }

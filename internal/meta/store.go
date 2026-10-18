@@ -127,6 +127,47 @@ UPDATE torrents SET trusted = 1 WHERE source_kind IN ('rss', 'bangumi_moe');
 CREATE TABLE meta_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 INSERT INTO meta_state(key, value) VALUES ('reclassify_specials_v1', 'pending');
 CREATE INDEX torrent_files_key ON torrent_files(work_key, kind, episode);
+`,
+	// 6: bangumi Archive (weekly bgm.tv wiki dump). Aliases are kept per source and merged
+	// into works.aliases (bangumi-data and the archive no longer overwrite each other);
+	// official episodes (type 0 main, 1 SP, 2 OP, 3 ED, 4 PV, 5 MAD, 6 other) and
+	// subject relations (前传/续集/…, for series) of anime subjects.
+	`
+ALTER TABLE works ADD COLUMN bd_aliases TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE works ADD COLUMN bgm_aliases TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE works ADD COLUMN nsfw INTEGER NOT NULL DEFAULT 0;         -- bgm subject nsfw flag (stored as-is, not used by policy yet)
+ALTER TABLE works ADD COLUMN platform INTEGER NOT NULL DEFAULT 0;     -- bgm platform: 1 TV, 2 OVA, 3 movie, 4 short, 5 WEB, 2006 anime comic
+ALTER TABLE works ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';         -- JSON []string, top bgm user tags
+ALTER TABLE works ADD COLUMN meta_tags TEXT NOT NULL DEFAULT '[]';    -- JSON []string, bgm public (wiki-managed) tags
+ALTER TABLE works ADD COLUMN score REAL NOT NULL DEFAULT 0;
+ALTER TABLE works ADD COLUMN rank INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE works ADD COLUMN eps INTEGER NOT NULL DEFAULT 0;          -- infobox 话数
+ALTER TABLE works ADD COLUMN bgm_synced TEXT NOT NULL DEFAULT '';     -- archive dump name that last updated this row
+UPDATE works SET bd_aliases = aliases WHERE source = 'bangumi-data';
+
+CREATE TABLE episodes (
+	bgm_id    INTEGER PRIMARY KEY,
+	work_key  TEXT NOT NULL,
+	type      INTEGER NOT NULL,   -- 0 main, 1 SP, 2 OP, 3 ED, 4 PV, 5 MAD, 6 other
+	sort      REAL NOT NULL,
+	name      TEXT NOT NULL DEFAULT '',
+	name_cn   TEXT NOT NULL DEFAULT '',
+	airdate   TEXT NOT NULL DEFAULT '',
+	duration  TEXT NOT NULL DEFAULT '',
+	disc      INTEGER NOT NULL DEFAULT 0,
+	rev       TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX episodes_work ON episodes(work_key, type, sort);
+
+CREATE TABLE subject_relations (
+	subject_id    INTEGER NOT NULL,   -- bgm ids (both anime)
+	related_id    INTEGER NOT NULL,
+	relation_type INTEGER NOT NULL,   -- bangumi/common subject_relations: 2 前传, 3 续集, 4 总集篇, 5 全集, 6 番外篇…
+	ord           INTEGER NOT NULL DEFAULT 0,
+	rev           TEXT NOT NULL DEFAULT '',
+	PRIMARY KEY (subject_id, related_id, relation_type)
+);
+CREATE INDEX subject_relations_related ON subject_relations(related_id);
 `}
 
 // Store is the meta database.
@@ -164,20 +205,35 @@ type Work struct {
 	Summary   string            `json:"summary"`
 	Official  string            `json:"official_site,omitempty"`
 	External  map[string]string `json:"external"`
+	NSFW      bool              `json:"nsfw"`
+	Platform  int               `json:"platform,omitempty"` // bgm platform code
+	Tags      []string          `json:"tags"`
+	MetaTags  []string          `json:"meta_tags,omitempty"`
+	Score     float64           `json:"score,omitempty"`
+	Rank      int               `json:"rank,omitempty"`
+	Eps       int               `json:"eps,omitempty"` // planned episode count (bgm infobox 话数)
 }
 
-const workCols = `COALESCE(id,0),key,title,title_cn,aliases,type,begin_at,end_at,broadcast,cover,summary,official`
+const workCols = `COALESCE(id,0),key,title,title_cn,aliases,type,begin_at,end_at,broadcast,cover,summary,official,nsfw,platform,tags,meta_tags,score,rank,eps`
 
 func scanWork(sc interface{ Scan(...any) error }) (*Work, error) {
 	var w Work
-	var aliases string
-	if err := sc.Scan(&w.ID, &w.Key, &w.Title, &w.TitleCN, &aliases, &w.Type, &w.Begin, &w.End, &w.Broadcast, &w.Cover, &w.Summary, &w.Official); err != nil {
+	var aliases, tags, metaTags string
+	var nsfw int
+	if err := sc.Scan(&w.ID, &w.Key, &w.Title, &w.TitleCN, &aliases, &w.Type, &w.Begin, &w.End, &w.Broadcast, &w.Cover, &w.Summary, &w.Official,
+		&nsfw, &w.Platform, &tags, &metaTags, &w.Score, &w.Rank, &w.Eps); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, store.ErrNotFound
 		}
 		return nil, err
 	}
 	_ = json.Unmarshal([]byte(aliases), &w.Aliases)
+	_ = json.Unmarshal([]byte(tags), &w.Tags)
+	_ = json.Unmarshal([]byte(metaTags), &w.MetaTags)
+	if w.Tags == nil {
+		w.Tags = []string{}
+	}
+	w.NSFW = nsfw != 0
 	return &w, nil
 }
 
@@ -438,13 +494,20 @@ func (s *Store) GetTorrentMap(ctx context.Context, ih string) (*TorrentMap, erro
 			v := ep.Float64
 			f.Episode = &v
 		}
-		if k, ok := KeyOfFile(f.Kind, f.Episode); ok {
-			f.EpisodeKey = k.String()
-		}
 		tm.Files = append(tm.Files, f)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
+	}
+	rows.Close() // CanonicalKey may query (offset cache miss): don't hold two connections
+	for i := range tm.Files {
+		f := &tm.Files[i]
+		if k, ok := KeyOfFile(f.Kind, f.Episode); ok {
+			if f.Work != nil {
+				k = s.CanonicalKey(ctx, f.Work.Key, k)
+			}
+			f.EpisodeKey = k.String()
+		}
 	}
 	uniq := dedupWorks(works)
 	if err := s.fillExternal(ctx, uniq); err != nil {
@@ -492,9 +555,10 @@ type EpisodeFile struct {
 
 // EpisodeFiles lists files mapped to work + episode key (main episode or special).
 func (s *Store) EpisodeFiles(ctx context.Context, workKey string, key EpisodeKey) ([]EpisodeFile, error) {
+	nums := s.fileNumbers(ctx, workKey, key) // split-cour: also the unshifted file number
 	rows, err := s.R.QueryContext(ctx, `SELECT f.infohash,f.file_index,f.path,f.size_bytes,t.title,t.team,t.published_at,t.source_id,t.source,f.confidence,t.trusted
 		FROM torrent_files f JOIN torrents t ON t.infohash = f.infohash
-		WHERE f.work_key = ? AND f.kind = ? AND f.episode = ? AND f.status != 'rejected' ORDER BY t.published_at DESC LIMIT 200`, workKey, key.FileKind(), key.Number)
+		WHERE f.work_key = ? AND f.kind = ? AND f.episode IN (?, ?) AND f.status != 'rejected' ORDER BY t.published_at DESC LIMIT 200`, workKey, key.FileKind(), nums[0], nums[len(nums)-1])
 	if err != nil {
 		return nil, err
 	}
@@ -519,6 +583,7 @@ type EpisodeCount struct {
 // EpisodeKeys lists every episode key (main episodes and specials) that has mapped files
 // for the work, with the number of files, sorted by LessKey.
 func (s *Store) EpisodeKeys(ctx context.Context, workKey string) ([]EpisodeCount, error) {
+	s.episodeOffset(ctx, workKey) // warm the cache before holding a rows cursor
 	rows, err := s.R.QueryContext(ctx, `SELECT kind, episode, COUNT(*) FROM torrent_files
 		WHERE work_key = ? AND episode IS NOT NULL AND kind IN ('episode','sp','op','ed','pv','cm') AND status != 'rejected'
 		GROUP BY kind, episode`, workKey)
@@ -527,6 +592,7 @@ func (s *Store) EpisodeKeys(ctx context.Context, workKey string) ([]EpisodeCount
 	}
 	defer rows.Close()
 	out := []EpisodeCount{}
+	idx := map[EpisodeKey]int{}
 	for rows.Next() {
 		var kind string
 		var ep float64
@@ -535,6 +601,12 @@ func (s *Store) EpisodeKeys(ctx context.Context, workKey string) ([]EpisodeCount
 			return nil, err
 		}
 		if k, ok := KeyOfFile(kind, &ep); ok {
+			k = s.CanonicalKey(ctx, workKey, k)
+			if i, dup := idx[k]; dup {
+				out[i].Files += n
+				continue
+			}
+			idx[k] = len(out)
 			out = append(out, EpisodeCount{k, n})
 		}
 	}

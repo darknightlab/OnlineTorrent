@@ -79,10 +79,14 @@ func (s *Store) ImportBangumiData(ctx context.Context, hc *http.Client, url stri
 			aliases = append(aliases, it.TitleTranslate[lang]...)
 		}
 		al, _ := json.Marshal(aliases)
-		if _, err := tx.ExecContext(ctx, `INSERT INTO works(id,key,title,title_cn,aliases,type,begin_at,end_at,broadcast,official,source,updated_at) VALUES((SELECT COALESCE(MAX(id),0)+1 FROM works),?,?,?,?,?,?,?,?,?, 'bangumi-data', ?)
-			ON CONFLICT(key) DO UPDATE SET title=excluded.title, title_cn=excluded.title_cn, aliases=excluded.aliases, type=excluded.type,
-			begin_at=excluded.begin_at, end_at=excluded.end_at, broadcast=excluded.broadcast, official=excluded.official, updated_at=excluded.updated_at`,
-			key, it.Title, cn, string(al), it.Type, normTime(it.Begin), normTime(it.End), it.Broadcast, it.OfficialSite, now); err != nil {
+		// bangumi-data owns the broadcast schedule, type and dates; titles/aliases merge with
+		// the bangumi Archive (its Chinese title wins when present, aliases are a union).
+		if _, err := tx.ExecContext(ctx, `INSERT INTO works(id,key,title,title_cn,aliases,bd_aliases,type,begin_at,end_at,broadcast,official,source,updated_at) VALUES((SELECT COALESCE(MAX(id),0)+1 FROM works),?,?,?,?,?,?,?,?,?,?, 'bangumi-data', ?)
+			ON CONFLICT(key) DO UPDATE SET title=excluded.title,
+			title_cn=CASE WHEN works.bgm_synced != '' AND works.title_cn != '' THEN works.title_cn ELSE excluded.title_cn END,
+			bd_aliases=excluded.bd_aliases, aliases=`+mergedAliasesSQL+`, type=excluded.type,
+			begin_at=excluded.begin_at, end_at=excluded.end_at, broadcast=excluded.broadcast, official=excluded.official, source='bangumi-data', updated_at=excluded.updated_at`,
+			key, it.Title, cn, string(al), string(al), it.Type, normTime(it.Begin), normTime(it.End), it.Broadcast, it.OfficialSite, now); err != nil {
 			return 0, err
 		}
 		for _, st := range it.Sites {
@@ -190,3 +194,8 @@ func ComputeAiring(w *Work, now time.Time) (Airing, bool) {
 	}
 	return a, true
 }
+
+// mergedAliasesSQL is the union of the per-source alias lists, used in ON CONFLICT updates
+// (excluded.* = the incoming row).
+const mergedAliasesSQL = `(SELECT COALESCE(json_group_array(value), '[]') FROM (
+	SELECT value FROM json_each(excluded.bd_aliases) UNION SELECT value FROM json_each(works.bgm_aliases)))`

@@ -43,6 +43,7 @@ const (
 	KeyBgmUserAgent      = "upstream.bgm_user_agent"
 	KeyTMDBKey           = "upstream.tmdb_api_key"
 	KeyCrawlEnabled      = "crawl.enabled"
+	KeyBgmArchiveEnabled = "bgm_archive.enabled"
 	KeyCrawlWorkers      = "crawl.workers"
 	KeyCleanupEnabled    = "qb.cleanup_enabled"
 	KeyQBAddTimeoutSec   = "qb.add_timeout_sec"
@@ -85,6 +86,7 @@ func SettingsSchema() []SettingSpec {
 
 		{Key: KeyTMDBKey, Group: "上游", Type: "secret", Label: "TMDB API Key", Description: "可选；本地搜不到番剧时也查询 TMDB（v3 API Key 或 v4 读取令牌），留空只查 bgm.tv", Default: ""},
 
+		{Key: KeyBgmArchiveEnabled, Group: "抓取", Type: "bool", Label: "同步 bangumi 数据", Description: "每 6 小时检查 bangumi Archive（bgm.tv 官方每周数据导出），有新版本时导入全部动画条目、章节与条目关联；关闭后「立即同步」仍可用", Default: true},
 		{Key: KeyCrawlEnabled, Group: "抓取", Type: "bool", Label: "启用后台抓取", Description: "总开关：按「抓取源」定时抓取 RSS / bangumi.moe 并入库；关闭后「立即抓取」仍可用", Default: true},
 		{Key: KeyCrawlWorkers, Group: "抓取", Type: "number", Label: "抓取并发数", Description: "同时抓取的源数量（同一站点始终串行）", Default: 2},
 

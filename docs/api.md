@@ -115,7 +115,8 @@ URL 与 API 中用来指代某一集（Go：`meta.ParseEpisodeKey`，`internal/m
 
 ### `GET /subjects/{provider}/{id}`
 ```json
-{ "subject": { ...同 schedule item..., "summary": "简介", "type": "tv", "official_site": "https://…", "tags": ["..."],
+{ "subject": { ...同 schedule item..., "summary": "简介", "type": "tv", "official_site": "https://…",
+               "tags": ["原创", "..."], "meta_tags": ["TV", "原创"], "nsfw": false, "score": 8.3, "rank": 85, "eps": 25,   // 来自 bangumi Archive；score/rank/eps 为 0 时省略
                "external": {"bgm": "123", "mal": "1", "bangumi_moe": "5ff…"} },   // external 的值目前为字符串
   "torrents": [Torrent, ...] }     // 本地库中至少有一个文件映射到该条目的种子，按发布时间倒序，最多 100 个
 ```
@@ -124,13 +125,16 @@ URL 与 API 中用来指代某一集（Go：`meta.ParseEpisodeKey`，`internal/m
 选集列表。接口权限可配置，默认游客可用。
 ```json
 { "items": [
-  { "key": "1",     "kind": "main", "number": 1,    "label": "第 1 话",    "sources": 0, "aired": true },
-  { "key": "12.5",  "kind": "main", "number": 12.5, "label": "第 12.5 话", "sources": 2, "aired": false },
-  { "key": "sp1",   "kind": "sp",   "number": 1,    "label": "SP1",        "sources": 1 },
-  { "key": "ncop1", "kind": "ncop", "number": 1,    "label": "NCOP1",      "sources": 3 } ] }
+  { "key": "1",     "kind": "main", "number": 1,    "label": "第 1 话",    "sources": 0, "aired": true,
+    "official": true, "title": "魔王的苏醒之日", "title_ja": "魔王 が 目覚める 日", "airdate": "2008-04-06" },
+  { "key": "12.5",  "kind": "main", "number": 12.5, "label": "第 12.5 话", "sources": 2, "aired": true, "official": false },
+  { "key": "sp1",   "kind": "sp",   "number": 1,    "label": "SP1",        "sources": 1, "official": true, "title": "特別編" },
+  { "key": "ncop1", "kind": "ncop", "number": 1,    "label": "NCOP1",      "sources": 3, "official": false } ] }
 ```
-- 内容：正片 `1..max(episodes_aired, 已映射的最大整数正片)`（最多 2000）∪ 所有有映射文件的集（小数集、第 0 集、特别篇）。排序见「集的键」。
-- `sources`：映射到该集的文件数（不含 rejected）；0 = 暂无资源（前端弱化显示）。`aired`：仅正片，是否在时间表估算的已播集数之内。
+- 内容：bangumi 官方章节（正片 / SP / OP→ncop / ED→nced / PV；不含 MAD 与「其他」）∪ 所有有映射文件的集。没有官方正片列表时，正片用 `1..max(episodes_aired, 已映射的最大整数正片)`（最多 2000）代替。排序见「集的键」。
+- `sources`：映射到该集的文件数（不含 rejected）；0 = 暂无资源。`aired`（仅正片）：有官方播出日期时按日期（JST）判断，否则按时间表估算；有资源的集一律视为已播。
+- `title`：官方标题（有中文名时为中文，`title_ja` 为日文原名；没有中文名时 `title` 为原名）。`official`：该集在 bangumi 章节列表中。
+- 分割放送：bangumi 第二季正片若从 13 开始，而文件写 01，则读取时自动换算为 13（文件里存的仍是原始集数）。
 
 ### `GET /subjects/{provider}/{id}/episodes/{n}`
 `{n}` 为集的键（`12`、`12.5`、`0`、`sp1`、`ncop1`…；权限键仍是 `GET /api/v1/subjects/{provider}/{id}/episodes/{n}`）。无效键 400 `bad_request`。
@@ -259,6 +263,7 @@ Source：
 - `PUT /admin/sources/id/{id}`（部分更新：只改出现的字段，字段同上）→ Source。改了 `url`/`kind` 会先 probe；改 `url`/`kind`/`proxy_disabled` 会清空条件 GET 缓存并立即到期；从停用改为启用也会立即到期。
 - `DELETE /admin/sources/id/{id}` → `{"items": [Source]}`（已收录的种子保留）
 - `POST /admin/sources/id/{id}/run` → 202 Source（`running: true`），后台立即抓取一次（无视间隔、启用状态与全局开关）；正在抓取时 409 `busy`。结果稍后见列表。
+- `GET /admin/bgm-archive` → `{dump, dump_at, digest, synced_at, subjects, episodes, relations, duration_sec, checked_at, error?, error_at?, running, phase?}`（bangumi Archive 同步状态；phase 为 subjects|episodes|relations）；`POST /admin/bgm-archive/run` → 202（即使未更新也重新导入），运行中 409 `busy`。设置 `bgm_archive.enabled` 控制每 6 小时自动检查。
 - `GET /admin/metadata-jobs` → `{"items":[{infohash, source_id, status:"pending|running|done|failed", attempts, next_at, server_id, added, started_at, last_error, created_at, updated_at}]}`（最近 200 条，未完成的在前）
 
 相关设置（`GET/PUT /admin/settings`）：`crawl.enabled`（bool，默认 true）、`crawl.workers`（同时抓取的源数，默认 2）、`upstream.tmdb_api_key`（secret，默认空；TMDB v3 key 或 v4 读取令牌）、`upstream.proxy`（抓取与 bgm.tv/TMDB 请求共用；为空时使用环境变量 `HTTPS_PROXY` 等）。

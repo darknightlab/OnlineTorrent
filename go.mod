@@ -9,6 +9,7 @@ require (
 )
 
 require (
+	github.com/bangumi/wiki-parser-go v0.0.2 // indirect
 	github.com/mmcdole/goxpp/v2 v2.0.0 // indirect
 	github.com/ncruces/go-sqlite3-wasm/v3 v3.2.35303 // indirect
 	github.com/ncruces/julianday v1.0.0 // indirect
