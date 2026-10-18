@@ -48,7 +48,6 @@ const (
 	KeyCleanupEnabled    = "qb.cleanup_enabled"
 	KeyQBAddTimeoutSec   = "qb.add_timeout_sec"
 	KeyWebseedEnabled    = "webseed.enabled"
-	KeyWebseedDelaySec   = "webseed.delay_sec"
 )
 
 var defaultTrackers = []string{
@@ -94,7 +93,6 @@ func SettingsSchema() []SettingSpec {
 		{Key: KeyQBAddTimeoutSec, Group: "qBittorrent", Type: "number", Label: "推送超时（秒）", Default: 8},
 
 		{Key: KeyWebseedEnabled, Group: "WebSeed", Type: "bool", Label: "启用 HTTP WebSeed 加速", Description: "qB 下载完成的文件可经本站以 HTTP 方式补充传输（经 Cloudflare 隧道，消耗服务器上行流量）", Default: true},
-		{Key: KeyWebseedDelaySec, Group: "WebSeed", Type: "number", Label: "WebSeed 延迟（秒）", Description: "开始播放后等待多少秒再启用 WebSeed，优先使用 P2P", Default: 8},
 	}
 }
 

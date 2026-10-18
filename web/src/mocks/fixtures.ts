@@ -173,7 +173,7 @@ export const site: Site = {
   trackers: ["wss://tracker.projectk.org", "wss://tracker.dnlab.net:16443", "wss://tracker.openwebtorrent.com"],
   ice_servers: [{ urls: ["stun:stun.miwifi.com:3478", "stun:stun.l.google.com:19302"] }],
   max_auto_size_bytes: 2 * 1024 ** 3,
-  webseed: { enabled: true, delay_sec: 3 },
+  webseed: { enabled: true },
 }
 
 export const settings: SettingItem[] = [

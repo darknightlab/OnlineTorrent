@@ -60,8 +60,7 @@ type siteResp struct {
 }
 
 type siteWebseed struct {
-	Enabled  bool `json:"enabled"`
-	DelaySec int  `json:"delay_sec"` // wait this long after playback starts (prefer P2P), then subscribe to /webseed/events
+	Enabled bool `json:"enabled"`
 }
 
 func (s *Server) getSite(w http.ResponseWriter, r *http.Request) error {
@@ -81,7 +80,7 @@ func (s *Server) getSite(w http.ResponseWriter, r *http.Request) error {
 		Name: s.St.Str(store.KeySiteName), AnnouncementMD: s.St.Str(store.KeyAnnouncement),
 		Registration: reg, InviteRequired: reg == "invite", TurnstileSiteKey: s.St.Str(store.KeyTurnstileSiteKey),
 		Trackers: trackers, ICEServers: ice, MaxAutoSizeBytes: int64(s.St.Num(store.KeyMaxAutoSize)) << 20,
-		Webseed: siteWebseed{Enabled: s.St.Bool(store.KeyWebseedEnabled), DelaySec: int(s.St.Num(store.KeyWebseedDelaySec))},
+		Webseed: siteWebseed{Enabled: s.St.Bool(store.KeyWebseedEnabled)},
 	})
 	return nil
 }

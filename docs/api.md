@@ -221,7 +221,7 @@ qB 拿到元数据后，后端把文件列表写入本地库并刮削（每个 i
 - 文件：`GET /webseed/hash/{ih}/`（单文件种子）或 `/webseed/hash/{ih}/{种子内文件路径}`（多文件，webtorrent 自动拼接）。
   不带签名/过期时间；每次请求用登录 Cookie 校验接口权限 `GET /webseed/hash/{ih}/{path...}`（后台「接口权限」可改，默认会员）+ 当前用户对该种子的策略。只提供 qB 已完整下载的文件，否则 404。`Cache-Control: private, no-store`。
 - 就绪推送（SSE）：`GET /api/v1/torrents/hash/{ih}/webseed/events[/file/{idx}]`（种子须先经 play 打开）。事件：`waiting {progress}`（进度变化时）、`ready {webseeds:[固定地址]}`、`unavailable {reason: disabled|not_seeded}`、`timeout {}`（30 分钟）；每 25 秒一条 `: ping` 心跳；每 IP 最多 6 条并发连接。
-- 前端：`/site.webseed = {enabled, delay_sec}`；播放开始 `delay_sec` 秒后订阅推送，收到 `ready` 才 `addWebSeed`，不做客户端探测。
+- 前端：`/site.webseed = {enabled}`；播放开始即订阅推送（SSE 自己等待元数据与服务器文件就绪），收到 `ready` 才 `addWebSeed`，不做客户端探测。
 
 ### `POST /torrents/hash/{ih}/report` `{reason}` → `{}`  需登录。举报 → 进入审核队列（标题取自服务端记录，不接受客户端提供；reason 最长 500 字）
 

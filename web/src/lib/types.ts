@@ -27,8 +27,8 @@ export interface Site {
   trackers: string[]
   ice_servers: IceServer[]
   max_auto_size_bytes: number
-  /** HTTP WebSeed：地址固定 /webseed/hash/{ih}/（Cookie 鉴权，权限 PERM.webseed）；delay_sec 秒后订阅就绪推送 */
-  webseed?: { enabled: boolean; delay_sec: number }
+  /** HTTP WebSeed：地址固定 /webseed/hash/{ih}/（Cookie 鉴权，权限 PERM.webseed）；播放即订阅就绪推送 */
+  webseed?: { enabled: boolean }
 }
 
 export interface User {

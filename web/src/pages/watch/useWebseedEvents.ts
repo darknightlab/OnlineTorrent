@@ -18,7 +18,7 @@ function parse<T>(e: Event): T | null {
  * 服务器通过 SSE 推送 WebSeed 可用性：收到 ready 后才把（新签名的）WebSeed 加入种子，
  * 避免服务器还没有文件时 webtorrent 高频请求 webseed 得到 404。
  *
- * - armed：已获取 WebSeed 配置且 delay_sec 已过（由调用方控制权限与延迟）
+ * - armed：有 WebSeed 权限且已启用（由调用方判断）
  * - fileIndex：undefined = 元数据未就绪（不连接）；null = 任意 / 单文件；number = 正在播放的文件
  * - 文件切换时关闭并为新文件重连；会话销毁、浏览器内已下载完成、已启用 WebSeed 后不再连接
  */

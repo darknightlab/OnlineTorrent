@@ -133,7 +133,7 @@ export function Player({
   const [tab, setTab] = useState("files")
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [seededBy, setSeededBy] = useState<string[]>([])
-  /** 已获取 WebSeed 配置且 delay_sec 已过：可以连接 SSE 等待服务器就绪 */
+  /** 有 WebSeed 权限且已启用：连接 SSE 等待服务器就绪 */
   const [webseedArmed, setWebseedArmed] = useState(false)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null)
@@ -204,16 +204,16 @@ export function Player({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [magnet])
 
-  // 引擎启动后：有权限时请求服务器做种，再请求 WebSeed（延迟加入，优先 P2P）。失败只记日志，不影响播放。
+  // 引擎启动后：有权限时请求服务器做种；同时订阅 WebSeed 就绪推送（SSE 自己会等元数据与服务器文件就绪，
+  // 就绪即加入，不再额外延迟）。失败只记日志，不影响播放。
   const ih = play?.infohash ?? null
   useEffect(() => {
     if (!session || direct || !ih || !meReady) return
-    if (!canSeed && !canWebseed) return
     let cancelled = false
-    let timer = 0
-    setWebseedArmed(false)
-    void (async () => {
-      if (canSeed) {
+    // WebSeed 地址固定（/webseed/hash/{ih}/，Cookie 鉴权）；SSE 推送 ready 后才加入
+    setWebseedArmed(canWebseed && !!site.webseed?.enabled)
+    if (canSeed) {
+      void (async () => {
         try {
           const r = await api.seed(ih)
           if (cancelled) return
@@ -223,20 +223,12 @@ export function Player({
         } catch (e) {
           if (!cancelled) log("warn", `服务器做种未启用：${errorMessage(e)}`)
         }
-      }
-      if (cancelled || !canWebseed || !site.webseed?.enabled) return
-      // WebSeed 地址固定（/webseed/hash/{ih}/，Cookie 鉴权）；延迟后通过 SSE 等服务器通知文件就绪再加入
-      const delay = Math.max(0, site.webseed.delay_sec ?? 0)
-      if (delay > 0) log("info", `${delay} 秒后检查 HTTP WebSeed 加速（优先使用 P2P）`)
-      timer = window.setTimeout(() => {
-        if (!cancelled) setWebseedArmed(true)
-      }, delay * 1000)
-    })()
+      })()
+    }
     return () => {
       cancelled = true
-      window.clearTimeout(timer)
     }
-  }, [session, direct, ih, meReady, canSeed, canWebseed, site.webseed?.enabled, site.webseed?.delay_sec, log])
+  }, [session, direct, ih, meReady, canSeed, canWebseed, site.webseed?.enabled, log])
 
   // 元数据兜底：磁力没有 xs=（打开时服务器还没有该种子的信息，如刚粘贴的磁力）或 xs 失败时，
   // 请求做种后轮询收录状态，ready 后下载 .torrent 交给 WebTorrent（无需 WebRTC 节点提供 ut_metadata）
