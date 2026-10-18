@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react"
 import { Outlet, useLocation } from "react-router-dom"
 import { Header } from "./Header"
 import { MobileTabBar } from "./MobileTabBar"
+import { MobileTopBar, mobileTopBarVisible } from "./MobileTopBar"
 import { Footer } from "./Footer"
 import { cn } from "@/lib/utils"
 export { Container } from "./Container"
@@ -31,14 +32,15 @@ export function Shell() {
         跳到主要内容
       </a>
       <Header />
+      {!isAdmin && <MobileTopBar />}
       <main
         id="main"
         className={cn(
           "flex-1",
           // 移动端没有顶栏：避开刘海/状态栏
-          !isAdmin && "pt-safe md:pt-0",
+          !isAdmin && !mobileTopBarVisible(pathname) && "pt-safe md:pt-0",
           // 为移动端底部 Tab 栏留出空间
-          !isAdmin && "pb-[calc(3.75rem+env(safe-area-inset-bottom))] md:pb-0",
+          !isAdmin && "pb-[calc(3.25rem+env(safe-area-inset-bottom))] md:pb-0",
         )}
       >
         <Outlet />

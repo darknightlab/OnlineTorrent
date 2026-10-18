@@ -80,3 +80,24 @@ export function ThemeMenuItems() {
     </>
   )
 }
+
+const cycle: Theme[] = ["light", "dark", "system"]
+
+/** 单个按钮：浅色 → 深色 → 跟随系统 循环（移动端顶栏） */
+export function ThemeCycleButton() {
+  const { theme, setTheme } = useTheme()
+  const cur = options.find((o) => o.value === theme)!
+  const next = options.find((o) => o.value === cycle[(cycle.indexOf(theme) + 1) % cycle.length])!
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={() => setTheme(next.value)}
+      aria-label={`主题：${cur.label}（点击切换为${next.label}）`}
+      title={`主题：${cur.label}`}
+      className="text-foreground"
+    >
+      <cur.icon className="!size-5" />
+    </Button>
+  )
+}

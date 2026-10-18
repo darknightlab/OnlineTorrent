@@ -1,9 +1,8 @@
 import { useState, type FormEvent } from "react"
 import { Link, Navigate, useNavigate } from "react-router-dom"
 import { useMutation } from "@tanstack/react-query"
-import { Crown, KeyRound, Loader2, LogOut, Palette, Shield, Ticket } from "lucide-react"
+import { Crown, KeyRound, Loader2, LogOut, Shield, Ticket } from "lucide-react"
 import { Container } from "@/components/layout/Container"
-import { ThemeSegmented } from "@/components/layout/ThemeToggle"
 import { RoleBadge } from "@/components/badges"
 import { PageLoading, errorMessage } from "@/components/states"
 import { Button } from "@/components/ui/button"
@@ -72,18 +71,6 @@ export default function MePage() {
           {canPassword && <PasswordCard />}
         </div>
       )}
-
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="flex items-center gap-2">
-            <Palette className="h-4 w-4 text-primary-text" />
-            外观
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <ThemeSegmented />
-        </CardContent>
-      </Card>
 
       <Button
         variant="outline"
