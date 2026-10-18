@@ -52,14 +52,13 @@ func (s *Store) Match(ctx context.Context, t TorrentInput) error {
 
 	work, method, wconf := s.resolveWork(ctx, t)
 
-	videos := 0
-	for _, f := range t.Files {
-		if IsVideo(f.Path) {
-			videos++
-		}
+	paths := make([]string, len(t.Files))
+	for i, f := range t.Files {
+		paths[i] = f.Path
 	}
-	for _, f := range t.Files {
-		kind, p := classify(f.Path, t.Title, videos, work)
+	parsed := classifyAll(paths, t.Title, work)
+	for i, f := range t.Files {
+		kind, p := parsed[i].Kind, parsed[i]
 		wk, ep, conf, m := fileMapping(work, method, wconf, kind, p)
 		if _, err := s.W.ExecContext(ctx, `INSERT INTO torrent_files(infohash,file_index,path,size_bytes,kind,work_key,episode,confidence,status,method,updated_at) VALUES(?,?,?,?,?,?,?,?, 'auto', ?, ?)
 			ON CONFLICT(infohash,file_index) DO UPDATE SET path=excluded.path, size_bytes=CASE WHEN excluded.size_bytes>0 THEN excluded.size_bytes ELSE size_bytes END,
@@ -72,15 +71,25 @@ func (s *Store) Match(ctx context.Context, t TorrentInput) error {
 	return s.refreshFTS(ctx, t.Infohash)
 }
 
-// classify is ClassifyFile plus the single-video movie rule (a movie's only video is episode 1).
-func classify(path, title string, videos int, work *Work) (string, ParsedName) {
-	p := ClassifyFile(path, title, videos)
-	kind := p.Kind
-	if IsVideo(path) && kind == "other" && p.Episode == nil && videos == 1 && work != nil && strings.EqualFold(work.Type, "movie") {
-		one := 1.0
-		kind, p.Episode, p.Confidence = "episode", &one, 0.7
+// classifyAll is ClassifyFiles (all files of one torrent, cross-checked) plus the
+// single-video movie rule (a movie's only video is episode 1).
+func classifyAll(paths []string, title string, work *Work) []ParsedName {
+	ps := ClassifyFiles(paths, title)
+	videos := 0
+	for _, p := range paths {
+		if IsVideo(p) {
+			videos++
+		}
 	}
-	return kind, p
+	if videos == 1 && work != nil && strings.EqualFold(work.Type, "movie") {
+		for i, p := range ps {
+			if IsVideo(paths[i]) && (p.Kind == "other" || p.Kind == "episode") && p.Episode == nil {
+				one := 1.0
+				ps[i] = ParsedName{Kind: "episode", Episode: &one, Confidence: 0.7}
+			}
+		}
+	}
+	return ps
 }
 
 // fileMapping: only episodes and specials (sp/op/ed/pv/cm, see MappableKind) are mapped to

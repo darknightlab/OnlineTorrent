@@ -9,13 +9,22 @@ import (
 	"github.com/darknightlab/onlinetorrent/internal/store"
 )
 
-// stateReclassify is the meta_state flag of the one-off re-classification that gives
-// specials (SP/NCOP/NCED/PV/CM) their number and maps them to the work.
-const stateReclassify = "reclassify_specials_v1"
+// stateReclassify is the meta_state flag of the one-off re-classification of stored files.
+// Bump it whenever the file-name parser changes in a way that should reach existing rows:
+//
+//	reclassify_specials_v1  specials keep their number and are mapped (migration 5)
+//	reclassify_parser_v2    token-elimination parser + torrent-level cross-checks (ClassifyFiles)
+//
+// The flag is inserted as 'pending' from Go (INSERT OR IGNORE), not by a migration.
+const stateReclassify = "reclassify_parser_v2"
 
 // ReclassifyOnce runs Reclassify if it has not completed on this database yet (flag in
-// meta_state, set by migration 5). Safe to call in a goroutine at startup.
+// meta_state). Safe to call in a goroutine at startup.
 func (s *Store) ReclassifyOnce(ctx context.Context, log *slog.Logger) {
+	if _, err := s.W.ExecContext(ctx, `INSERT OR IGNORE INTO meta_state(key, value) VALUES (?, 'pending')`, stateReclassify); err != nil {
+		log.Warn("meta: reclassify flag", "err", err)
+		return
+	}
 	var v string
 	if err := s.R.QueryRowContext(ctx, `SELECT value FROM meta_state WHERE key = ?`, stateReclassify).Scan(&v); err != nil || v == "done" {
 		return
@@ -52,7 +61,7 @@ func workConf(method string) float64 {
 	return 0.7
 }
 
-// Reclassify re-runs ClassifyFile over the stored paths of every ready torrent and
+// Reclassify re-runs ClassifyFiles over the stored paths of every ready torrent and
 // rewrites automatic rows (status auto) whose kind, episode or work changed. The work is
 // the one already mapped to the torrent's files; torrents without one are only re-matched
 // (resolveWork) when a file became mappable (e.g. an NCOP that used to be unmapped).
@@ -118,11 +127,9 @@ func (s *Store) reclassifyTorrent(ctx context.Context, ih, title string) (int, e
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
-	videos := 0
-	for _, f := range files {
-		if IsVideo(f.path) {
-			videos++
-		}
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = f.path
 	}
 
 	var work *Work
@@ -139,8 +146,8 @@ func (s *Store) reclassifyTorrent(ctx context.Context, ih, title string) (int, e
 		}
 	} else {
 		// re-match only if a file newly became mappable
-		for _, f := range files {
-			if k, _ := classify(f.path, title, videos, nil); f.status == "auto" && MappableKind(k) && !MappableKind(f.kind) {
+		for i, p := range classifyAll(paths, title, nil) {
+			if f := files[i]; f.status == "auto" && MappableKind(p.Kind) && !MappableKind(f.kind) {
 				if in, ok := s.GetTorrentInput(ctx, ih); ok {
 					work, method, wconf = s.resolveWork(ctx, in)
 				}
@@ -151,11 +158,12 @@ func (s *Store) reclassifyTorrent(ctx context.Context, ih, title string) (int, e
 
 	n := 0
 	now := store.Now()
-	for _, f := range files {
+	parsed := classifyAll(paths, title, work)
+	for i, f := range files {
 		if f.status != "auto" {
 			continue
 		}
-		kind, p := classify(f.path, title, videos, work)
+		kind, p := parsed[i].Kind, parsed[i]
 		wk, ep, conf, m := fileMapping(work, method, wconf, kind, p)
 		oldWK := ""
 		if f.work.Valid {

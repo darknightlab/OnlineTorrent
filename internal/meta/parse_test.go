@@ -31,20 +31,21 @@ func TestParseEpisode(t *testing.T) {
 		{"[Team] Show [SP02][1080p].mkv", 2, "sp"},
 		{"[Team] Special Agent Show [05][1080p].mkv", 5, "episode"},
 		{"86.mkv", -1, "other"},
-		// specials keep their number (unnumbered = 1)
+		// specials keep their number; unnumbered ones have none (ClassifyFiles numbers a
+		// torrent's only unnumbered special of a kind 1, see TestClassifyFiles)
 		{"[Team] Show - SP01 [1080p].mkv", 1, "sp"},
-		{"[Team] Show - OVA [1080p].mkv", 1, "sp"},
+		{"[Team] Show - OVA [1080p].mkv", -1, "sp"},
 		{"[Team] Show NCOP1.mkv", 1, "op"},
-		{"Show - NCED [BD].mkv", 1, "ed"},
+		{"Show - NCED [BD].mkv", -1, "ed"},
 		{"Show - 12.5 [1080p].mkv", 12.5, "episode"},
 		{"Show - 00.mkv", 0, "episode"},
 		{"SPs/Show - PV01.mkv", 1, "pv"},
 		{"CM02.mkv", 2, "cm"},
 		{"[Team] Show CM02 [1080p].mkv", 2, "cm"},
-		{"[Team] Show - Trailer [1080p].mkv", 1, "pv"},
+		{"[Team] Show - Trailer [1080p].mkv", -1, "pv"},
 		{"[Team] Show [Menu01][1080p].mkv", -1, "extra"},
 		{"[Team] SPY x FAMILY - 03 [1080p].mkv", 3, "episode"},
-		{"ncop.mkv", 1, "op"},
+		{"ncop.mkv", -1, "op"},
 	}
 	for _, c := range cases {
 		p := ParseEpisode(c.in)
@@ -119,13 +120,16 @@ func ptr(v float64) *float64 { return &v }
 
 func TestJapaneseTextless(t *testing.T) {
 	for in, want := range map[string]string{
-		"[BD] Show ノンテロップOP.mkv":     "ncop1",
+		"[BD] Show ノンテロップOP.mkv":     "", // unnumbered: no key on its own
 		"[BD] Show ノンクレジットED2.mkv":   "nced2",
 		"[BD] Show ノンテロップ ED 01.mkv": "nced1",
 	} {
 		p := ParseEpisode(in)
-		k, _ := KeyOfFile(p.Kind, p.Episode)
-		if got := k.String(); got != want {
+		got := ""
+		if k, ok := KeyOfFile(p.Kind, p.Episode); ok {
+			got = k.String()
+		}
+		if got != want {
 			t.Errorf("%s: %q want %q (%+v)", in, got, want, p)
 		}
 	}

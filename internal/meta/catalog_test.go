@@ -18,7 +18,7 @@ func TestClassifyFile(t *testing.T) {
 	}{
 		{"[Team] Show [01-12]/[Team] Show - 03 [1080p].mkv", 12, "episode", 3},
 		{"[Team] Show [01-12]/[Team] Show - NCOP1 [1080p].mkv", 12, "op", 1},
-		{"[Team] Show [01-12]/NCED/[Team] Show NCED [1080p].mkv", 12, "ed", 1},
+		{"[Team] Show [01-12]/NCED/[Team] Show NCED [1080p].mkv", 12, "ed", -1}, // unnumbered (ClassifyFiles: 1 if alone)
 		{"[Team] Show [01-12]/SPs/[Team] Show [PV01][1080p].mkv", 12, "pv", 1},
 		{"[Team] Show [01-12]/SPs/[Team] Show [CM02][1080p].mkv", 12, "cm", 2},
 		{"[Team] Show [01-12]/SPs/[Team] Show [Menu][1080p].mkv", 12, "extra", -1},
@@ -30,12 +30,12 @@ func TestClassifyFile(t *testing.T) {
 		{"[Team] Show - 04 [1080p].ass", 1, "other", -1},
 		{"[Team] Show [1080p].mkv", 1, "episode", 7}, // single video without number: torrent title
 		{"[Team] Show [BD]/SPs/Show - PV01.mkv", 12, "pv", 1},
-		{"[Team] Show [BD]/SPs/Show - OVA [1080p].mkv", 12, "sp", 1},
+		{"[Team] Show [BD]/SPs/Show - OVA [1080p].mkv", 12, "sp", -1},
 		{"[Team] Show [BD]/SPs/Show [Preview01][1080p].mkv", 12, "extra", -1},
 		{"[Team] Show [BD]/PVs/Show 02.mkv", 12, "pv", 2},
 		{"[Team] Show [BD]/CM/CM02.mkv", 12, "cm", 2},
-		{"[Team] Show [BD]/NCOP/Show.mkv", 12, "op", 1},
-		{"[Team] Show [BD]/SPs/Show.mkv", 12, "sp", 1},
+		{"[Team] Show [BD]/NCOP/Show.mkv", 12, "op", -1},
+		{"[Team] Show [BD]/SPs/Show.mkv", 12, "sp", -1},
 		{"[Team] Show [BD]/Show - 12.5 [1080p].mkv", 12, "episode", 12.5},
 		{"[Team] Show [BD]/Show - 00.mkv", 12, "episode", 0},
 	}
@@ -244,16 +244,22 @@ func TestReclassifyAndEpisodeKeys(t *testing.T) {
 	if err := s.CorrectFile(ctx, "aa", 6, SetFile{Kind: "bogus"}, "t"); err == nil {
 		t.Error("invalid kind accepted")
 	}
-	// the one-off job runs once
+	// the one-off job runs once; its flag is inserted by ReclassifyOnce, not by a migration
 	var v string
 	_ = s.R.QueryRowContext(ctx, `SELECT value FROM meta_state WHERE key = ?`, stateReclassify).Scan(&v)
-	if v != "pending" {
+	if v != "" {
 		t.Errorf("state %q", v)
 	}
 	s.ReclassifyOnce(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	_ = s.R.QueryRowContext(ctx, `SELECT value FROM meta_state WHERE key = ?`, stateReclassify).Scan(&v)
 	if v != "done" {
 		t.Errorf("state after %q", v)
+	}
+	// a later start does not re-arm it
+	s.ReclassifyOnce(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	_ = s.R.QueryRowContext(ctx, `SELECT value FROM meta_state WHERE key = ?`, stateReclassify).Scan(&v)
+	if v != "done" {
+		t.Errorf("state after second run %q", v)
 	}
 }
 
