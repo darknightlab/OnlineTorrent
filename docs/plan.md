@@ -122,7 +122,7 @@ RSS 条目 → infohash + 文件列表：
 2. 只有磁力：进入「qB 元数据队列」：qB 添加时 `stopCondition=MetadataReceived`、分类 `projectk-meta`，轮询文件列表，取到后删除（若该种子同时被做种请求则保留）。并发 3、单个超时 2 分钟，失败重试 3 次；状态存库，重启续跑。
 3. 文件分类：视频扩展名；排除 NCOP/NCED/PV/CM/Menu/Sample/特典；集数解析；kind = episode|sp|op|ed|extra|other。
 4. 刮削：沿用 meta.match（bangumi.moe 标签 → 强匹配；标题/别名模糊匹配），写 torrent_files(work_key, episode, confidence, method)。低可信度进入后台待确认（TODO UI）。
-   - 已实现：torrent_files 现在保存全部文件（非视频 kind=other）；`meta.ClassifyFile` 处理 SPs/特典 目录与 Sample；抓取源 `trusted` 取代原来的「Source == bangumi.moe」受信判断（otd.db torrents.trusted、meta.db torrents.trusted）；会员 seed 后由做种检查（postCheck + 10 分钟复查）入库刮削；元数据队列的种子被做种请求时转入做种分类（`qb.Pool.Push` → adoptMeta）。
+   - 已实现：torrent_files 现在保存全部文件（非视频 kind=other）；`meta.ClassifyFile` 处理 SPs/特典 目录与 Sample；所有抓取源的种子均受信（取代原来的「Source == bangumi.moe」判断；源上不再有 trusted 开关）（otd.db torrents.trusted、meta.db torrents.trusted）；会员 seed 后由做种检查（postCheck + 10 分钟复查）入库刮削；元数据队列的种子被做种请求时转入做种分类（`qb.Pool.Push` → adoptMeta）。
    - 待改进：标题/别名匹配命中率一般（如 Skymoon/ANi 的罗马音标题），可加 FTS 候选 + 相似度打分。
 RSS 信息（标题、发布时间、字幕组、来源条目 ID）作补充；文件列表以种子为准。
 
