@@ -45,7 +45,13 @@ function UserMenu() {
   const { user, loading } = useUser()
   const logout = useLogout()
   const navigate = useNavigate()
-  if (loading) return <div className="ml-1 h-8 w-8 animate-pulse rounded-full bg-muted" aria-hidden />
+  // 三种状态（加载中 / 游客 / 已登录）占位一致：40×40，避免加载完成后顶栏位移
+  if (loading)
+    return (
+      <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center" aria-hidden>
+        <span className="h-8 w-8 animate-pulse rounded-full bg-muted" />
+      </span>
+    )
   if (!user) {
     return (
       <DropdownMenu>
@@ -53,7 +59,7 @@ function UserMenu() {
           <button
             type="button"
             aria-label="账户与设置"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+            className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             <UserIcon className="h-5 w-5" />
           </button>
@@ -79,7 +85,7 @@ function UserMenu() {
         <button
           type="button"
           aria-label={`用户菜单：${user.username}`}
-          className="ml-1 inline-flex h-10 w-10 items-center justify-center rounded-full"
+          className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
         >
           <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-primary text-sm font-semibold uppercase text-primary-foreground ring-2 ring-primary-soft">
             {user.username.slice(0, 1)}

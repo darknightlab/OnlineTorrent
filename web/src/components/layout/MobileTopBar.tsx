@@ -15,17 +15,16 @@ export function mobileTopBarVisible(pathname: string) {
 export function MobileTopBar() {
   const { pathname } = useLocation()
   const isHome = pathname === "/"
-  const title = pathname === "/me" ? "我的" : pathname === "/login" ? "登录" : pathname.startsWith("/register") ? "注册" : null
-  if (!isHome && !title) return null
+  if (!mobileTopBarVisible(pathname)) return null
+
   return (
     <div className="bg-background pt-safe md:hidden">
-      <div className="flex h-12 items-center gap-2.5 px-3">
+      <div className={isHome ? "flex items-center px-3 pt-3" : "flex h-12 items-center justify-end px-2"}>
         {isHome ? (
           <TorrentSearchBox size="sm" className="min-w-0 flex-1" />
         ) : (
           <>
-            {/* 登录 / 注册页不显示标题，只保留右侧主题按钮 */}
-            <h1 className="flex-1 text-[17px] font-semibold">{title === "我的" ? title : null}</h1>
+            {/* 我的 / 登录 / 注册：不显示标题，只保留右侧主题按钮 */}
             <ThemeCycleButton />
           </>
         )}

@@ -26,7 +26,7 @@ export default function Home() {
   const ih = uri ? parseTorrentInput(uri) : null
   if (ih) return <Navigate replace to={watchHref(ih)} />
   return (
-    <Container className="space-y-6 py-4 sm:space-y-8 sm:py-6">
+    <Container className="space-y-6 pb-4 pt-3 sm:space-y-8 sm:py-6">
       <Announcement />
       <ScheduleSection />
     </Container>
