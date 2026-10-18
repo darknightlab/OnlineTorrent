@@ -124,9 +124,12 @@ function ScheduleSection() {
           onScroll={scroller.onScroll}
           className="-mx-1.5 flex items-start overflow-x-auto overflow-y-hidden overscroll-x-contain snap-x snap-mandatory transition-[height] duration-200 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
+          {/* 首尾各放一个克隆（周日 | 周一…周日 | 周一），滑到克隆上停稳后瞬间跳回真身，实现循环 */}
+          <DayPanel clone weekday={WEEK_ORDER[6]} items={byDay[6]} pending={isPending} now={now} active={false} />
           {WEEK_ORDER.map((w, i) => (
             <DayPanel key={w} weekday={w} items={byDay[i]} pending={isPending} now={now} active={w === day} />
           ))}
+          <DayPanel clone weekday={WEEK_ORDER[0]} items={byDay[0]} pending={isPending} now={now} active={false} />
         </div>
       )}
     </section>
@@ -155,18 +158,21 @@ const DayPanel = memo(function DayPanel({
   pending,
   now,
   active,
+  clone,
 }: {
   weekday: number
   items: ScheduleItem[]
   pending: boolean
   now: number
   active: boolean
+  clone?: boolean
 }) {
   return (
     <div
-      id={`schedule-panel-${weekday}`}
-      role="tabpanel"
-      aria-hidden={!active}
+      id={clone ? undefined : `schedule-panel-${weekday}`}
+      role={clone ? undefined : "tabpanel"}
+      aria-hidden={clone || !active}
+      inert={clone || undefined}
       data-panel
       className="w-full shrink-0 snap-start snap-always px-1.5"
     >
@@ -192,11 +198,14 @@ const DayPanel = memo(function DayPanel({
  * 容器高度跟随当前（及滑动中相邻）面板，避免短的那天下面留大片空白。
  */
 function useDaySwipe(day: number, setDay: (w: number) => void) {
+  // 滚动槽位：0 = 周日克隆，1..7 = 周一..周日，8 = 周一克隆
+  const slotOf = (w: number) => WEEK_ORDER.indexOf(w) + 1
+  const dayOfSlot = (slot: number) => WEEK_ORDER[(slot + 6) % 7]
   const ref = useRef<HTMLDivElement>(null)
   const heights = useRef<number[]>([])
   const fromScroll = useRef(false)
   const first = useRef(true)
-  // 点击标签触发的平滑滚动目标：滚动途中不回写星期，避免高亮来回跳
+  // 点击标签触发的平滑滚动目标槽位：滚动途中不回写星期，避免高亮来回跳
   const target = useRef<number | null>(null)
 
   const applyHeight = useCallback(() => {
@@ -207,7 +216,7 @@ function useDaySwipe(day: number, setDay: (w: number) => void) {
     if (h) el.style.height = `${h}px`
   }, [])
 
-  // 观察每个面板的高度
+  // 观察每个面板（含克隆）的高度
   useEffect(() => {
     const el = ref.current
     if (!el) return
@@ -228,42 +237,70 @@ function useDaySwipe(day: number, setDay: (w: number) => void) {
       fromScroll.current = false
       return
     }
-    const idx = WEEK_ORDER.indexOf(day)
-    if (Math.round(el.scrollLeft / (el.clientWidth || 1)) !== idx) target.current = first.current ? null : idx
-    el.scrollTo({ left: idx * el.clientWidth, behavior: first.current ? "auto" : "smooth" })
+    const slot = slotOf(day)
+    if (Math.round(el.scrollLeft / (el.clientWidth || 1)) !== slot) target.current = first.current ? null : slot
+    el.scrollTo({ left: slot * el.clientWidth, behavior: first.current ? "auto" : "smooth" })
     first.current = false
     applyHeight()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [day, applyHeight])
 
   // 窗口尺寸变化后保持停在当前这天
   useEffect(() => {
     const onResize = () => {
       const el = ref.current
-      if (el) el.scrollTo({ left: WEEK_ORDER.indexOf(day) * el.clientWidth })
+      if (el) el.scrollTo({ left: slotOf(day) * el.clientWidth })
     }
     window.addEventListener("resize", onResize)
     return () => window.removeEventListener("resize", onResize)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [day])
 
+  // 停在首尾克隆上时，无动画跳回对应的真身
+  const settle = useCallback(() => {
+    const el = ref.current
+    if (!el || !el.clientWidth) return
+    const w = el.clientWidth
+    const pos = el.scrollLeft / w
+    if (Math.abs(pos - Math.round(pos)) > 0.01) return // 还没停稳
+    const slot = Math.round(pos)
+    if (slot === 0 || slot === 8) {
+      el.scrollTo({ left: (slot === 0 ? 7 : 1) * w, behavior: "auto" })
+      applyHeight()
+    }
+  }, [applyHeight])
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.addEventListener("scrollend", settle)
+    return () => el.removeEventListener("scrollend", settle)
+  }, [settle])
+
   const frame = useRef(0)
+  const idle = useRef<ReturnType<typeof setTimeout>>(undefined)
   const onScroll = useCallback(() => {
     cancelAnimationFrame(frame.current)
+    // 不支持 scrollend 的浏览器（旧 Safari）：滚动静止 150ms 后再检查
+    clearTimeout(idle.current)
+    idle.current = setTimeout(settle, 150)
     frame.current = requestAnimationFrame(() => {
       const el = ref.current
       if (!el || !el.clientWidth) return
       applyHeight()
-      const idx = Math.min(6, Math.max(0, Math.round(el.scrollLeft / el.clientWidth)))
+      const slot = Math.min(8, Math.max(0, Math.round(el.scrollLeft / el.clientWidth)))
       if (target.current !== null) {
-        if (idx !== target.current) return
+        if (slot !== target.current) return
         target.current = null
       }
-      const w = WEEK_ORDER[idx]
+      const w = dayOfSlot(slot)
       if (w !== day) {
         fromScroll.current = true
         setDay(w)
       }
     })
-  }, [day, setDay, applyHeight])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [day, setDay, applyHeight, settle])
 
   const select = useCallback(
     (w: number) => {
