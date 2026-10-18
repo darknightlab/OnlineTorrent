@@ -343,7 +343,9 @@ func (s *Store) WorksForSchedule(ctx context.Context, now time.Time) ([]*Work, e
 	to := f(now.AddDate(0, 0, 21))
 	oldest := f(now.AddDate(-2, 0, 0))
 	ended := f(now.AddDate(0, 0, -10))
-	rows, err := s.R.QueryContext(ctx, `SELECT `+workCols+` FROM works WHERE begin_at < ? AND (begin_at >= ? OR (begin_at >= ? AND (end_at = '' OR end_at >= ?))) ORDER BY begin_at`,
+	// only bangumi-data works: it is the broadcast calendar (weekday/time); archive-only
+	// subjects have dates but no broadcast slot and would flood the timeline
+	rows, err := s.R.QueryContext(ctx, `SELECT `+workCols+` FROM works WHERE source = 'bangumi-data' AND begin_at < ? AND (begin_at >= ? OR (begin_at >= ? AND (end_at = '' OR end_at >= ?))) ORDER BY begin_at`,
 		to, from, oldest, ended)
 	if err != nil {
 		return nil, err
