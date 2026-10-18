@@ -10,7 +10,7 @@ export function animeHref(key: string) {
   return `/anime/${encodeURIComponent(key)}`
 }
 
-/** 新番时间表卡片（16:9；暂用竖版封面模糊铺底，以后换成本集截图 / 横版剧照） */
+/** 新番时间表卡片（16:9；竖版封面宽度铺满、偏上裁切，以后换成本集截图 / 横版剧照） */
 export function AnimeCard({ item, now }: { item: ScheduleItem; now: number }) {
   const status = airStatus(item, now)
   const title = displayTitle(item)
@@ -25,7 +25,7 @@ export function AnimeCard({ item, now }: { item: ScheduleItem; now: number }) {
         aria-label={`${title}，${episodeLabel(item)}，${item.air_time} 播出${t ? "，点击播放最新一集" : ""}`}
       >
         <div className="relative overflow-hidden rounded-lg shadow-card ring-1 ring-black/5 dark:ring-white/5">
-          <Cover src={item.cover} title={title} blurFill className="aspect-video w-full transition-transform duration-300 group-hover:scale-[1.03]" />
+          <Cover src={item.cover} title={title} position="object-[50%_30%]" className="aspect-video w-full transition-transform duration-300 group-hover:scale-[1.03]" />
           {/* 顶部：时间 + 状态 */}
           <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-1 whitespace-nowrap p-1 sm:p-1.5">
             <span className="rounded bg-black/60 px-1 py-px sm:px-1.5 text-[11px] font-semibold tabular-nums leading-[18px] text-white backdrop-blur-sm">
