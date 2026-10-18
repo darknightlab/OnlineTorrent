@@ -18,6 +18,7 @@ export function PlayGate({
   skipWait,
   retry,
   docTitle = true,
+  className,
 }: {
   state: Exclude<ResolveState, { status: "ready" } | { status: "idle" }>
   title?: string
@@ -26,11 +27,13 @@ export function PlayGate({
   retry: () => void
   /** 是否用状态标题设置 document.title */
   docTitle?: boolean
+  /** 外框附加样式（单集页移动端全宽） */
+  className?: string
 }) {
   const { user } = useUser()
   const next = encodeURIComponent(here)
   return (
-    <GateFrame subject={state.status === "loading" ? undefined : title}>
+    <GateFrame className={className} subject={state.status === "loading" ? undefined : title}>
       {state.status === "loading" && (
         <Gate docTitle={docTitle} icon={<Loader2 className="h-7 w-7 animate-spin text-primary" />} title="正在请求播放…" description={title ?? "服务器正在检查资源"} />
       )}
@@ -141,9 +144,9 @@ export function PlayGate({
   )
 }
 
-function GateFrame({ children, subject }: { children: React.ReactNode; subject?: string }) {
+function GateFrame({ children, subject, className }: { children: React.ReactNode; subject?: string; className?: string }) {
   return (
-    <Card className="relative mx-auto max-w-4xl overflow-hidden">
+    <Card className={cn("relative mx-auto max-w-4xl overflow-hidden", className)}>
       <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,var(--primary-soft),transparent_60%)]" />
       <div className="relative flex min-h-[340px] flex-col items-center justify-center p-6 sm:aspect-video sm:min-h-0">
         {children}

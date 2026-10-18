@@ -21,6 +21,8 @@ import {
   Share2,
   Users,
   Captions,
+  ChevronDown,
+  SlidersHorizontal,
   Tv,
 } from "lucide-react"
 import { loadEngine } from "@/player/engine"
@@ -40,6 +42,14 @@ import type { PlayHint } from "./usePlayResolve"
 import { formatBytes, formatDuration, formatPercent, formatSpeed } from "@/lib/format"
 import { cn, copyText, episodeHref, subjectHref, subjectPath } from "@/lib/utils"
 import { useDocumentTitle } from "@/lib/hooks"
+
+/** renderInfo 可复用的部件 */
+export interface PlayerParts {
+  /** 分享 / 下载 / 举报（紧凑图标按钮） */
+  actions: React.ReactNode
+  /** 下载 / 上传 / 节点 / 进度（单行） */
+  stats: React.ReactNode
+}
 
 interface LogLine {
   t: number
@@ -77,7 +87,9 @@ export function Player({
   onFileChange,
   poster: posterProp,
   showMeta = true,
-  extra,
+  renderInfo,
+  side,
+  collapseDetails = false,
 }: {
   magnet: string
   play: PlayResponse | null
@@ -90,8 +102,12 @@ export function Player({
   poster?: string
   /** 是否在标题下显示条目 / 集数链接 */
   showMeta?: boolean
-  /** 左栏底部的附加内容（如单集页的「其他资源」） */
-  extra?: React.ReactNode
+  /** 自定义播放器下方的信息区（替换默认的标题 / 操作 / 统计块），参数为可复用的部件 */
+  renderInfo?: (parts: PlayerParts) => React.ReactNode
+  /** 右栏（移动端为信息区下方）在「播放详情」之前的内容，如单集页的选集 / 资源 */
+  side?: React.ReactNode
+  /** 移动端把文件 / 节点 / 详情 / 日志折叠为「播放详情」 */
+  collapseDetails?: boolean
 }) {
   const site = useSiteOrFallback()
   const [engine, setEngine] = useState<Engine | null>(null)
@@ -107,6 +123,7 @@ export function Player({
   const [needsTap, setNeedsTap] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
   const [tab, setTab] = useState("files")
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const [seededBy, setSeededBy] = useState<string[]>([])
   const videoRef = useRef<HTMLVideoElement>(null)
   const autoPicked = useRef(false)
@@ -296,11 +313,58 @@ export function Player({
   const isMock = engine?.kind === "mock"
   const sortedFiles = useMemo(() => (snap ? [...snap.files].sort((a, b) => collator.compare(a.path, b.path)) : []), [snap])
 
+  const loginHref = `/login?next=${encodeURIComponent(here)}`
+  const compactActions = (
+    <div className="flex items-center gap-1">
+      <ActionButton icon={Share2} label="分享" onClick={share} />
+      {file && url ? (
+        <ActionButton icon={Download} label="下载" href={url} download={file.name} />
+      ) : (
+        <ActionButton icon={Download} label="下载" disabled />
+      )}
+      {canReport ? (
+        <ActionButton icon={Flag} label="举报" onClick={() => setReportOpen(true)} disabled={!infoHash} />
+      ) : meReady && !loggedIn ? (
+        <ActionButton icon={Flag} label="举报" to={loginHref} title="登录后可举报该资源" />
+      ) : null}
+    </div>
+  )
+  const progress = file?.progress ?? snap?.progress ?? 0
+  const compactStats = (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] tabular-nums text-muted-foreground sm:text-xs">
+      <span className="inline-flex items-center gap-0.5" title={`已下载 ${formatBytes(snap?.downloaded ?? 0)}`}>
+        <ArrowDown className="h-3 w-3 text-primary-text" />
+        {formatSpeed(snap?.downloadSpeed ?? 0)}
+      </span>
+      <span className="inline-flex items-center gap-0.5" title={`已上传 ${formatBytes(snap?.uploaded ?? 0)}`}>
+        <ArrowUp className="h-3 w-3 text-accent-text" />
+        {formatSpeed(snap?.uploadSpeed ?? 0)}
+      </span>
+      <span className="inline-flex items-center gap-0.5" title={snap?.peers.some((p) => p.type === "webSeed") ? "含 WebSeed" : "WebRTC 节点"}>
+        <Users className="h-3 w-3" />
+        {snap?.numPeers ?? 0} 节点
+      </span>
+      <span className="inline-flex items-center gap-1.5" title={snap?.done ? "已完成" : snap ? `剩余 ${formatDuration(snap.timeRemaining)}` : undefined}>
+        <span className="h-1 w-10 overflow-hidden rounded-full bg-piece-empty">
+          <span className={cn("block h-full rounded-full", progress >= 1 ? "bg-primary" : "bg-accent")} style={{ width: `${Math.max(2, progress * 100)}%` }} />
+        </span>
+        {formatPercent(progress)}
+      </span>
+      {direct && <Badge variant="warning">直连模式</Badge>}
+      {seededBy.length ? (
+        <span className="inline-flex items-center gap-1" title="服务器做种节点">
+          <Server className="h-3 w-3" />
+          {seededBy.join(" / ")}
+        </span>
+      ) : null}
+    </div>
+  )
+
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-5 xl:grid-cols-[minmax(0,1fr)_400px]">
       <section className="min-w-0">
         {/* 播放区：移动端吸顶、全宽 */}
-        <div className="sticky top-14 z-20 -mx-3 bg-black sm:static sm:mx-0 sm:overflow-hidden sm:rounded-xl sm:shadow-lg">
+        <div className="sticky top-14 z-20 -mx-3 bg-black sm:-mx-4 lg:static lg:mx-0 lg:overflow-hidden lg:rounded-xl lg:shadow-lg">
           <div className="relative aspect-video w-full overflow-hidden bg-black">
             {/* 未出画面时：竖版封面两侧用模糊背景填满，避免大片纯黑 */}
             {poster && !url && (
@@ -409,91 +473,110 @@ export function Player({
           <CodecHint codec={unsupported} />
         ) : null}
 
-        {/* 标题与操作 */}
-        <div className="mt-3 flex flex-col gap-3 sm:mt-4 md:flex-row md:items-start md:justify-between">
-          <div className="min-w-0">
-            <h1 className="line-clamp-2 wrap-anywhere text-[15px] font-semibold leading-snug sm:text-lg" title={title}>
-              {title}
-            </h1>
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-xs text-muted-foreground">
-              {hint?.team && <Badge variant="accent-soft">{hint.team}</Badge>}
-              {showMeta && meta && metaPath && (
-                <span className="inline-flex h-6 items-center overflow-hidden rounded bg-primary-soft font-medium text-primary-text">
-                  <Link to={subjectHref(meta)} className="inline-flex h-full items-center gap-1 px-1.5 hover:underline" title="番剧详情">
-                    <Tv className="h-3 w-3" />
-                    {subject.data ? subject.data.subject.title_cn || subject.data.subject.title : meta.title || "番剧详情"}
-                  </Link>
-                  {meta.episode > 0 && (
-                    <Link to={episodeHref(meta, meta.episode)} className="inline-flex h-full items-center border-l border-primary/20 px-1.5 hover:underline" title="本集所有资源">
-                      第 {meta.episode} 话
-                    </Link>
+        {renderInfo ? (
+          renderInfo({ actions: compactActions, stats: compactStats })
+        ) : (
+          <>
+            {/* 标题与操作 */}
+            <div className="mt-3 flex flex-col gap-3 sm:mt-4 md:flex-row md:items-start md:justify-between">
+              <div className="min-w-0">
+                <h1 className="line-clamp-2 wrap-anywhere text-[15px] font-semibold leading-snug sm:text-lg" title={title}>
+                  {title}
+                </h1>
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-xs text-muted-foreground">
+                  {hint?.team && <Badge variant="accent-soft">{hint.team}</Badge>}
+                  {showMeta && meta && metaPath && (
+                    <span className="inline-flex h-6 items-center overflow-hidden rounded bg-primary-soft font-medium text-primary-text">
+                      <Link to={subjectHref(meta)} className="inline-flex h-full items-center gap-1 px-1.5 hover:underline" title="番剧详情">
+                        <Tv className="h-3 w-3" />
+                        {subject.data ? subject.data.subject.title_cn || subject.data.subject.title : meta.title || "番剧详情"}
+                      </Link>
+                      {meta.episode > 0 && (
+                        <Link to={episodeHref(meta, meta.episode)} className="inline-flex h-full items-center border-l border-primary/20 px-1.5 hover:underline" title="本集所有资源">
+                          第 {meta.episode} 话
+                        </Link>
+                      )}
+                    </span>
                   )}
-                </span>
-              )}
-              {snap && <span className="tabular-nums">{formatBytes(snap.length)}</span>}
-              {snap && <span>{snap.files.length} 个文件</span>}
-              {direct && <Badge variant="warning">直连模式</Badge>}
-              {seededBy.length ? (
-                <span className="inline-flex items-center gap-1" title="服务器做种节点">
-                  <Server className="h-3 w-3" />
-                  {seededBy.join(" / ")}
-                </span>
-              ) : null}
+                  {snap && <span className="tabular-nums">{formatBytes(snap.length)}</span>}
+                  {snap && <span>{snap.files.length} 个文件</span>}
+                  {direct && <Badge variant="warning">直连模式</Badge>}
+                  {seededBy.length ? (
+                    <span className="inline-flex items-center gap-1" title="服务器做种节点">
+                      <Server className="h-3 w-3" />
+                      {seededBy.join(" / ")}
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+              <div className="flex shrink-0 gap-2">
+                <Button variant="soft" size="sm" onClick={share} className="flex-1 md:flex-none">
+                  <Share2 />
+                  分享
+                </Button>
+                {file && url ? (
+                  <Button asChild variant="outline" size="sm" className="flex-1 md:flex-none">
+                    <a href={url} download={file.name}>
+                      <Download />
+                      下载
+                    </a>
+                  </Button>
+                ) : (
+                  <Button variant="outline" size="sm" disabled className="flex-1 md:flex-none">
+                    <Download />
+                    下载
+                  </Button>
+                )}
+                {canReport ? (
+                  <Button variant="ghost" size="sm" onClick={() => setReportOpen(true)} disabled={!infoHash} className="flex-1 text-muted-foreground md:flex-none">
+                    <Flag />
+                    举报
+                  </Button>
+                ) : meReady && !loggedIn ? (
+                  <Button asChild variant="ghost" size="sm" className="flex-1 text-muted-foreground md:flex-none">
+                    <Link to={loginHref} title="登录后可举报该资源">
+                      <Flag />
+                      举报
+                    </Link>
+                  </Button>
+                ) : null}
+              </div>
             </div>
-          </div>
-          <div className="flex shrink-0 gap-2">
-            <Button variant="soft" size="sm" onClick={share} className="flex-1 md:flex-none">
-              <Share2 />
-              分享
-            </Button>
-            {file && url ? (
-              <Button asChild variant="outline" size="sm" className="flex-1 md:flex-none">
-                <a href={url} download={file.name}>
-                  <Download />
-                  下载
-                </a>
-              </Button>
-            ) : (
-              <Button variant="outline" size="sm" disabled className="flex-1 md:flex-none">
-                <Download />
-                下载
-              </Button>
-            )}
-            {canReport ? (
-              <Button variant="ghost" size="sm" onClick={() => setReportOpen(true)} disabled={!infoHash} className="flex-1 text-muted-foreground md:flex-none">
-                <Flag />
-                举报
-              </Button>
-            ) : meReady && !loggedIn ? (
-              <Button asChild variant="ghost" size="sm" className="flex-1 text-muted-foreground md:flex-none">
-                <Link to={`/login?next=${encodeURIComponent(here)}`} title="登录后可举报该资源">
-                  <Flag />
-                  举报
-                </Link>
-              </Button>
-            ) : null}
-          </div>
-        </div>
 
-        {/* 统计 */}
-        <dl className="mt-3 grid grid-cols-4 overflow-hidden rounded-lg border bg-card text-center shadow-card sm:mt-4">
-          <Stat icon={ArrowDown} label="下载" value={formatSpeed(snap?.downloadSpeed ?? 0)} sub={formatBytes(snap?.downloaded ?? 0)} tone="text-primary-text" />
-          <Stat icon={ArrowUp} label="上传" value={formatSpeed(snap?.uploadSpeed ?? 0)} sub={formatBytes(snap?.uploaded ?? 0)} tone="text-accent-text" />
-          <Stat icon={Users} label="节点" value={String(snap?.numPeers ?? 0)} sub={snap?.peers.some((p) => p.type === "webSeed") ? "含 WebSeed" : "WebRTC"} />
-          <Stat
-            icon={ListTree}
-            label="进度"
-            value={formatPercent(file?.progress ?? snap?.progress ?? 0)}
-            sub={snap?.done ? "已完成" : snap ? `剩余 ${formatDuration(snap.timeRemaining)}` : "-"}
-          />
-        </dl>
-        {extra}
+            {/* 统计 */}
+            <dl className="mt-3 grid grid-cols-4 overflow-hidden rounded-lg border bg-card text-center shadow-card sm:mt-4">
+              <Stat icon={ArrowDown} label="下载" value={formatSpeed(snap?.downloadSpeed ?? 0)} sub={formatBytes(snap?.downloaded ?? 0)} tone="text-primary-text" />
+              <Stat icon={ArrowUp} label="上传" value={formatSpeed(snap?.uploadSpeed ?? 0)} sub={formatBytes(snap?.uploaded ?? 0)} tone="text-accent-text" />
+              <Stat icon={Users} label="节点" value={String(snap?.numPeers ?? 0)} sub={snap?.peers.some((p) => p.type === "webSeed") ? "含 WebSeed" : "WebRTC"} />
+              <Stat
+                icon={ListTree}
+                label="进度"
+                value={formatPercent(file?.progress ?? snap?.progress ?? 0)}
+                sub={snap?.done ? "已完成" : snap ? `剩余 ${formatDuration(snap.timeRemaining)}` : "-"}
+              />
+            </dl>
+          </>
+        )}
       </section>
 
-      {/* 侧栏 / 移动端下方：标签页 */}
-      <aside className="min-w-0 lg:sticky lg:top-[4.5rem] lg:self-start">
+      {/* 侧栏 / 移动端下方：附加内容 + 标签页 */}
+      <aside className={cn("min-w-0 space-y-4 lg:space-y-5", !side && "lg:sticky lg:top-[4.5rem] lg:self-start")}>
+        {side}
         <Card className="overflow-hidden">
-          <Tabs value={tab} onValueChange={setTab}>
+          {collapseDetails && (
+            <button
+              type="button"
+              onClick={() => setDetailsOpen((v) => !v)}
+              aria-expanded={detailsOpen}
+              className="flex h-12 w-full items-center gap-2 px-3 text-left text-sm font-semibold hover:bg-muted/60 lg:hidden"
+            >
+              <SlidersHorizontal className="h-4 w-4 text-primary-text" />
+              播放详情
+              <span className="min-w-0 flex-1 truncate text-xs font-normal text-muted-foreground">文件 · 节点 · 种子信息 · 日志</span>
+              <ChevronDown className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", detailsOpen && "rotate-180")} />
+            </button>
+          )}
+          <Tabs value={tab} onValueChange={setTab} className={cn(collapseDetails && !detailsOpen && "max-lg:hidden", collapseDetails && "max-lg:border-t")}>
             <TabsList className="px-1">
               <TabsTrigger value="files">
                 <ListTree />
@@ -512,7 +595,7 @@ export function Player({
                 日志
               </TabsTrigger>
             </TabsList>
-            <div className="max-h-[60vh] overflow-y-auto lg:max-h-[calc(100dvh-10rem)]">
+            <div className={cn("max-h-[60vh] overflow-y-auto", side ? "lg:max-h-[min(60vh,32rem)]" : "lg:max-h-[calc(100dvh-10rem)]")}>
               <TabsContent value="files">
                 {!snap ? (
                   <PanelLoading text="等待种子信息…" />
@@ -575,6 +658,55 @@ function CodecHint({ codec, severe, noPicture }: { codec: string | null; severe?
         )}
       </p>
     </div>
+  )
+}
+
+/** 哔哩哔哩式的紧凑操作按钮：移动端图标在上、文字在下；桌面端图标在左 */
+function ActionButton({
+  icon: Icon,
+  label,
+  onClick,
+  href,
+  download,
+  to,
+  title,
+  disabled,
+}: {
+  icon: typeof Users
+  label: string
+  onClick?: () => void
+  href?: string
+  download?: string
+  to?: string
+  title?: string
+  disabled?: boolean
+}) {
+  const cls = cn(
+    "inline-flex min-w-14 flex-col items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] text-foreground/75 transition-colors hover:bg-muted hover:text-primary-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:min-w-0 lg:flex-row lg:gap-1.5 lg:px-2.5 lg:text-[13px]",
+    disabled && "pointer-events-none opacity-45",
+  )
+  const inner = (
+    <>
+      <Icon className="h-5 w-5 lg:h-[18px] lg:w-[18px]" strokeWidth={1.8} />
+      {label}
+    </>
+  )
+  if (to)
+    return (
+      <Link to={to} className={cls} title={title}>
+        {inner}
+      </Link>
+    )
+  if (href)
+    return (
+      <a href={href} download={download} className={cls} title={title}>
+        {inner}
+      </a>
+    )
+  return (
+    <button type="button" onClick={onClick} disabled={disabled} className={cls} title={title}>
+      {inner}
+    </button>
   )
 }
 
