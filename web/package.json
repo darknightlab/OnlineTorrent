@@ -8,6 +8,7 @@
     "dev:mock": "VITE_MOCK=1 vite",
     "prebuild": "npm run check:webtorrent",
     "build": "tsc -b && vite build",
+    "postbuild": "node scripts/check-built-webtorrent.ts",
     "check:webtorrent": "node --test --test-reporter=dot src/player/store/webtorrent-compat.test.ts",
     "preview": "vite preview",
     "typecheck": "tsc -b",

@@ -75,18 +75,34 @@ export interface TorrentLike {
 // ---------------------------------------------------------------- 兼容性检查
 
 const fn = (o: any, k: string | symbol) => typeof o?.[k] === "function"
-const src = (o: any, k: string) => (fn(o, k) ? Function.prototype.toString.call(o[k]) : "")
+/**
+ * 函数源码，引号统一成 "（Vite/esbuild 再压缩时会把 'x' / "x" 改成模板字符串 `x`）。
+ * 下面的正则只依赖属性名与字符串内容：局部变量名、let/const、空白、分号、!= / !== 都可能被压缩器改掉。
+ */
+export const normSource = (code: string) => code.replace(/[`']/g, '"')
+const src = (o: any, k: string) => (fn(o, k) ? normSource(Function.prototype.toString.call(o[k])) : "")
+/** 标识符或 this（压缩器可能写成 let n=this; n.pieces[...]） */
+const ID = String.raw`(?:this|[\w$]+)`
+const RE = {
+  haveAll: /\.haveAll\(\s*\)/,
+  onRequest: /\.on\(\s*"request"\s*,/,
+  // 'request' 处理里先看 pieces[i]（缺失就不回应），再 store.get
+  requestChecksPieces: new RegExp(String.raw`\.on\(\s*"request"\s*,[\s\S]{0,400}?${ID}\.pieces\[[^\]]{1,40}\][\s\S]{0,160}?${ID}\.store\.get\(`),
+  emitRequest: /\.emit\(\s*"request"\s*,/,
+  reject: /\.reject\(/,
+  serveIterator: /\[Symbol\.asyncIterator\]\(\s*[\w$]*\s*\)[\s\S]{0,300}?\.emit\(\s*"iterator"\s*,/,
+}
 
 /** Torrent 原型（client.add 返回后立即可查）。返回不兼容项的描述，空数组表示兼容。 */
 export function checkTorrentPrototype(proto: any): string[] {
   const p: string[] = []
-  for (const k of ["_select", "_deselect", "critical", "select", "deselect", "_markVerified", "_checkDone", "_gcSelections", "_onWireWithMetadata", "_verifyPiecesUsingBitfield", "_onMetadata", "destroy"]) {
+  for (const k of ["_select", "_deselect", "critical", "select", "deselect", "_markVerified", "_checkDone", "_gcSelections", "_onWireWithMetadata", "_verifyPiecesUsingBitfield", "_onMetadata", "_hasAllPieces", "destroy"]) {
     if (!fn(proto, k)) p.push(`Torrent.${k}()`)
   }
   const wm = src(proto, "_onWireWithMetadata")
-  if (wm && !/haveAll\(\)/.test(wm)) p.push("Torrent._onWireWithMetadata 不再调用 wire.haveAll()")
-  if (wm && !/["']request["']/.test(wm)) p.push("Torrent._onWireWithMetadata 不再监听 wire 'request'")
-  if (wm && !/this\.pieces\[\w+\]\)\s*return|this\.pieces\[\w+\]\s*\|\|\s*this\.store\.get/.test(wm)) p.push("Torrent._onWireWithMetadata 的请求处理不再按 pieces[i] 判断是否缺失")
+  if (wm && !RE.haveAll.test(wm)) p.push("Torrent._onWireWithMetadata 不再调用 wire.haveAll()")
+  if (wm && !RE.onRequest.test(wm)) p.push("Torrent._onWireWithMetadata 不再监听 wire 'request'")
+  else if (wm && !RE.requestChecksPieces.test(wm)) p.push("Torrent._onWireWithMetadata 的请求处理不再按 pieces[i] 判断是否缺失")
   const md = src(proto, "_onMetadata")
   if (md && !/_hasStartupBitfield/.test(md)) p.push("Torrent._onMetadata 不再支持启动 bitfield（_hasStartupBitfield）")
   if (md && !/_storeCacheSlots/.test(md)) p.push("Torrent._onMetadata 不再使用 storeCacheSlots")
@@ -147,15 +163,15 @@ export function checkWire(w: any): string[] {
   if (!w?.peerPieces || !fn(w.peerPieces, "get")) p.push("Wire.peerPieces")
   if (!w?.lt_donthave || !fn(w.lt_donthave, "donthave")) p.push("Wire.lt_donthave.donthave()（lt_donthave 扩展）")
   const req = src(w, "_onRequest")
-  if (req && !/emit\(["']request["']/.test(req)) p.push("Wire._onRequest 不再 emit('request', …, cb)")
-  if (req && !/reject\(/.test(req)) p.push("Wire._onRequest 出错时不再回 reject（fast 扩展）")
+  if (req && !RE.emitRequest.test(req)) p.push("Wire._onRequest 不再 emit('request', …, cb)")
+  if (req && !RE.reject.test(req)) p.push("Wire._onRequest 出错时不再回 reject（fast 扩展）")
   return p
 }
 
 /** dist 包源码层面的检查：ServerBase.serveFile 通过 file[Symbol.asyncIterator](range) 取数据 */
 export function checkBundleSource(code: string): string[] {
   const p: string[] = []
-  if (!/\[Symbol\.asyncIterator\]\(\w+\)[\s\S]{0,200}emit\(["']iterator["']/.test(code)) p.push("server.serveFile 不再用 file[Symbol.asyncIterator](range) 读取文件")
+  if (!RE.serveIterator.test(normSource(code))) p.push("server.serveFile 不再用 file[Symbol.asyncIterator](range) 读取文件")
   if (!/lt_donthave/.test(code)) p.push("lt_donthave 扩展")
   return p
 }

@@ -6,8 +6,10 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
+import { checkWebTorrentBundle } from "./bundle-check.ts"
 import {
   checkBundleSource,
+  normSource,
   checkPieceCtor,
   checkTorrentMetadata,
   checkTorrentPrototype,
@@ -78,8 +80,9 @@ const clientOpts = { dht: false, lsd: false, utp: false, tracker: false, webSeed
 test("webtorrent dist bundle (browser build) exposes the internals we use", async () => {
   ;(globalThis as any).self ??= globalThis
   const distPath = require.resolve("webtorrent/dist/webtorrent.min.js")
-  report(checkBundleSource(readFileSync(distPath, "utf8")), "dist 源码")
   const { default: WebTorrent } = await import("webtorrent/dist/webtorrent.min.js" as string)
+  // 与 postbuild（scripts/check-built-webtorrent.ts，检查 Vite 实际输出的 chunk）相同的检查
+  report(await checkWebTorrentBundle(WebTorrent, readFileSync(distPath, "utf8"), "node_modules dist"), "dist")
   const seedC = new WebTorrent(clientOpts)
   const c = new WebTorrent(clientOpts)
   try {
@@ -101,6 +104,30 @@ test("webtorrent dist bundle (browser build) exposes the internals we use", asyn
     await new Promise((r) => c.destroy(r))
     await new Promise((r) => seedC.destroy(r))
   }
+})
+
+test("source checks survive re-minification (template-literal quotes, renamed locals, let/const)", () => {
+  // Vite 生产构建再压缩后的 _onWireWithMetadata / _onRequest / serveFile 片段（2026-10 线上事故：引号变成反引号）
+  const proto = {
+    _select() {}, _deselect() {}, critical() {}, select() {}, deselect() {}, _markVerified() {}, _checkDone() {}, _gcSelections() {},
+    _verifyPiecesUsingBitfield() {}, _hasAllPieces() {}, destroy() {},
+  } as any
+  const variants = [
+    "function(e){let t=null;e.on(`request`,(t,n,i,s)=>{if(i>131072)return e.destroy();this.pieces[t]||this.store.get(t,{offset:n,length:i},s)}),e.hasFast&&this._hasAllPieces()?e.haveAll():e.bitfield(this.bitfield)}",
+    "function(e){const r=this;e.on('request',function(t,n,i,s){if(i>131072)return e.destroy();if(r.pieces[t])return;r.store.get(t,{offset:n,length:i},s)});e.hasFast&&r._hasAllPieces()?e.haveAll( ):e.bitfield(r.bitfield)}",
+    'function (wire) { wire.on( "request" , (index, offset, length, cb) => { if (this.pieces[index] != null) { return } this.store.get(index, { offset, length }, cb) }); if (wire.hasFast && this._hasAllPieces()) wire.haveAll() }',
+  ]
+  for (const v of variants) {
+    // Function.prototype.toString 需要真函数：用 new Function 造出源码一致的函数
+    const pr = { ...proto, _onWireWithMetadata: new Function(`return ${v}`)() }
+    pr._onMetadata = new Function("return function(){this._hasStartupBitfield;this._storeCacheSlots;this._reservations}")()
+    pr._select = new Function("return function(e,t,n,i,r=!1){this._selections.insert({from:e,to:t,isStreamSelection:r})}")()
+    assert.deepEqual(checkTorrentPrototype(pr), [], v)
+  }
+  assert.deepEqual(checkBundleSource("let i=e[Symbol.asyncIterator](r),a=null;e.emit(`iterator`,{iterator:i,req:t,file:e},e=>{a=e});lt_donthave"), [])
+  assert.equal(normSource("a(`x`,'y',\"z\")"), 'a("x","y","z")')
+  const wire = { _onRequest: new Function("return function(e,t,n){if(this.amChoking){this.hasFast&&this.reject(e,t,n);return}this.emit(`request`,e,t,n,()=>{})}")() } as any
+  assert.ok(!checkWire(wire).some((x) => /_onRequest/.test(x)))
 })
 
 test("compat checks name what is missing", () => {
