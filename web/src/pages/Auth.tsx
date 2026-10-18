@@ -4,6 +4,7 @@ import { useMutation } from "@tanstack/react-query"
 import { Eye, EyeOff, Loader2, Lock } from "lucide-react"
 import { Container } from "@/components/layout/Container"
 import { LogoMark } from "@/components/layout/Logo"
+import { ThemeSegmented } from "@/components/layout/ThemeToggle"
 import { Turnstile } from "@/components/Turnstile"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -29,6 +30,10 @@ function AuthCard({ title, subtitle, children, footer }: { title: string; subtit
         </div>
         <Card className="p-5 sm:p-6">{children}</Card>
         <p className="mt-4 text-center text-[13px] text-muted-foreground">{footer}</p>
+        {/* 移动端没有顶栏，未登录用户在这里切换主题 */}
+        <div className="mt-6 flex justify-center md:hidden">
+          <ThemeSegmented />
+        </div>
       </div>
     </Container>
   )

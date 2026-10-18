@@ -3,7 +3,7 @@ import { LogoMark } from "./Logo"
 
 export function Footer() {
   return (
-    <footer className="mt-10 border-t bg-card/60">
+    <footer className="mt-10 hidden border-t bg-card/60 md:block">
       <Container className="flex flex-col gap-3 py-6 text-xs text-muted-foreground lg:flex-row lg:items-center lg:justify-between">
         <div className="flex shrink-0 items-center gap-2">
           <LogoMark className="h-5 w-5" />
