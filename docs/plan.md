@@ -100,3 +100,43 @@
 4. 注册：开放注册 + Turnstile，还是邀请制？是否需要邮箱验证（需要 SMTP）？
 5. 生产用哪些 qB（PKU/ZJ/MCI 是否会升 5.3）？测试先只用 ams。
 6. 弹幕需要 dandanplay AppId/Secret（以后再申请也行）。
+
+## 抓取与刮削（2026-10 设计，取代对 bangumi.moe 的实时反代）
+
+原则：不再在用户请求路径上实时请求 bangumi.moe（搜索 / 条目种子 / 时间表最新一集全部读本地库）。种子来自后台抓取源与用户提交的磁力。暂不做历史统一补抓。
+
+### 1. 抓取源（admin 可配，存 SQLite）
+`sources(id, name, kind, url, interval_min, enabled, trusted, etag, last_modified, last_run_at, last_ok_at, last_new, last_error)`
+- kind：`rss`（通用 RSS/Atom：enclosure .torrent / magnet / nyaa:infoHash）、`bangumi_moe`（其 JSON latest 第 1 页，含标签 ID 与文件列表，作为强刮削线索）。
+- 默认：bangumi.moe（受信，启用）、蜜柑 Mikan RSS（启用）、Nyaa 1_3（启用）、动漫花园、ACG.RIP（内置但关闭）。间隔默认 15 分钟，最小 5。
+- 只抓第一页；条件 GET（ETag / If-Modified-Since）；每个 host 串行；UA 标明站点。
+- 后台：列表、增改删、启停、「立即抓取」、显示上次结果/错误。
+
+### 2. 入库流水线（每个 infohash 只做一次）
+RSS 条目 → infohash + 文件列表：
+1. 有 .torrent（enclosure/link）：下载（≤5MB、限速）本地解析 bencode → infohash（v1）+ 文件列表。
+2. 只有磁力：进入「qB 元数据队列」：qB 添加时 `stopCondition=MetadataReceived`、分类 `projectk-meta`，轮询文件列表，取到后删除（若该种子同时被做种请求则保留）。并发 3、单个超时 2 分钟，失败重试 3 次；状态存库，重启续跑。
+3. 文件分类：视频扩展名；排除 NCOP/NCED/PV/CM/Menu/Sample/特典；集数解析；kind = episode|sp|op|ed|extra|other。
+4. 刮削：沿用 meta.match（bangumi.moe 标签 → 强匹配；标题/别名模糊匹配），写 torrent_files(work_key, episode, confidence, method)。低可信度进入后台待确认（TODO UI）。
+RSS 信息（标题、发布时间、字幕组、来源条目 ID）作补充；文件列表以种子为准。
+
+### 3. 搜索（本地优先 + 外部按需）
+`GET /api/v1/search/{keyword}` → `{ subjects: Subject[], torrents: Torrent[], page, page_count }`
+- subjects：本地 works（标题/中文名/别名，FTS5 trigram）。本地无结果时按需查外部：bangumi.tv 搜索 API（type=动画），TMDB（设置了 key 时），结果写入 works 后返回；负结果缓存 1 小时；外部请求限速。
+- torrents：本地 torrents 标题 + 文件名 FTS5（trigram，中日文可搜）。
+- 磁力/infohash 不走搜索：前端直接进入 /watch/hash/{ih}。
+
+### 4. 用户提交的磁力
+- 游客：只在浏览器 WebTorrent 播放（现状）。
+- 会员（有做种权限）：播放同时 `POST …/seed` 让 qB 下载；后端发现 qB 拿到元数据即入库 + 刮削。
+  前端轮询 `GET /api/v1/torrents/hash/{ih}`（`{status: pending|ready, files: [{index,path,size,kind,subject?,episode?}]}`），
+  若播放中的文件被刮削到某番某集 → 切到 `/subject/{p}/{id}/episode/{n}/hash/{ih}/file/{idx}`（单集页指定资源，播放器不重启、保留进度）；否则留在 /watch。
+
+### 5. 页面
+- 单集页支持指定资源：`/subject/{p}/{id}/episode/{n}/hash/{ih}[/file/{idx}]`。
+- 搜索页：「番剧」卡片区 + 「种子」列表区。
+- 后台新增「抓取源」页。
+
+### 以后（TODO）
+- 统一历史补抓；TVDB / AniDB（AniDB 用其 titles dump，遵守限流）。
+- 内置 BT 客户端 / tracker（统计用户上传量）。
