@@ -78,7 +78,6 @@
 - 时间表自动选种优先 AVC/H.264（浏览器兼容），HEVC/10bit 降权。
 
 ## TODO（低优先级）
-- **系列（series）**：一个系列包含多个条目（subject，一般一季一个）。可用 bgm.tv `/v0/subjects/{id}/subjects` 的续集/前传关系或 anime-offline-database 聚合；页面 `/series/{provider}/{id}`，条目页显示「同系列其他季」。
 - dandanplay 弹幕（需 AppId/Secret，用户暂无账号）
 - 番剧页按集分组（映射库已有文件级集数，前端目前是种子列表 + 字幕组筛选）
 - ✅ 特别篇（2026-10）：集的键 `12` / `12.5` / `0` / `sp1` / `ncop1` / `nced1` / `pv1` / `cm1`（api.md「集的键」），选集列表 `GET /subjects/{p}/{id}/episodes`，SP/NCOP/NCED/PV/CM 保留编号并映射到作品（迁移 5 + 启动时一次性重新分类）。待改进：SPs 目录里文件名解析不出编号的特别篇都记为 sp1；日文写法（ノンテロップOP/ED、映像特典内的 PV）未识别。
@@ -160,7 +159,7 @@ zip 内 9 个 jsonlines 文件，只用 3 个：
 |---|---|---|---|
 | `subject.jsonlines` | 290 MB | 987 MB | 条目（`type=2` 为动画） |
 | `episode.jsonlines` | 67 MB | 340 MB | 章节 |
-| `subject-relations.jsonlines` | 6 MB | 75 MB | 条目关联（系列） |
+| `subject-relations.jsonlines` | 6 MB | 75 MB | 条目关联（定位多季合集的第 N 季） |
 
 字段：
 - subject：`id, type, name, name_cn, infobox(wiki 原文), platform, summary, nsfw, date, tags, score, rank, meta_tags…`。infobox 里有 `别名={[…][…]}`、`话数`、`放送开始`、`放送星期`、`播放结束`、`官方网站`。
@@ -181,7 +180,7 @@ GitHub release 支持 Range（不支持后缀式 `bytes=-N`，要用绝对区间
   - 封面：dump 不含图片，沿用现有方式（访问时按需解析 lain.bgm.tv 地址并缓存）。
 - **章节**：新表 `episodes(work_key, bgm_ep_id, type, sort, name, name_cn, airdate, duration)`；不存长简介（省空间）。类型映射到集标识：0→正片 `{sort}`、1→`sp{sort}`、2→`ncop{sort}`、3→`nced{sort}`、4→`pv{sort}`；5 MAD / 6 其他暂不进选集。
   - 注意：分割放送的第二季，bangumi 的 `sort` 可能延续第一季（13–24），而字幕组文件写 01–12。刮削时：文件集数 n 在该条目正片 `sort` 里存在就直接对应，否则按「该条目最小 sort + n − 1」换算。
-- **关联**：新表 `subject_relations(subject_bgm_id, related_bgm_id, relation_type, ord)`，两端都是动画才保存。之后用 前传/续集/总集篇/全集/番外篇 的连通分量生成「系列（series）」。
+- **关联**：新表 `subject_relations(subject_bgm_id, related_bgm_id, relation_type, ord)`，两端都是动画才保存。不做「系列」实体（跟随 bangumi：每季一个条目）；关联只用于刮削时沿 前传/续集 定位多季合集里的第 N 季。
 - 批量写入：每 5000 行一个事务；写完后重建全文索引（`INSERT INTO works_fts(works_fts) VALUES('rebuild')`）。
 - 预计体积：动画条目约 3 万、章节约 30–40 万行，映射库增加约 50–150 MB（导入后实测再更新）。
 
@@ -196,9 +195,14 @@ GitHub release 支持 Range（不支持后缀式 `bytes=-N`，要用绝对区间
 - 别名大幅增加，刮削（尤其罗马音标题）命中率提高。
 - 条目页显示标签、评分、排名。
 - NSFW：dump 里是条目的独立布尔字段 `nsfw`，导入时原样存入 works 的独立列 `nsfw`（与标签分开）。默认不做任何处理，后续再决定是否作为策略规则字段使用。
-- 系列页 `/series/{provider}/{id}`。
 
 ### 实施状态（2026-10-18）
 - 已实现：`internal/meta/bgmarchive_zip.go`（HTTP Range 读 zip，zip64、CRC32 校验）、`bgmarchive.go`（导入）、`episodes_bgm.go`（官方章节、已播集数、分割放送换算，读取侧换算）、`internal/catalog/archive.go`（每 6 小时检查 latest.json）、后台 `GET/POST /api/v1/admin/bgm-archive[/run]`、设置 `bgm_archive.enabled`。
 - 开发机实测（dump-2026-10-13）：85 秒、内存约 45 MB；动画条目 31174、章节 347689、关联 29893；meta.db 5.7 MB → 89 MB。
 - 合并：别名分来源存（bd_aliases / bgm_aliases）后取并集；中文名、简介以 bangumi 为准；放送时间、类型、日期以 bangumi-data 为准；本站数字 ID 不变。
+
+## 映射关系（2026-10-18 确认）
+不做「系列（series）」：跟随 bangumi，每季 / 每部剧场版 / OVA 都是独立条目（subject）。
+- 一个条目对应多个种子；一个种子可以对应多个条目（多季合集、正片 + 剧场版合集）。
+- 种子内的每个文件最多对应一集（集属于某个条目）；一集可以对应多个文件。
+- 结构已满足（`torrent_files` 按文件存 `work_key` + 集）。待改：刮削从「整个种子一个条目」改为逐文件 / 逐文件夹确定条目——季号沿 bangumi 前传/续集关联定位，文件夹名可直接匹配条目，用官方章节数核对，对不上不映射；冲突检测按（条目, 集）。

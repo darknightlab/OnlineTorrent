@@ -25,7 +25,6 @@
 | 搜索 | `/search/{keyword}`（翻页 `?page=`） |
 | 登录 / 注册 / 邀请注册 | `/login`（`?next=`）/ `/register` / `/register/invite/{code}` |
 | 个人中心 / 后台 | `/me` / `/admin/...` |
-| 系列（整个系列，TODO） | `/series/{provider}/{id}` |
 非规范写法的集的键（`SP01`、`ncop`、`012`）前端重定向到规范写法；无效键显示 404。
 旧链接兼容：`/?uri=磁力`、`/watch?uri=|ih=|t=`、`/anime/{key}` 均重定向到新路径。
 
