@@ -16,7 +16,8 @@ import { PERM, can, qk, useEpisode, useMe, useSiteOrFallback } from "@/lib/queri
 import { displayTitle } from "@/lib/schedule"
 import type { EpisodeFile, EpisodeResponse, TorrentStatus } from "@/lib/types"
 import { useDocumentTitle } from "@/lib/hooks"
-import { canonicalEpisodeKey, episodeLabel, formatEpisodeKey, parseEpisodeKey, type EpisodeKey } from "@/lib/episode"
+import { useEpisodeItem, episodeFullLabel } from "@/components/EpisodeGrid"
+import { canonicalEpisodeKey, formatEpisodeKey, parseEpisodeKey, type EpisodeKey } from "@/lib/episode"
 import { cn, episodeSourceHref, normalizeInfohash, watchHref } from "@/lib/utils"
 import { StatusPage } from "@/pages/NotFound"
 import {
@@ -104,7 +105,8 @@ export default function PlaybackPage() {
     onMapped: (href) => navigate(href, { replace: true, state: loc.state }),
   })
 
-  useDocumentTitle(isEpisode && epData && ep ? `${displayTitle(epData.subject)} ${episodeLabel(ep)}` : isEpisode ? "单集" : undefined)
+  const epItem = useEpisodeItem(epData?.subject, epKey)
+  useDocumentTitle(isEpisode && epData && ep ? `${displayTitle(epData.subject)} ${episodeFullLabel(ep, epItem?.title)}` : isEpisode ? "单集" : undefined)
 
   // ---- 校验 / 规范化 ----
   if (rawIh !== undefined && (!urlIh || badIndex)) return <StatusPage code="404" title="链接无效" description="播放链接格式有误，请检查 infohash。" />

@@ -2,7 +2,7 @@
 // 切换身份：?mock_user=guest|member|vip|admin（保存在 sessionStorage）；默认 admin。
 import * as fx from "./fixtures"
 import { canonicalEpisodeKey, compareEpisodeKeys, episodeLabel, parseEpisodeKey, type EpisodeKey } from "@/lib/episode"
-import type { AdminUser, EpisodeFile, EpisodeListItem, GrantRole, MeResponse, PermissionItem, PlayResponse, QBServer, Rule, Source, Subject, Torrent, TorrentStatus, User } from "@/lib/types"
+import type { AdminUser, BgmArchiveStatus, EpisodeFile, EpisodeListItem, GrantRole, MeResponse, PermissionItem, PlayResponse, QBServer, Rule, Source, Subject, Torrent, TorrentStatus, User } from "@/lib/types"
 
 type Handler = (ctx: { params: Record<string, string>; query: URLSearchParams; body: any }) => unknown
 
@@ -166,16 +166,33 @@ function episodeList(a: Subject): EpisodeListItem[] {
     keys.set(k, p)
     if (p.kind === "main" && Number.isInteger(p.number)) top = Math.max(top, p.number)
   }
+  // 官方章节：1..eps（含未播出的集）+ 一个官方 SP
+  const official = (a.eps ?? 0) > 0
+  top = Math.max(top, a.eps ?? 0)
   for (let n = 1; n <= top; n++) keys.set(String(n), { kind: "main", number: n })
+  if (official) keys.set("sp1", { kind: "sp", number: 1 })
+  const begin = new Date(a.begin).getTime() + 8 * 3600_000
+  const day = (n: number) => new Date(begin + (n - 1) * 7 * 86400_000).toISOString().slice(0, 10)
   return [...keys.entries()]
     .sort((x, y) => compareEpisodeKeys(x[1], y[1]))
-    .map(([key, k]) => ({
-      key,
-      ...k,
-      label: episodeLabel(k),
-      sources: counts.get(key) ?? 0,
-      ...(k.kind === "main" ? { aired: k.number >= 1 && k.number <= a.episodes_aired } : {}),
-    }))
+    .map(([key, k]) => {
+      const t = k.kind === "main" && Number.isInteger(k.number) && official ? fx.EPISODE_TITLES[(k.number - 1 + a.subject_id) % fx.EPISODE_TITLES.length] : null
+      return {
+        key,
+        ...k,
+        label: episodeLabel(k),
+        sources: counts.get(key) ?? 0,
+        ...(k.kind === "main" ? { aired: k.number >= 1 && k.number <= a.episodes_aired } : {}),
+        ...(official && (k.kind === "main" ? k.number <= (a.eps ?? 0) : key === "sp1")
+          ? {
+              official: true,
+              ...(k.kind === "main" ? { airdate: day(k.number) } : {}),
+              // 偶尔缺少标题（与真实数据一致）
+              ...(t && k.number % 5 !== 3 ? { title: t[0], title_ja: t[1] } : key === "sp1" ? { title: "总集篇" } : {}),
+            }
+          : {}),
+      }
+    })
 }
 
 /** 条目的全部种子：最新一集 + 往期 + 标题相关 */
@@ -285,6 +302,20 @@ function torrentStatus(ih: string): TorrentStatus {
 
 // ---- 抓取源 ----
 const sources = fx.sources
+const bgmArchive: BgmArchiveStatus = {
+  dump: "dump-2026-10-13.210353Z.zip",
+  dump_at: "2026-10-13T21:03:54Z",
+  digest: "sha256:19d12d42502fefeb4a2b14561cc978986a554320b06ca4bbf454d1830b101f90",
+  synced_at: new Date(Date.now() - 5 * 3600_000).toISOString(),
+  subjects: 31174,
+  episodes: 347689,
+  relations: 29893,
+  duration_sec: 85,
+  checked_at: new Date(Date.now() - 40 * 60_000).toISOString(),
+  error: "GET https://api.github.com/repos/bangumi/Archive/releases/latest: dial tcp: i/o timeout",
+  error_at: new Date(Date.now() - 40 * 60_000).toISOString(),
+  running: false,
+}
 
 function probe(body: { kind?: string; url?: string }) {
   const url = String(body.url ?? "").trim()
@@ -480,6 +511,25 @@ const routes: [string, string, Handler][] = [
       s.next_run_at = s.enabled ? new Date(Date.now() + s.interval_min * 60_000 * 2 ** s.fail_count).toISOString() : null
     }, 4000)
     return new Status(202, { ...s })
+  }],
+  ["GET", "/admin/bgm-archive", () => (requireAdmin(), { ...bgmArchive })],
+  ["POST", "/admin/bgm-archive/run", () => {
+    requireAdmin()
+    if (bgmArchive.running) throw new HttpError(409, "busy", "正在同步")
+    const started = Date.now()
+    Object.assign(bgmArchive, { running: true, phase: "subjects" })
+    const timer = window.setInterval(() => {
+      const t = Date.now() - started
+      if (t < 4000) bgmArchive.phase = "subjects"
+      else if (t < 8000) bgmArchive.phase = "episodes"
+      else if (t < 10000) bgmArchive.phase = "relations"
+      else {
+        window.clearInterval(timer)
+        const now = new Date().toISOString()
+        Object.assign(bgmArchive, { running: false, phase: undefined, synced_at: now, checked_at: now, duration_sec: Math.round(t / 1000), error: undefined, error_at: undefined })
+      }
+    }, 500)
+    return new Status(202, { ...bgmArchive })
   }],
   ["GET", "/admin/metadata-jobs", () => (requireAdmin(), { items: fx.metadataJobs })],
   ["GET", "/admin/permissions", () => (requireAdmin(), permissionsView())],

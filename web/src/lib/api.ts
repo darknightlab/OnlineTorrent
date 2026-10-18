@@ -4,6 +4,7 @@ import type {
   AdminUser,
   AdminUserUpdate,
   AuditEntry,
+  BgmArchiveStatus,
   InviteCode,
   InviteCreate,
   ListLike,
@@ -206,6 +207,8 @@ export const api = {
     deleteSource: (id: number) => del<{ items: Source[] }>(`/admin/sources/id/${id}`),
     runSource: (id: number) => post<Source>(`/admin/sources/id/${id}/run`),
     metadataJobs: () => get<{ items: MetadataJob[] }>("/admin/metadata-jobs"),
+    bgmArchive: () => get<BgmArchiveStatus>("/admin/bgm-archive"),
+    runBgmArchive: () => post<BgmArchiveStatus>("/admin/bgm-archive/run"),
 
     plays: (page: number) => get<ListLike<PlayRecord>>(`/admin/plays${qs({ page })}`),
     audit: (page: number) => get<ListLike<AuditEntry>>(`/admin/audit${qs({ page })}`),

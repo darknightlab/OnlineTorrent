@@ -126,7 +126,18 @@ export interface Subject extends ScheduleItem {
   summary: string
   type?: string
   official_site?: string
+  /** 用户标签（按人数排序的前若干个） */
   tags: string[]
+  /** bangumi 公共标签（维基维护，如 "TV"、"原创"） */
+  meta_tags?: string[]
+  /** 仅保存，暂不展示 / 过滤 */
+  nsfw?: boolean
+  /** bangumi 评分；0 = 无 */
+  score?: number
+  /** bangumi 排名；0 = 无 */
+  rank?: number
+  /** 计划集数；0 = 未知 */
+  eps?: number
   external: ExternalIds
 }
 
@@ -175,8 +186,16 @@ export interface EpisodeListItem {
   label: string
   /** 已映射到该集的文件数（0 = 暂无资源） */
   sources: number
-  /** 仅正片：是否在时间表估算的已播集数之内 */
+  /** 仅正片：是否已播出（有官方放送日期时按日期，否则按时间表估算） */
   aired?: boolean
+  /** 官方单集标题（有中文时为中文） */
+  title?: string
+  /** 日文原标题（与 title 不同时给出） */
+  title_ja?: string
+  /** 官方放送日期 "YYYY-MM-DD" */
+  airdate?: string
+  /** 是否来自 bangumi 官方章节数据 */
+  official?: boolean
 }
 
 /** GET /subjects/{provider}/{id}/episodes：正片按编号，然后 SP、NCOP、NCED、PV、CM */
@@ -516,6 +535,24 @@ export interface MetadataJob {
   last_error: string
   created_at: string
   updated_at: string
+}
+
+/** GET /admin/bgm-archive：bangumi Archive（bgm.tv 官方每周数据导出）同步状态 */
+export interface BgmArchiveStatus {
+  /** 当前已导入的导出文件名 */
+  dump: string
+  dump_at: string | null
+  digest: string
+  synced_at: string | null
+  subjects: number
+  episodes: number
+  relations: number
+  duration_sec: number
+  checked_at: string | null
+  error?: string
+  error_at?: string | null
+  running: boolean
+  phase?: "subjects" | "episodes" | "relations" | (string & {})
 }
 
 export interface AdminStats {

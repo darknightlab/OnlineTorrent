@@ -117,17 +117,20 @@ export function buildSubjects(now = Date.now()) {
       latest_torrent: latest,
       latest_episode: latest ? Math.max(1, episodes) : null,
       summary: a.summary || SUMMARIES[i % SUMMARIES.length],
-      tags: ["TV", ["奇幻", "校园", "战斗", "日常", "恋爱"][i % 5], ["原创", "漫画改", "小说改"][i % 3], "2026年10月"],
+      tags: ["TV", ["奇幻", "校园", "战斗", "日常", "恋爱"][i % 5], ["原创", "漫画改", "小说改"][i % 3], "2026年10月", ["治愈", "热血", "搞笑"][i % 3], "日本"],
+      meta_tags: ["TV", "日本", ["原创", "漫画改", "小说改"][i % 3]],
+      nsfw: false,
+      score: i % 7 === 6 ? 0 : Math.round((5.5 + rand(i + 9) * 3.4) * 10) / 10,
+      rank: i % 7 === 6 ? 0 : 50 + Math.round(rand(i + 11) * 4000),
+      eps: i % 4 === 3 ? 0 : [12, 13, 24, 12][i % 4],
       external: { bgm: a.bgm_id, mal: 50000 + i * 37, anidb: 18000 + i * 11, tmdb: i % 2 ? 230000 + i : null, imdb: null },
     }
   })
 }
 
 export function toScheduleItem(a: Subject): ScheduleItem {
-  const { summary: _s, tags: _t, external: _e, ...rest } = a
-  void _s
-  void _t
-  void _e
+  const { summary: _s, tags: _t, external: _e, meta_tags: _m, nsfw: _n, score: _sc, rank: _r, eps: _ep, ...rest } = a
+  void [_s, _t, _e, _m, _n, _sc, _r, _ep]
   return rest
 }
 
@@ -191,6 +194,7 @@ export const settings: SettingItem[] = [
   { key: "upstream.proxy", group: "上游", type: "string", label: "上游代理", description: "抓取与 bgm.tv / TMDB 请求共用；为空时使用环境变量 HTTPS_PROXY 等", value: "" },
   { key: "upstream.tmdb_api_key", group: "上游", type: "secret", label: "TMDB API Key", description: "TMDB v3 key 或 v4 读取令牌；设置后搜索时本地无结果会查询 TMDB", value: "", is_set: false },
   { key: "crawl.enabled", group: "抓取", type: "bool", label: "启用后台抓取", description: "关闭后各抓取源不再定时运行（仍可在「抓取源」页手动抓取）", value: true },
+  { key: "bgm_archive.enabled", group: "抓取", type: "bool", label: "同步 bangumi 数据", description: "每 6 小时检查 bangumi Archive（bgm.tv 官方每周数据导出），有新版本时导入全部动画条目、章节与条目关联；关闭后「立即同步」仍可用", value: true },
   { key: "crawl.workers", group: "抓取", type: "number", label: "抓取并发数", description: "同时抓取的源数", value: 2 },
 ]
 
@@ -436,3 +440,19 @@ export const metadataJobs: MetadataJob[] = Array.from({ length: 14 }, (_, i): Me
     updated_at: iso(i * 80_000),
   }
 })
+
+/** 单集标题（mock） */
+export const EPISODE_TITLES: [string, string][] = [
+  ["旅程的终点", "冒険の終わり"],
+  ["不必是魔法", "別に魔法じゃなくたって"],
+  ["杀人魔法", "人を殺す魔法"],
+  ["魂之安眠地", "魂の眠る地"],
+  ["亡者的幻影", "死者の幻影"],
+  ["村庄的英雄", "村の英雄"],
+  ["宛如童话", "おとぎ話のようなもの"],
+  ["芙莉莲", "フリーレン"],
+  ["断头台阿乌拉", "断頭台のアウラ"],
+  ["强大的魔法使", "強い魔法使い"],
+  ["北方的村庄", "北側諸国の村"],
+  ["真正的勇者", "本物の勇者"],
+]

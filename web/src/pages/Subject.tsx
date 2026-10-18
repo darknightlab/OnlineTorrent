@@ -1,16 +1,16 @@
 import { useMemo, useState } from "react"
 import { Link, Navigate, useParams } from "react-router-dom"
-import { CalendarClock, CalendarDays, ExternalLink, Film, ListVideo, Play, Tv } from "lucide-react"
+import { CalendarClock, CalendarDays, Clapperboard, ExternalLink, Film, LayoutGrid, List, ListVideo, Play, Star, Tv } from "lucide-react"
 import { Container } from "@/components/layout/Container"
 import { Cover } from "@/components/Cover"
-import { airedCount, EpisodeGrid, episodeSummary, useEpisodeChips } from "@/components/EpisodeGrid"
+import { airedCount, EpisodeGrid, EpisodeRows, episodeSummary, useEpisodeChips } from "@/components/EpisodeGrid"
 import { TorrentList, TorrentTableHead } from "@/components/TorrentList"
 import { EmptyState, ErrorState, SectionHeader } from "@/components/states"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-import { useSubject } from "@/lib/queries"
+import { useSubject, useEpisodes } from "@/lib/queries"
 import { airStatus, displayTitle } from "@/lib/schedule"
 import { formatDate, timeUntil, WEEKDAYS } from "@/lib/format"
 import { useDocumentTitle, useNow } from "@/lib/hooks"
@@ -38,6 +38,7 @@ export function LegacyAnimeRedirect() {
 export default function SubjectPage() {
   const { provider = "", id = "" } = useParams()
   const { data, isPending, error, refetch } = useSubject(provider, id)
+  const episodes = useEpisodes(provider, id) // 同一请求被选集组件复用（同一查询键）
   const now = useNow()
   const [team, setTeam] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
@@ -68,9 +69,19 @@ export default function SubjectPage() {
   const latest = a.latest_torrent ?? data.torrents[0]
   // 已播集数（映射库最新一集 / 时间表估算取较大者）
   const epCount = airedCount(a)
-  const latestEp = a.latest_episode && a.latest_episode > 0 ? a.latest_episode : epCount > 0 ? epCount : null
+  // 播放按钮：有资源的最新正片；都没有资源时从第 1 话开始（已播出的话）
+  const withSources = (episodes.data?.items ?? []).filter((it) => it.kind === "main" && it.sources > 0)
+  const latestEp =
+    withSources.length > 0
+      ? withSources[withSources.length - 1].number
+      : a.latest_episode && a.latest_episode > 0
+        ? a.latest_episode
+        : epCount > 0
+          ? 1
+          : null
   // bgm 简介常带大段空行/行尾空格，压缩成最多一个空行
   const summary = (a.summary ?? "").replace(/\r\n?/g, "\n").replace(/[ \t\u3000]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim()
+  const tags = subjectTags(a)
   const ext = EXTERNAL.filter((e) => a.external?.[e.key] !== null && a.external?.[e.key] !== undefined)
 
   return (
@@ -90,6 +101,7 @@ export default function SubjectPage() {
             </div>
             <h1 className="mt-1.5 text-lg font-bold leading-snug sm:text-2xl">{title}</h1>
             {a.title_cn && a.title !== a.title_cn && <p className="mt-0.5 text-[13px] text-muted-foreground sm:text-sm">{a.title}</p>}
+            <Rating subject={a} />
             <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-1 text-[13px] sm:grid-cols-2 sm:text-sm lg:max-w-xl">
               <Meta icon={Tv} label="放送">
                 每{WEEKDAYS[a.weekday]} {a.air_time}
@@ -102,19 +114,16 @@ export default function SubjectPage() {
                   {timeUntil(a.next_air_at, now)}
                 </Meta>
               )}
+              {(a.eps ?? 0) > 0 && (
+                <Meta icon={Clapperboard} label="集数">
+                  全 {a.eps} 话
+                </Meta>
+              )}
               <Meta icon={ListVideo} label="资源">
                 {data.torrents.length} 个种子
               </Meta>
             </dl>
-            {a.tags?.length > 0 && (
-              <div className="mt-3 hidden flex-wrap gap-1.5 sm:flex">
-                {a.tags.map((t) => (
-                  <Badge key={t} variant="outline">
-                    {t}
-                  </Badge>
-                ))}
-              </div>
-            )}
+            {tags.length > 0 && <TagList tags={tags} className="mt-3 hidden sm:flex" />}
             <div className="mt-auto flex flex-wrap gap-2 pt-4">
               {latestEp ? (
                 <Button asChild>
@@ -145,7 +154,7 @@ export default function SubjectPage() {
       </section>
 
       <Container className="space-y-6 py-5 sm:py-6">
-        {(summary || ext.length > 0) && (
+        {(summary || ext.length > 0 || tags.length > 0) && (
           <Card className="p-4 sm:p-5">
             <h2 className="mb-2 text-sm font-semibold">简介</h2>
             <p className={cn("max-w-4xl whitespace-pre-line text-[13px] leading-7 text-foreground/85 sm:text-sm", !expanded && "line-clamp-4 sm:line-clamp-none")}>
@@ -156,6 +165,7 @@ export default function SubjectPage() {
                 {expanded ? "收起" : "展开全部"}
               </button>
             )}
+            {tags.length > 0 && <TagList tags={tags} className="mt-3 flex border-t pt-3 sm:hidden" />}
             {ext.length > 0 && (
               <div className="mt-3 flex flex-wrap gap-2 border-t pt-3 sm:hidden">
                 {ext.map((e) => (
@@ -202,14 +212,114 @@ export default function SubjectPage() {
   )
 }
 
-/** 选集：正片 + 特别篇分组（无任何集时不显示） */
+/** 公共标签在前、用户标签在后，去重，最多 MAX_TAGS 个 */
+const MAX_TAGS = 10
+function subjectTags(a: Subject) {
+  const meta = new Set(a.meta_tags ?? [])
+  const all = [...new Set([...(a.meta_tags ?? []), ...(a.tags ?? [])].map((t) => t.trim()).filter(Boolean))].slice(0, MAX_TAGS)
+  return all.map((name) => ({ name, meta: meta.has(name) }))
+}
+
+function TagList({ tags, className }: { tags: { name: string; meta: boolean }[]; className?: string }) {
+  return (
+    <ul aria-label="标签" className={cn("flex-wrap gap-1.5", className)}>
+      {tags.map((t) => (
+        <li key={t.name}>
+          <Badge variant={t.meta ? "soft" : "outline"} title={t.meta ? "公共标签" : "用户标签"}>
+            {t.name}
+          </Badge>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** bangumi 评分与排名（均为 0 时不显示） */
+function Rating({ subject: a }: { subject: Subject }) {
+  const score = a.score ?? 0
+  const rank = a.rank ?? 0
+  if (score <= 0 && rank <= 0) return null
+  const bgm = a.external?.bgm ?? a.bgm_id
+  const body = (
+    <>
+      {score > 0 && (
+        <span className="inline-flex items-center gap-1 font-bold text-warning-text">
+          <Star className="h-4 w-4 fill-current" />
+          <span className="text-base tabular-nums sm:text-lg">{score.toFixed(1)}</span>
+        </span>
+      )}
+      {rank > 0 && <span className="text-xs tabular-nums text-muted-foreground">Bangumi 排名 #{rank}</span>}
+    </>
+  )
+  return bgm ? (
+    <a
+      href={`https://bgm.tv/subject/${bgm}`}
+      target="_blank"
+      rel="noreferrer noopener"
+      title="bangumi 评分"
+      className="mt-1.5 inline-flex w-fit items-center gap-2 rounded-md hover:opacity-80"
+    >
+      {body}
+    </a>
+  ) : (
+    <div className="mt-1.5 flex items-center gap-2">{body}</div>
+  )
+}
+
+type EpisodeView = "list" | "grid"
+const VIEW_KEY = "subject.episodeView"
+
+/** 选集：正片 + 特别篇分组（无任何集时不显示）。有官方标题时默认列表视图，可切换为网格（记住选择） */
 function SubjectEpisodes({ subject, latest }: { subject: Subject; latest: string | null }) {
-  const { chips } = useEpisodeChips(subject)
+  const { chips, loading } = useEpisodeChips(subject)
+  const [pref, setPref] = useState<EpisodeView | null>(() => {
+    const v = localStorage.getItem(VIEW_KEY)
+    return v === "list" || v === "grid" ? v : null
+  })
+  // 未选过视图时等选集加载完再决定默认视图（避免网格 → 列表闪烁）
+  if (loading && !pref) return <Skeleton className="h-40 w-full rounded-xl" />
   if (chips.length === 0) return null
+  const view: EpisodeView = pref ?? (chips.some((c) => c.title) ? "list" : "grid")
+  const choose = (v: EpisodeView) => {
+    localStorage.setItem(VIEW_KEY, v)
+    setPref(v)
+  }
   return (
     <section aria-labelledby="episodes-title">
-      <SectionHeader id="episodes-title" icon={ListVideo} title="选集" extra={<span className="text-xs text-muted-foreground">{episodeSummary(chips)}</span>} />
-      <EpisodeGrid subject={subject} chips={chips} highlight={latest} variant="page" />
+      <SectionHeader
+        id="episodes-title"
+        icon={ListVideo}
+        title="选集"
+        extra={
+          <span className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">{episodeSummary(chips)}</span>
+            <span role="group" aria-label="选集视图" className="inline-flex rounded-md border bg-card p-0.5">
+              {(
+                [
+                  ["list", List, "列表"],
+                  ["grid", LayoutGrid, "网格"],
+                ] as const
+              ).map(([v, Icon, label]) => (
+                <button
+                  key={v}
+                  type="button"
+                  aria-pressed={view === v}
+                  aria-label={`${label}视图`}
+                  title={`${label}视图`}
+                  onClick={() => choose(v)}
+                  className={cn(
+                    "inline-flex h-7 w-7 items-center justify-center rounded text-muted-foreground transition-colors hover:text-foreground",
+                    view === v && "bg-primary-soft text-primary-text hover:text-primary-text",
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                </button>
+              ))}
+            </span>
+          </span>
+        }
+      />
+      {view === "list" ? <EpisodeRows subject={subject} chips={chips} highlight={latest} /> : <EpisodeGrid subject={subject} chips={chips} highlight={latest} variant="page" />}
     </section>
   )
 }

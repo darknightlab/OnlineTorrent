@@ -5,7 +5,7 @@ import { AccessBadge } from "@/components/badges"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { airedCount, EpisodeGrid, useEpisodeChips } from "@/components/EpisodeGrid"
+import { airedCount, EpisodeGrid, episodeFullLabel, useEpisodeChips, useEpisodeItem } from "@/components/EpisodeGrid"
 import { displayTitle } from "@/lib/schedule"
 import { episodeLabel, formatEpisodeKey, type EpisodeKey } from "@/lib/episode"
 import type { EpisodeFile, EpisodeResponse, Subject } from "@/lib/types"
@@ -22,6 +22,8 @@ export const BLEED = "-mx-3 sm:-mx-4 lg:mx-0"
 /** 无资源：保留选集，资源区给出提示 */
 export function EmptyEpisode({ data, ep }: { data: EpisodeResponse; ep: EpisodeKey }) {
   const s = data.subject
+  const item = useEpisodeItem(s, formatEpisodeKey(ep))
+  const future = item?.aired === false
   return (
     <div className={GRID}>
       <section className="min-w-0">
@@ -33,9 +35,14 @@ export function EmptyEpisode({ data, ep }: { data: EpisodeResponse; ep: EpisodeK
             <Film className="h-8 w-8 text-white/80" />
             <p className="font-medium">
               {episodeLabel(ep)}
-              {ep.kind === "main" ? "" : " "}暂无可播放的资源
+              {ep.kind === "main" ? "" : " "}
+              {future ? "尚未播出" : "暂无可播放的资源"}
             </p>
-            <p className="text-xs text-white/70">字幕组发布后会自动出现，可先看看其他集</p>
+            <p className="text-xs text-white/70">
+              {future
+                ? `${item?.airdate ? `预计 ${item.airdate} 播出，` : ""}播出后字幕组发布的资源会自动出现`
+                : "字幕组发布后会自动出现，可先看看其他集"}
+            </p>
           </div>
         </div>
         <EpisodeInfo subject={s} ep={ep} />
@@ -44,7 +51,9 @@ export function EmptyEpisode({ data, ep }: { data: EpisodeResponse; ep: EpisodeK
         <EpisodeList subject={s} ep={ep} hasItems={false} />
         <SideSection id="sources-title" icon={Layers} title="资源">
           <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed px-4 py-6 text-center lg:border-0 lg:py-4">
-            <p className="text-[13px] text-muted-foreground">本集暂时还没有收录资源，可以在番剧页查看全部种子。</p>
+            <p className="text-[13px] text-muted-foreground">
+              {future ? "本集尚未播出，播出后会自动收录资源。" : "本集暂时还没有收录资源，可以在番剧页查看全部种子。"}
+            </p>
             <Button asChild variant="soft" size="sm">
               <Link to={subjectHref(s)}>
                 查看全部种子
@@ -63,8 +72,19 @@ export function EpisodeInfo({ subject: s, ep, parts }: { subject: Subject; ep: E
   const title = displayTitle(s)
   const total = airedCount(s)
   const weekly = s.weekday >= 0 && s.weekday <= 6 && s.air_time ? `每${WEEKDAYS[s.weekday]} ${s.air_time} 更新` : null
-  // 正片 "第 12.5 话"；特别篇只写 "NCOP1"（不写成 "第 NCOP1 话"）
-  const meta = [episodeLabel(ep), total > 0 ? `已更新至第 ${total} 话` : null, weekly].filter(Boolean).join(" · ")
+  const item = useEpisodeItem(s, formatEpisodeKey(ep))
+  const epTitle = item?.title
+  const epJa = item?.title_ja && item.title_ja !== epTitle ? item.title_ja : null
+  const future = item?.aired === false
+  // 正片 "第 12.5 话"；特别篇只写 "NCOP1"（不写成 "第 NCOP1 话"）。有官方标题时集数放在标题行
+  const meta = [
+    epTitle ? null : episodeLabel(ep),
+    item?.airdate ? `${item.airdate} ${future ? "播出" : "放送"}` : null,
+    total > 0 ? `已更新至第 ${total} 话` : null,
+    weekly,
+  ]
+    .filter(Boolean)
+    .join(" · ")
   return (
     <div className="pt-3 lg:pt-4">
       <Link to={subjectHref(s)} className="group flex items-center gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title="番剧详情">
@@ -74,7 +94,24 @@ export function EpisodeInfo({ subject: s, ep, parts }: { subject: Subject; ep: E
           <ChevronRight className="h-3.5 w-3.5" />
         </span>
       </Link>
-      <p className="mt-1 text-xs text-muted-foreground lg:text-[13px]">{meta}</p>
+      {epTitle && (
+        <p className="mt-1 flex min-w-0 items-baseline gap-2 text-sm lg:text-[15px]" title={[episodeFullLabel(ep, epTitle), epJa].filter(Boolean).join("\n")}>
+          <span className="min-w-0 shrink truncate font-medium text-foreground/90">{episodeFullLabel(ep, epTitle)}</span>
+          {epJa && (
+            <span lang="ja" className="min-w-0 shrink-[2] truncate text-xs text-muted-foreground lg:text-[13px]">
+              {epJa}
+            </span>
+          )}
+        </p>
+      )}
+      <p className="mt-1 text-xs text-muted-foreground lg:text-[13px]">
+        {future && (
+          <Badge variant="outline" className="mr-1.5 align-[1px]">
+            未播出
+          </Badge>
+        )}
+        {meta}
+      </p>
       {parts && (
         <div className="mt-2 flex flex-col gap-2 lg:mt-3 lg:flex-row-reverse lg:items-center lg:justify-between lg:border-b lg:pb-3">
           {parts.stats}

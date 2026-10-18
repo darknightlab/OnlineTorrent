@@ -9,6 +9,7 @@ import { api, toList } from "@/lib/api"
 import { timeAgo } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { AdminHeader, StatusDot } from "./components"
+import { BgmArchiveCard } from "./BgmArchive"
 
 export default function Overview() {
   const stats = useQuery({ queryKey: ["admin", "stats"], queryFn: api.admin.stats, refetchInterval: 30_000 })
@@ -47,6 +48,9 @@ export default function Overview() {
       )}
 
       <div className="mt-5 grid gap-4 xl:grid-cols-2">
+        <div className="xl:col-span-2">
+          <BgmArchiveCard />
+        </div>
         <Card className="overflow-hidden">
           <PanelTitle title="qB 服务器" to="/admin/qb" />
           <ul className="divide-y">

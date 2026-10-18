@@ -1,5 +1,6 @@
 // 选集：正片 + 特别篇（SP / NCOP / NCED / PV / CM）。单集页右栏（side）与番剧页（page）共用。
-import { useEffect, useMemo, useRef } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
+import { ChevronDown } from "lucide-react"
 import { Link } from "react-router-dom"
 import { useEpisodes } from "@/lib/queries"
 import {
@@ -23,6 +24,23 @@ export interface EpisodeChip extends EpisodeKey {
   label: string
   /** 已映射的文件数；undefined = 未知（选集列表未加载） */
   sources?: number
+  /** 仅正片：是否已播出 */
+  aired?: boolean
+  /** 官方单集标题 / 日文原标题 / 放送日期（YYYY-MM-DD） */
+  title?: string
+  title_ja?: string
+  airdate?: string
+}
+
+/** 未播出且暂无资源 */
+export const isFuture = (c: EpisodeChip) => c.aired === false && !c.sources
+
+/** 单集的完整说明（title 提示）："第 3 话 · 契约 / 契約 / 2026-10-17 放送 · 6 个资源" */
+export function chipTooltip(c: EpisodeChip) {
+  const head = [c.kind === "main" ? c.label : `${c.label} · ${KIND_DESC[c.kind]}`, c.title].filter(Boolean).join(" · ")
+  const status = isFuture(c) ? "未播出" : c.sources === 0 ? "暂无资源" : c.sources ? `${c.sources} 个资源` : null
+  const tail = [c.airdate ? `${c.airdate} 放送` : null, status].filter(Boolean).join(" · ")
+  return [head, c.title_ja && c.title_ja !== c.title ? c.title_ja : null, tail].filter(Boolean).join("\n")
 }
 
 /** 已播集数（映射库最新一集 / 时间表估算取较大者） */
@@ -41,7 +59,17 @@ export function useEpisodeChips(subject: Subject, current?: EpisodeKey | null, c
   const q = useEpisodes(p?.provider ?? "", p?.id ?? "")
   const chips = useMemo(() => {
     const list: EpisodeChip[] = q.data
-      ? q.data.items.map((it) => ({ kind: it.kind, number: it.number, key: it.key, label: it.label, sources: it.sources }))
+      ? q.data.items.map((it) => ({
+          kind: it.kind,
+          number: it.number,
+          key: it.key,
+          label: it.label,
+          sources: it.sources,
+          aired: it.aired,
+          title: it.title || undefined,
+          title_ja: it.title_ja || undefined,
+          airdate: it.airdate || undefined,
+        }))
       : Array.from({ length: Math.min(airedCount(subject), 2000) }, (_, i) => chipOf({ kind: "main", number: i + 1 }))
     if (current) {
       const key = formatEpisodeKey(current)
@@ -52,7 +80,19 @@ export function useEpisodeChips(subject: Subject, current?: EpisodeKey | null, c
     }
     return list
   }, [q.data, subject, current, currentSources])
-  return { chips, loading: q.isPending && !!p }
+  return { chips, loading: q.isPending && !!p, error: q.error }
+}
+
+/** 选集列表中的某一集（官方标题 / 放送日期）；与 useEpisodeChips 共用同一查询 */
+export function useEpisodeItem(subject: Subject | undefined, key: string | null) {
+  const p = subject ? subjectPath(subject) : null
+  const q = useEpisodes(p?.provider ?? "", p?.id ?? "")
+  return key ? q.data?.items.find((it) => it.key === key) : undefined
+}
+
+/** 单集完整名称："第 3 话 · 契约"（无标题时只有 "第 3 话"） */
+export function episodeFullLabel(k: EpisodeKey, title?: string | null) {
+  return title ? `${episodeLabel(k)} · ${title}` : episodeLabel(k)
 }
 
 /** 按类型分组（正片在前） */
@@ -72,7 +112,7 @@ export function episodeSummary(chips: EpisodeChip[]) {
  * - side：单集页右栏。移动端单行横向滚动（特别篇接在正片后，以细分隔线 + 分组名隔开），桌面端正片每行 6 个、
  *   特别篇分组每行 4 个；当前集高亮并滚动到可见区域。
  * - page：番剧页，网格换行，特别篇分组带小标题。
- * 资源数为 0 的集弱化显示。
+ * 资源数为 0 的集弱化显示；未播出（且无资源）的集用虚线边框、更浅的文字（仍可点击）。
  */
 export function EpisodeGrid({
   subject,
@@ -104,6 +144,7 @@ export function EpisodeGrid({
 
   const chip = (c: EpisodeChip) => {
     const active = c.key === current
+    const future = !active && isFuture(c)
     const muted = !active && c.sources === 0
     return (
       <Link
@@ -111,7 +152,7 @@ export function EpisodeGrid({
         ref={active ? cur : undefined}
         to={episodeHref(subject, c.key)}
         aria-current={active ? "page" : undefined}
-        title={`${c.kind === "main" ? c.label : `${c.label} · ${KIND_DESC[c.kind]}`}${c.sources === 0 ? "（暂无资源）" : ""}`}
+        title={chipTooltip(c)}
         className={cn(
           "inline-flex h-10 shrink-0 items-center justify-center border font-medium tabular-nums transition-colors",
           c.kind === "main" ? "text-sm" : "text-[13px]",
@@ -128,6 +169,7 @@ export function EpisodeGrid({
                 !active && c.key === highlight && "border-primary/50 text-primary-text",
               ),
           muted && "text-muted-foreground/60",
+          future && "border-dashed border-border bg-transparent text-muted-foreground/45 lg:border-border lg:bg-transparent",
         )}
       >
         {episodeShort(c)}
@@ -185,5 +227,112 @@ export function EpisodeGrid({
         </div>
       )}
     </div>
+  )
+}
+
+/** 列表视图折叠：显示的集数 / 超过多少集才折叠 / 最新一集之后多显示几集（移动端与 sm 以上分别计算） */
+const FOLD = { mobile: { size: 6, min: 8, lead: 3 }, wide: { size: 12, min: 15, lead: 4 } }
+
+/** 折叠窗口 [start, end)；不需要折叠时为整个列表 */
+function foldWindow(len: number, hi: number, f: { size: number; min: number; lead: number }): [number, number] {
+  if (len <= f.min) return [0, len]
+  const start = Math.max(0, Math.min(hi - f.size + f.lead, len - f.size))
+  return [start, start + f.size]
+}
+
+/**
+ * 番剧页的列表视图：每集一行（编号 · 标题 · 放送日期 · 资源数），移动端 1 列、平板 2 列、桌面 3 列。
+ * 正片较多时折叠（移动端 6 集、sm 以上 12 集；连载中时窗口包含 highlight）；特别篇分组列在正片之后。
+ */
+export function EpisodeRows({ subject, chips, highlight }: { subject: Subject; chips: EpisodeChip[]; highlight?: string | null }) {
+  const [expanded, setExpanded] = useState(false)
+  const gs = groups(chips)
+  const main = gs.find((g) => g.kind === "main")?.items ?? []
+  const specials = gs.filter((g) => g.kind !== "main")
+  // 连载中（还有未播出的集）时折叠窗口包含最新一集，否则从第 1 话开始
+  const hi = main.some(isFuture) ? Math.max(0, main.findIndex((c) => c.key === highlight)) : 0
+  const [m0, m1] = foldWindow(main.length, hi, FOLD.mobile)
+  const [w0, w1] = foldWindow(main.length, hi, FOLD.wide)
+  const foldMobile = main.length > FOLD.mobile.min
+  const foldWide = main.length > FOLD.wide.min
+  const grid = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3"
+  const row = (c: EpisodeChip, i?: number) => (
+    <EpisodeRow
+      key={c.key}
+      subject={subject}
+      c={c}
+      highlight={c.key === highlight}
+      className={cn(i !== undefined && !expanded && (i < m0 || i >= m1) && "max-sm:hidden", i !== undefined && !expanded && (i < w0 || i >= w1) && "sm:hidden")}
+    />
+  )
+  return (
+    <div className="space-y-3">
+      {main.length > 0 && <div className={grid}>{main.map((c, i) => row(c, i))}</div>}
+      {foldMobile && (
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          className={cn(
+            "flex h-9 w-full items-center justify-center gap-1 rounded-lg border bg-card text-[13px] text-muted-foreground hover:border-primary/50 hover:text-primary-text",
+            !foldWide && "sm:hidden",
+          )}
+        >
+          {expanded ? "收起" : `展开全部 ${main.length} 话`}
+          <ChevronDown className={cn("h-4 w-4 transition-transform", expanded && "rotate-180")} />
+        </button>
+      )}
+      {specials.map((g) => (
+        <div key={g.kind} role="group" aria-label={KIND_DESC[g.kind]} className={cn(main.length > 0 && "border-t pt-3")}>
+          <p className="mb-2 flex items-baseline gap-2">
+            <span className="text-xs font-semibold text-foreground/80">{EPISODE_KIND_LABEL[g.kind]}</span>
+            <span className="text-[11px] text-muted-foreground">{KIND_DESC[g.kind]}</span>
+          </p>
+          <div className={grid}>{g.items.map((c) => row(c))}</div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function EpisodeRow({ subject, c, highlight, className }: { subject: Subject; c: EpisodeChip; highlight: boolean; className?: string }) {
+  const future = isFuture(c)
+  const none = !future && c.sources === 0
+  return (
+    <Link
+      to={episodeHref(subject, c.key)}
+      title={chipTooltip(c)}
+      className={cn(
+        "group flex h-14 min-w-0 items-center gap-3 rounded-lg border bg-card px-3 transition-colors hover:border-primary/60",
+        highlight && "border-primary/50 bg-primary-soft/50",
+        future && "border-dashed bg-transparent",
+        className,
+      )}
+    >
+      <span
+        className={cn(
+          "inline-flex h-8 min-w-8 shrink-0 items-center justify-center rounded-md px-1 text-[13px] font-semibold tabular-nums",
+          future ? "border border-dashed text-muted-foreground/60" : none ? "bg-muted text-muted-foreground" : "bg-primary-soft text-primary-text",
+        )}
+      >
+        {episodeShort(c)}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className={cn("block truncate text-[13px] font-medium leading-5 group-hover:text-primary-text", future ? "text-muted-foreground/70" : none && "text-foreground/70")}>
+          {c.title || (c.kind === "main" ? c.label : `${c.label} · ${KIND_DESC[c.kind]}`)}
+        </span>
+        <span className="flex items-center gap-1.5 text-[11px] leading-4 text-muted-foreground tabular-nums">
+          {c.airdate && <span>{c.airdate}</span>}
+          {c.airdate && <span aria-hidden>·</span>}
+          {future ? (
+            <span>未播出</span>
+          ) : c.sources === undefined ? null : c.sources > 0 ? (
+            <span className="text-primary-text">{c.sources} 个资源</span>
+          ) : (
+            <span>暂无资源</span>
+          )}
+        </span>
+      </span>
+    </Link>
   )
 }
