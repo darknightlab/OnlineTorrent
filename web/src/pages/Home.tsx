@@ -69,6 +69,24 @@ function ScheduleSection() {
   useEffect(() => {
     embla?.reInit()
   }, [embla, byDay, isPending])
+  // 轮播区域宽度变化（窗口缩放、滚动条出现/消失、字体加载）时重新测量，否则面板会错位
+  useEffect(() => {
+    if (!embla) return
+    const vp = embla.rootNode()
+    let last = vp.clientWidth
+    let raf = 0
+    const ro = new ResizeObserver(() => {
+      if (vp.clientWidth === last) return
+      last = vp.clientWidth
+      cancelAnimationFrame(raf)
+      raf = requestAnimationFrame(() => embla.reInit())
+    })
+    ro.observe(vp)
+    return () => {
+      ro.disconnect()
+      cancelAnimationFrame(raf)
+    }
+  }, [embla])
   const counts = useMemo(() => {
     const c = new Map<number, number>()
     for (const i of visible) c.set(i.weekday, (c.get(i.weekday) ?? 0) + 1)
@@ -144,7 +162,7 @@ function ScheduleSection() {
         </Card>
       ) : (
         // Embla 轮播（loop）：跟手拖动、无缝首尾循环、快速连续滑动不卡；高度跟随当前这天
-        <div ref={emblaRef} className="-mx-1.5 overflow-hidden">
+        <div ref={emblaRef} className="relative -mx-1.5 overflow-hidden">
           <div className="flex items-start will-change-transform [touch-action:pan-y_pinch-zoom]">
             {WEEK_ORDER.map((w, i) => (
               <DayPanel key={w} weekday={w} items={byDay[i]} pending={isPending} now={now} active={w === day} />
