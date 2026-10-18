@@ -118,7 +118,7 @@ export function useEpisode(provider: string, id: string, n: number) {
   return useQuery({
     queryKey: qk.episode(provider, id, n),
     queryFn: ({ signal }) => api.episode(provider, id, n, signal),
-    enabled: !!provider && !!id && Number.isInteger(n) && n > 0,
+    enabled: !!provider && !!id && Number.isFinite(n) && n >= 0,
   })
 }
 

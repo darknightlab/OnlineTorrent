@@ -154,7 +154,7 @@ export function EpisodeList({ subject: s, episode, hasItems }: { subject: Subjec
           "lg:grid lg:max-h-[13.5rem] lg:grid-cols-6 lg:overflow-y-auto lg:overflow-x-visible lg:px-0 lg:pb-0",
         )}
       >
-        {Array.from({ length: count }, (_, i) => i + 1).map((k) => {
+        {episodeNumbers(count, episode).map((k) => {
           const active = k === episode
           return (
             <Link
@@ -324,4 +324,11 @@ export function EpisodeSideSkeleton() {
       <Skeleton className="h-48 w-full rounded-xl" />
     </div>
   )
+}
+
+/** 选集列表：1..count，再加上当前集（若为小数集如 12.5 或第 0 集），按顺序排列 */
+function episodeNumbers(count: number, current: number) {
+  const list = Array.from({ length: Math.floor(count) }, (_, i) => i + 1)
+  if (!list.includes(current)) list.push(current)
+  return list.sort((a, b) => a - b)
 }

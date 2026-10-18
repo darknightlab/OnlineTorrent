@@ -53,7 +53,8 @@ export default function PlaybackPage() {
   const isEpisode = params.n !== undefined
   const provider = params.provider ?? ""
   const subjectId = params.id ?? ""
-  const ep = isEpisode && /^\d+$/.test(params.n!) ? Number(params.n) : NaN
+  // 集数可以是小数（如 12.5 总集篇）或 0（前传/序章）
+  const ep = isEpisode && /^\d+(\.\d+)?$/.test(params.n!) ? Number(params.n) : NaN
   const rawIh = params.ih
   const urlIh = rawIh !== undefined ? normalizeInfohash(rawIh) : null
   const badIndex = params.index !== undefined && !/^\d+$/.test(params.index)
@@ -104,7 +105,7 @@ export default function PlaybackPage() {
 
   // ---- 校验 / 规范化 ----
   if (rawIh !== undefined && (!urlIh || badIndex)) return <StatusPage code="404" title="链接无效" description="播放链接格式有误，请检查 infohash。" />
-  if (isEpisode && !(ep > 0)) return <StatusPage code="404" title="集数无效" description="链接中的集数格式有误。" />
+  if (isEpisode && !(ep >= 0)) return <StatusPage code="404" title="集数无效" description="链接中的集数格式有误。" />
   // 统一为小写 hex（base32 / 大写链接）
   if (urlIh && rawIh !== urlIh) return <Navigate replace to={sourceHref(urlIh, urlIndex)} state={loc.state} />
 
@@ -306,7 +307,7 @@ function useAutoEpisodeSwitch({ ih, playing, onMapped }: { ih: string | null; pl
     if (data && playing !== null) {
       const f = data.files.find((x) => x.index === playing)
       const n = f?.episode
-      if (f?.subject && n !== undefined && Number.isInteger(n) && n > 0) {
+      if (f?.subject && n !== undefined && n >= 0) {
         setStopped(ih)
         onMappedRef.current(episodeSourceHref(f.subject, n, ih, playing))
         return
