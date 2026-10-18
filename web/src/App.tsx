@@ -14,11 +14,26 @@ import MePage from "@/pages/Me"
 import NotFound from "@/pages/NotFound"
 
 // 播放页 / 单集页（webtorrent）与后台按需加载
-const WatchPage = lazy(() => import("@/pages/watch/Watch"))
+const PlaybackPage = lazy(() => import("@/pages/watch/Playback"))
 const LegacyWatchPage = lazy(() => import("@/pages/watch/Watch").then((m) => ({ default: m.LegacyWatchPage })))
-const EpisodePage = lazy(() => import("@/pages/Episode"))
 
 const playerFallback = <PageLoading label="正在加载播放器…" />
+/**
+ * 播放页与单集页的所有路由共用同一个元素：React Router 不给路由元素加 key，同类型元素在这些路由之间导航时
+ * 不会重新挂载，因此切换（如播放页 → 单集页、单集页切换文件 / 资源）时可以保留同一个播放器与 WebTorrent 会话。
+ */
+const playback = (
+  <Suspense fallback={playerFallback}>
+    <PlaybackPage />
+  </Suspense>
+)
+const PLAYBACK_PATHS = [
+  "subject/:provider/:id/episode/:n",
+  "subject/:provider/:id/episode/:n/hash/:ih",
+  "subject/:provider/:id/episode/:n/hash/:ih/file/:index",
+  "watch/hash/:ih",
+  "watch/hash/:ih/file/:index",
+]
 const AdminApp = lazy(() => import("@/pages/admin/AdminApp"))
 
 const queryClient = new QueryClient({
@@ -39,25 +54,11 @@ export default function App() {
             <Route element={<Shell />}>
               <Route index element={<Home />} />
               <Route path="subject/:provider/:id" element={<SubjectPage />} />
-              <Route
-                path="subject/:provider/:id/episode/:n"
-                element={
-                  <Suspense fallback={playerFallback}>
-                    <EpisodePage />
-                  </Suspense>
-                }
-              />
+              {PLAYBACK_PATHS.map((p) => (
+                <Route key={p} path={p} element={playback} />
+              ))}
               <Route path="search" element={<LegacySearchPage />} />
               <Route path="search/:keyword" element={<SearchPage />} />
-              {/* /watch/hash/:ih 与 /watch/hash/:ih/file/:index 共用一个路由，切换文件不重建播放器 */}
-              <Route
-                path="watch/hash/:ih/*"
-                element={
-                  <Suspense fallback={playerFallback}>
-                    <WatchPage />
-                  </Suspense>
-                }
-              />
               {/* 旧链接：/watch?uri=|ih=|t=，无参数为粘贴磁力页 */}
               <Route
                 path="watch"

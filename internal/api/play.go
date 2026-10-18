@@ -77,16 +77,6 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request, in playReq) error 
 		return errRateLimited
 	}
 	ctx := r.Context()
-	// a bare infohash we indexed from bangumi.moe: use the trusted catalogue entry
-	if in.TorrentID == "" && in.Infohash != "" {
-		if ih, ok := magnet.NormalizeInfohash(in.Infohash); ok {
-			if rec, _ := s.St.GetTorrent(ctx, ih); rec == nil || rec.Source != "bangumi.moe" {
-				if src, id, ok := s.Meta.TorrentSource(ctx, ih); ok && src == "bangumi.moe" && reTorrentID.MatchString(id) {
-					in.TorrentID = id
-				}
-			}
-		}
-	}
 	u := userOf(r)
 
 	var t *catalog.Torrent
@@ -96,11 +86,12 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request, in playReq) error 
 		if !reTorrentID.MatchString(in.TorrentID) {
 			return httpx.E(400, "bad_request", "torrent_id 无效")
 		}
-		var err error
-		t, err = s.Cat.Detail(ctx, in.TorrentID)
+		// local catalogue only (filled by the bangumi.moe crawl source)
+		ct, err := s.Meta.CatalogBySourceID(ctx, store.SourceKindBangumiMoe, in.TorrentID)
 		if err != nil {
 			return httpx.E(404, "not_found", "找不到该种子")
 		}
+		t = catalog.FromCatalog(ct)
 	case in.Magnet != "" || in.Infohash != "":
 		src := in.Magnet
 		if src == "" {
@@ -113,6 +104,12 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request, in playReq) error 
 		// user-supplied trackers (tr=) are dropped entirely: we only announce to our own wss
 		// trackers, so qB can't be pointed at arbitrary hosts.
 		userTitle = store.Trunc(m.Name, store.MaxTitleBytes)
+		// a crawled torrent: title, files and trust come from the catalogue
+		if ct, err := s.Meta.CatalogByHash(ctx, m.Infohash); err == nil && ct.SourceKind != "user" && ct.Source != "user" {
+			t = catalog.FromCatalog(ct)
+			userTitle = ""
+			break
+		}
 		// until qB has the real metadata the dn is all we know; the subject stays untrusted
 		// so the user-magnet floor applies (see policy package doc)
 		t = &catalog.Torrent{Infohash: m.Infohash, Title: userTitle, Source: "user"}
@@ -120,7 +117,7 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request, in playReq) error 
 			if rec.Title != "" {
 				t.Title = rec.Title
 			}
-			t.FileList, t.Source, t.ID, t.SizeBytes = rec.Files, rec.Source, rec.SourceID, rec.Size
+			t.FileList, t.Source, t.ID, t.SizeBytes, t.Trusted = rec.Files, rec.Source, rec.SourceID, rec.Size, rec.Trusted
 			if rec.Team != "" {
 				t.Team = &catalog.Ref{Name: rec.Team}
 			}
@@ -148,9 +145,9 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request, in playReq) error 
 	if t.Team != nil {
 		team = t.Team.Name
 	}
-	rec := store.TorrentRecord{Infohash: t.Infohash, Size: t.SizeBytes, Files: t.FileList, Team: team, Tags: tags, Source: t.Source, SourceID: t.ID}
-	if t.Source == "bangumi.moe" {
-		rec.Title = t.Title
+	rec := store.TorrentRecord{Infohash: t.Infohash, Size: t.SizeBytes, Files: t.FileList, Team: team, Tags: tags, Source: t.Source, SourceID: t.ID, Trusted: t.Trusted}
+	if t.Source != "user" {
+		rec.Title = t.Title // catalogue title (crawl source)
 	} else {
 		rec.UserTitle = userTitle
 	}
@@ -175,6 +172,18 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request, in playReq) error 
 	}
 	httpx.JSON(w, 200, resp)
 	return nil
+}
+
+// markSeeded remembers a seed request (GET /torrents/hash/{ih} reports "pending").
+func (s *Server) markSeeded(ih string) {
+	now := time.Now()
+	s.seededAt.Range(func(k, v any) bool {
+		if now.Sub(v.(time.Time)) > seedPendingFor {
+			s.seededAt.Delete(k)
+		}
+		return true
+	})
+	s.seededAt.Store(ih, now)
 }
 
 // startPostCheck runs postCheck in the background, at most once per infohash at a time and
@@ -267,7 +276,7 @@ func (s *Server) recordedSubject(r *http.Request) (*store.TorrentRecord, policy.
 	if title == "" {
 		title = rec.UserTitle
 	}
-	sub := policy.Subject{Infohash: ih, Title: title, Files: rec.Files, Team: rec.Team, Tags: rec.Tags, Trusted: rec.Source == "bangumi.moe"}
+	sub := policy.Subject{Infohash: ih, Title: title, Files: rec.Files, Team: rec.Team, Tags: rec.Tags, Trusted: rec.Trusted}
 	d, err := s.Policy.Decide(r.Context(), userOf(r), sub)
 	if err != nil {
 		return nil, sub, err
@@ -301,9 +310,15 @@ func (s *Server) seed(w http.ResponseWriter, r *http.Request) error {
 	}
 	u := userOf(r)
 	s.St.AddPlay(r.Context(), store.Play{Infohash: rec.Infohash, Title: sub.Title, IP: httpx.ClientIP(r), Action: "seed", SeededBy: strings.Join(push.SeededBy, ",")}, uid(u))
-	// user-submitted torrents: re-check once qB has the real file list
-	if rec.Source != "bangumi.moe" && len(rec.Files) == 0 && len(push.SeededBy) > 0 {
-		s.startPostCheck(rec.Infohash, uid(u))
+	// once qB has the metadata: re-check user torrents with the real file list and ingest
+	// + scrape every torrent the catalogue doesn't fully know yet (watch page polls
+	// GET /torrents/hash/{ih})
+	if len(push.SeededBy) > 0 {
+		status, known := s.Meta.KnownTorrent(r.Context(), rec.Infohash)
+		if (!rec.Trusted && len(rec.Files) == 0) || !known || status != "ready" {
+			s.markSeeded(rec.Infohash)
+			s.startPostCheck(rec.Infohash, uid(u))
+		}
 	}
 	httpx.JSON(w, 200, map[string]any{"seeded_by": push.SeededBy})
 	return nil

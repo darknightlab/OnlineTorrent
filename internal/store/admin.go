@@ -334,6 +334,7 @@ type TorrentRecord struct {
 	Tags      []string
 	Source    string
 	SourceID  string
+	Trusted   bool // from a trusted crawl source (policy: no user-magnet floor)
 }
 
 func (s *Store) UpsertTorrent(ctx context.Context, t TorrentRecord) error {
@@ -354,7 +355,7 @@ func (s *Store) UpsertTorrent(ctx context.Context, t TorrentRecord) error {
 	}
 	files, _ := json.Marshal(cut)
 	tags, _ := json.Marshal(tg)
-	_, err := s.W.ExecContext(ctx, `INSERT INTO torrents(infohash,title,user_title,size_bytes,files_json,team,tags_json,source,source_id,first_seen,last_played) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+	_, err := s.W.ExecContext(ctx, `INSERT INTO torrents(infohash,title,user_title,size_bytes,files_json,team,tags_json,source,source_id,trusted,first_seen,last_played) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(infohash) DO UPDATE SET
 		  title = CASE WHEN excluded.title != '' THEN excluded.title ELSE title END,
 		  user_title = CASE WHEN excluded.user_title != '' THEN excluded.user_title ELSE user_title END,
@@ -364,16 +365,17 @@ func (s *Store) UpsertTorrent(ctx context.Context, t TorrentRecord) error {
 		  tags_json = CASE WHEN excluded.tags_json != '[]' AND excluded.tags_json != 'null' THEN excluded.tags_json ELSE tags_json END,
 		  source = CASE WHEN excluded.source != 'user' THEN excluded.source ELSE source END,
 		  source_id = CASE WHEN excluded.source_id != '' THEN excluded.source_id ELSE source_id END,
+		  trusted = MAX(trusted, excluded.trusted),
 		  last_played = excluded.last_played`,
-		t.Infohash, Trunc(t.Title, MaxTitleBytes), Trunc(t.UserTitle, MaxTitleBytes), t.Size, string(files), Trunc(t.Team, 100), string(tags), t.Source, Trunc(t.SourceID, 64), Now(), Now())
+		t.Infohash, Trunc(t.Title, MaxTitleBytes), Trunc(t.UserTitle, MaxTitleBytes), t.Size, string(files), Trunc(t.Team, 100), string(tags), t.Source, Trunc(t.SourceID, 64), boolInt(t.Trusted), Now(), Now())
 	return err
 }
 
 func (s *Store) GetTorrent(ctx context.Context, ih string) (*TorrentRecord, error) {
 	var t TorrentRecord
 	var files, tags string
-	err := s.R.QueryRowContext(ctx, `SELECT infohash,title,user_title,size_bytes,files_json,team,tags_json,source,source_id FROM torrents WHERE infohash = ?`, ih).
-		Scan(&t.Infohash, &t.Title, &t.UserTitle, &t.Size, &files, &t.Team, &tags, &t.Source, &t.SourceID)
+	err := s.R.QueryRowContext(ctx, `SELECT infohash,title,user_title,size_bytes,files_json,team,tags_json,source,source_id,trusted FROM torrents WHERE infohash = ?`, ih).
+		Scan(&t.Infohash, &t.Title, &t.UserTitle, &t.Size, &files, &t.Team, &tags, &t.Source, &t.SourceID, &t.Trusted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}

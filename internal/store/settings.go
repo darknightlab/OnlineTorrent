@@ -41,6 +41,9 @@ const (
 	KeyMoeBase           = "upstream.bangumi_moe"
 	KeyBangumiDataURL    = "upstream.bangumi_data_url"
 	KeyBgmUserAgent      = "upstream.bgm_user_agent"
+	KeyTMDBKey           = "upstream.tmdb_api_key"
+	KeyCrawlEnabled      = "crawl.enabled"
+	KeyCrawlWorkers      = "crawl.workers"
 	KeyCleanupEnabled    = "qb.cleanup_enabled"
 	KeyQBAddTimeoutSec   = "qb.add_timeout_sec"
 	KeyWebseedEnabled    = "webseed.enabled"
@@ -72,13 +75,18 @@ func SettingsSchema() []SettingSpec {
 		{Key: KeyMaxPushSize, Group: "播放", Type: "number", Label: "可播放种子大小上限（MB）", Description: "超过此大小的种子不会推送给 qB；用户自填磁力在获取元数据后超限会被移除", Default: 8192},
 
 		{Key: KeyDefaultAction, Group: "审核", Type: "enum", Label: "默认权限", Options: []string{"allow", "login", "vip"}, Description: "没有任何规则命中时的权限要求", Default: "allow"},
-		{Key: KeyUserMagnetAction, Group: "审核", Type: "enum", Label: "用户自填磁力最低权限", Options: []string{"allow", "login", "vip"}, Description: "非 bangumi.moe 来源的种子至少需要的权限", Default: "login"},
+		{Key: KeyUserMagnetAction, Group: "审核", Type: "enum", Label: "用户自填磁力最低权限", Options: []string{"allow", "login", "vip"}, Description: "本站数据库里没有、由用户自行粘贴的磁力至少需要的权限（抓取源的种子不受此限制）", Default: "login"},
 		{Key: KeyAutoReviewUnknown, Group: "审核", Type: "bool", Label: "用户自填磁力进入审核队列", Description: "记录用户自行提交的种子，供管理员事后审核", Default: true},
 
 		{Key: KeyUpstreamProxy, Group: "上游", Type: "string", Label: "上游代理", Description: "访问 bangumi.moe / bgm.tv 用的代理，如 socks5://127.0.0.1:1080，留空直连", Default: ""},
 		{Key: KeyMoeBase, Group: "上游", Type: "string", Label: "bangumi.moe 地址", Default: "https://bangumi.moe"},
 		{Key: KeyBangumiDataURL, Group: "上游", Type: "string", Label: "bangumi-data 地址", Default: "https://cdn.jsdelivr.net/npm/bangumi-data@0.3/dist/data.json"},
 		{Key: KeyBgmUserAgent, Group: "上游", Type: "string", Label: "bgm.tv User-Agent", Default: "darknightlab/onlinetorrent (https://www.projectk.org)"},
+
+		{Key: KeyTMDBKey, Group: "上游", Type: "secret", Label: "TMDB API Key", Description: "可选；本地搜不到番剧时也查询 TMDB（v3 API Key 或 v4 读取令牌），留空只查 bgm.tv", Default: ""},
+
+		{Key: KeyCrawlEnabled, Group: "抓取", Type: "bool", Label: "启用后台抓取", Description: "总开关：按「抓取源」定时抓取 RSS / bangumi.moe 并入库；关闭后「立即抓取」仍可用", Default: true},
+		{Key: KeyCrawlWorkers, Group: "抓取", Type: "number", Label: "抓取并发数", Description: "同时抓取的源数量（同一站点始终串行）", Default: 2},
 
 		{Key: KeyCleanupEnabled, Group: "qBittorrent", Type: "bool", Label: "自动清理做种完成的种子", Description: "删除本站分类下已达到分享限制而停止的种子（含文件）", Default: true},
 		{Key: KeyQBAddTimeoutSec, Group: "qBittorrent", Type: "number", Label: "推送超时（秒）", Default: 8},

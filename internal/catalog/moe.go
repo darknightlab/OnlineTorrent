@@ -1,5 +1,6 @@
-// Package catalog aggregates upstream sources (bangumi.moe, bangumi-data via meta)
-// into the torrent listings and the airing schedule served to the frontend.
+// Package catalog builds the airing schedule and torrent listings served to the frontend
+// from the local catalogue (meta), plus bangumi.moe helpers used by the crawler (page
+// parsing, team/tag names, covers) and on-demand external subject search.
 package catalog
 
 import (
@@ -9,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -147,30 +147,6 @@ type moePage struct {
 	PageCount int          `json:"page_count"`
 	Count     int          `json:"count"`
 	Torrents  []moeTorrent `json:"torrents"`
-}
-
-func (c *moeClient) latest(ctx context.Context, page int) (moePage, error) {
-	var p moePage
-	err := c.get(ctx, "/api/torrent/page/"+strconv.Itoa(page), &p)
-	return p, err
-}
-
-func (c *moeClient) search(ctx context.Context, q string, page int) (moePage, error) {
-	var p moePage
-	err := c.get(ctx, "/api/v2/torrent/search?query="+url.QueryEscape(q)+"&p="+strconv.Itoa(page), &p)
-	return p, err
-}
-
-func (c *moeClient) byTag(ctx context.Context, tagIDs []string, page int) (moePage, error) {
-	var p moePage
-	err := c.post(ctx, "/api/torrent/search", map[string]any{"tag_id": tagIDs, "p": page}, &p)
-	return p, err
-}
-
-func (c *moeClient) detail(ctx context.Context, id string) (moeTorrent, error) {
-	var t moeTorrent
-	err := c.get(ctx, "/api/v2/torrent/"+url.PathEscape(id), &t)
-	return t, err
 }
 
 func (c *moeClient) teams(ctx context.Context, ids []string) ([]struct {

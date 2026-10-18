@@ -9,7 +9,14 @@ import type {
   ListLike,
   LoginRequest,
   MeResponse,
-  Paged,
+  MetadataJob,
+  SearchResponse,
+  Source,
+  SourceInput,
+  SourceProbeRequest,
+  SourceProbeResult,
+  SourceSchema,
+  TorrentStatus,
   PermissionsResponse,
   PermissionsUpdate,
   SeedResponse,
@@ -33,7 +40,6 @@ import type {
   Site,
   SubjectResponse,
   EpisodeResponse,
-  Torrent,
 } from "./types"
 
 export const API_BASE = "/api/v1"
@@ -140,10 +146,14 @@ export const api = {
   /** 单集所有已知文件，items[0] 为自动推荐 */
   episode: (provider: string, id: string, n: number | string, s?: AbortSignal) =>
     get<EpisodeResponse>(`/subjects/${seg(provider)}/${seg(id)}/episodes/${seg(String(n))}`, s),
-  search: (q: string, page = 1, s?: AbortSignal) => get<Paged<Torrent>>(`/torrents/search${qs({ q, page })}`, s),
+  /** 搜索：番剧（仅第 1 页）+ 种子 */
+  search: (keyword: string, page = 1, s?: AbortSignal) =>
+    get<SearchResponse>(`/search/${seg(keyword)}${qs({ page: page > 1 ? page : undefined })}`, s),
+  /** 种子收录状态与逐文件刮削结果（做种后轮询） */
+  torrentStatus: (ih: string, s?: AbortSignal) => get<TorrentStatus>(`/torrents/hash/${seg(ih)}`, s),
   /** 按 infohash 打开种子（策略判定 + 磁力） */
   playHash: (ih: string, s?: AbortSignal) => request<PlayResponse>("POST", `/torrents/hash/${seg(ih)}/play`, undefined, s),
-  /** 按 bangumi.moe ID 打开种子（受信元数据） */
+  /** 按 bangumi.moe ID 打开种子（本地库中由该抓取源收录的种子） */
   playMoe: (id: string, s?: AbortSignal) => request<PlayResponse>("POST", `/torrents/moe/${seg(id)}/play`, undefined, s),
   report: (ih: string, b: ReportRequest) => post<Record<string, never>>(`/torrents/hash/${seg(ih)}/report`, b),
   /** 请求服务器下载做种（权限 PERM.seed） */
@@ -183,6 +193,15 @@ export const api = {
 
     reviews: (status = "pending") => get<ListLike<Review>>(`/admin/reviews${qs({ status })}`),
     decideReview: (id: number, b: ReviewDecision) => put<Review>(`/admin/reviews/id/${id}`, b),
+
+    sources: () => get<{ items: Source[] }>("/admin/sources"),
+    sourceSchema: () => get<SourceSchema>("/admin/sources/schema"),
+    probeSource: (b: SourceProbeRequest) => post<SourceProbeResult>("/admin/sources/probe", b),
+    createSource: (b: SourceInput) => post<Source>("/admin/sources", b),
+    updateSource: (id: number, b: Partial<SourceInput>) => put<Source>(`/admin/sources/id/${id}`, b),
+    deleteSource: (id: number) => del<{ items: Source[] }>(`/admin/sources/id/${id}`),
+    runSource: (id: number) => post<Source>(`/admin/sources/id/${id}/run`),
+    metadataJobs: () => get<{ items: MetadataJob[] }>("/admin/metadata-jobs"),
 
     plays: (page: number) => get<ListLike<PlayRecord>>(`/admin/plays${qs({ page })}`),
     audit: (page: number) => get<ListLike<AuditEntry>>(`/admin/audit${qs({ page })}`),

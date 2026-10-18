@@ -1,4 +1,4 @@
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { api } from "./api"
 import type { MeResponse, Site } from "./types"
 
@@ -8,7 +8,8 @@ export const qk = {
   schedule: ["schedule"] as const,
   subject: (provider: string, id: string) => ["subject", provider, id] as const,
   episode: (provider: string, id: string, n: number) => ["subject", provider, id, "episode", n] as const,
-  search: (q: string, page: number) => ["torrents", "search", q, page] as const,
+  search: (q: string, page: number) => ["search", q, page] as const,
+  torrentStatus: (ih: string) => ["torrents", "hash", ih, "status"] as const,
 }
 
 /** 后端未就绪时的兜底站点配置（保留旧站 tracker / STUN） */
@@ -54,7 +55,8 @@ export const PERM = {
   schedule: "GET /api/v1/schedule",
   subject: "GET /api/v1/subjects/{provider}/{id}",
   episode: "GET /api/v1/subjects/{provider}/{id}/episodes/{n}",
-  search: "GET /api/v1/torrents/search",
+  search: "GET /api/v1/search/{keyword}",
+  torrentStatus: "GET /api/v1/torrents/hash/{ih}",
   playHash: "POST /api/v1/torrents/hash/{ih}/play",
   playMoe: "POST /api/v1/torrents/moe/{id}/play",
   seed: "POST /api/v1/torrents/hash/{ih}/seed",
@@ -125,6 +127,8 @@ export function useSearch(q: string, page: number) {
     queryKey: qk.search(q, page),
     queryFn: ({ signal }) => api.search(q, page, signal),
     enabled: q.trim().length > 0,
-    placeholderData: keepPreviousData,
+    // 翻页时保留上一页；换关键词时显示骨架
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === q ? prev : undefined),
+    staleTime: 30_000,
   })
 }

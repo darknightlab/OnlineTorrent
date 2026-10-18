@@ -19,6 +19,7 @@ import (
 
 	"github.com/darknightlab/onlinetorrent/internal/api"
 	"github.com/darknightlab/onlinetorrent/internal/catalog"
+	"github.com/darknightlab/onlinetorrent/internal/crawl"
 	"github.com/darknightlab/onlinetorrent/internal/meta"
 	"github.com/darknightlab/onlinetorrent/internal/policy"
 	"github.com/darknightlab/onlinetorrent/internal/qb"
@@ -82,13 +83,17 @@ func serve(args []string) error {
 	cat := catalog.New(st, ms, log)
 	cat.Run(ctx)
 
+	// crawl sources (RSS / bangumi.moe) + the qB metadata queue fill the local catalogue
+	cr := crawl.New(st, ms, cat, pool, log)
+	wg.Go(func() { cr.Run(ctx) })
+
 	wg.Go(func() { maintenance(ctx, st, log) })
 
 	if n, _ := st.UserCount(ctx); n == 0 {
 		log.Warn("no users yet; create an admin with: otd user -db <db> -username admin -password <pw> -role admin")
 	}
 
-	srv := &api.Server{St: st, Meta: ms, Cat: cat, Pool: pool, Policy: policy.New(st), Log: log, WebFS: web.FS(), BaseCtx: ctx}
+	srv := &api.Server{St: st, Meta: ms, Cat: cat, Crawl: cr, Pool: pool, Policy: policy.New(st), Log: log, WebFS: web.FS(), BaseCtx: ctx}
 	hs := &http.Server{Addr: *addr, Handler: srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
 	wg.Go(func() { srv.RunRecheck(ctx) })
@@ -113,6 +118,7 @@ func serve(args []string) error {
 	<-shutdownDone
 	wg.Wait()
 	cat.Wait()
+	cr.Wait()
 	srv.Wait()
 	log.Info("shutdown complete")
 	return serveErr

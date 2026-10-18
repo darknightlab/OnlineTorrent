@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ncruces/go-sqlite3/driver"
+	"github.com/ncruces/go-sqlite3/ext/fts5"
 )
 
 // ErrNotFound is returned when a row does not exist.
@@ -66,7 +67,8 @@ func dsn(path string, pragmas ...string) string {
 
 // OpenDB opens a SQLite file with the writer/reader split and applies migrations.
 func OpenDB(path string, migrations []string) (w, r *sql.DB, err error) {
-	w, err = driver.Open(dsn(path)+"&_txlock=immediate", nil)
+	// every connection gets the fts5 extension (trigram full-text search in meta.db)
+	w, err = driver.Open(dsn(path)+"&_txlock=immediate", fts5.Register)
 	if err != nil {
 		return nil, nil, fmt.Errorf("open %s: %w", path, err)
 	}
@@ -76,7 +78,7 @@ func OpenDB(path string, migrations []string) (w, r *sql.DB, err error) {
 		w.Close()
 		return nil, nil, err
 	}
-	r, err = driver.Open(dsn(path, "query_only(1)"), nil)
+	r, err = driver.Open(dsn(path, "query_only(1)"), fts5.Register)
 	if err != nil {
 		w.Close()
 		return nil, nil, err

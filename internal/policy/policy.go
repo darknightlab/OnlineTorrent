@@ -58,7 +58,7 @@ type Subject struct {
 	Files    []string
 	Team     string
 	Tags     []string
-	Trusted  bool // from a catalogue we index (bangumi.moe), not a user-pasted magnet
+	Trusted  bool // from a crawl source marked trusted (e.g. bangumi.moe), not a user-pasted magnet
 }
 
 // Decision is the outcome.

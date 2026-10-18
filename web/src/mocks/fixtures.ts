@@ -9,8 +9,11 @@ import type {
   InviteCode,
   PermissionItem,
   PlayRecord,
+  MetadataJob,
   QBServer,
   RedeemCode,
+  Source,
+  SourceSchema,
   Review,
   Rule,
   ScheduleItem,
@@ -128,12 +131,16 @@ export function toScheduleItem(a: Subject): ScheduleItem {
   return rest
 }
 
+/** 种子来源轮换（抓取源名称；"user" 为用户提交） */
+const SOURCES_ROT = ["bangumi.moe", "蜜柑计划", "Nyaa", "bangumi.moe", "user"]
+
 export function buildTorrents(now = Date.now()): Torrent[] {
   const real = seed.torrents.map((t, i): Torrent => {
     const size = parseSize(t.size)
     const acc = accessFor(i + 3)
+    const src = SOURCES_ROT[i % SOURCES_ROT.length]
     return {
-      id: t.id,
+      id: src === "bangumi.moe" ? t.id : `ih:${t.infohash}`,
       infohash: t.infohash,
       title: t.title,
       size_bytes: size,
@@ -141,13 +148,14 @@ export function buildTorrents(now = Date.now()): Torrent[] {
       team: t.team,
       tags: [],
       published_at: new Date(now - (i * 23 + 4) * 60_000).toISOString(),
-      source: "bangumi.moe",
+      source: SOURCES_ROT[i % SOURCES_ROT.length],
       access: size > 2 * 1024 ** 3 && acc.action === "allow" ? { action: "vip", reason: "超过 2GB 的资源仅限大会员" } : acc,
     }
   })
   const extra: Torrent[] = Array.from({ length: 60 }, (_, i) => {
     const t = real[i % real.length]
-    return { ...t, id: `old${i}${t.id.slice(5)}`, infohash: hexHash(500 + i), published_at: new Date(now - (12 + i * 1.7) * HOUR).toISOString() }
+    const infohash = hexHash(500 + i)
+    return { ...t, id: t.id.startsWith("ih:") ? `ih:${infohash}` : `old${i}${t.id.slice(5)}`, infohash, published_at: new Date(now - (12 + i * 1.7) * HOUR).toISOString() }
   })
   return [...real, ...extra]
 }
@@ -180,8 +188,10 @@ export const settings: SettingItem[] = [
   { key: "policy.guest_can_play", group: "策略", type: "bool", label: "允许游客播放", value: true },
   { key: "qb.cleanup_after_hours", group: "qB 池", type: "number", label: "做种清理时间（小时）", value: 72 },
   { key: "qb.watchdog_enabled", group: "qB 池", type: "bool", label: "启用 wss tracker 看门狗", description: "wss tracker 卡在 Updating 时自动 reannounce", value: true },
-  { key: "source.bangumi_moe_proxy", group: "数据源", type: "string", label: "bangumi.moe 代理", description: "例如 socks5://127.0.0.1:1080", value: "" },
-  { key: "source.bgm_token", group: "数据源", type: "secret", label: "bgm.tv Access Token", value: "", is_set: false },
+  { key: "upstream.proxy", group: "上游", type: "string", label: "上游代理", description: "抓取与 bgm.tv / TMDB 请求共用；为空时使用环境变量 HTTPS_PROXY 等", value: "" },
+  { key: "upstream.tmdb_api_key", group: "上游", type: "secret", label: "TMDB API Key", description: "TMDB v3 key 或 v4 读取令牌；设置后搜索时本地无结果会查询 TMDB", value: "", is_set: false },
+  { key: "crawl.enabled", group: "抓取", type: "bool", label: "启用后台抓取", description: "关闭后各抓取源不再定时运行（仍可在「抓取源」页手动抓取）", value: true },
+  { key: "crawl.workers", group: "抓取", type: "number", label: "抓取并发数", description: "同时抓取的源数", value: 2 },
 ]
 
 const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString()
@@ -314,11 +324,14 @@ export const permissionSpecs: Spec[] = [
   spec("GET", "/api/v1/schedule", "configurable", "浏览", "新番时间表", ["guest"]),
   spec("GET", "/api/v1/subjects/{provider}/{id}", "configurable", "浏览", "番剧详情", ["guest"]),
   spec("GET", "/api/v1/subjects/{provider}/{id}/episodes/{n}", "configurable", "浏览", "单集资源列表", ["guest"]),
-  spec("GET", "/api/v1/torrents/search", "configurable", "浏览", "搜索种子", ["guest"]),
+  spec("GET", "/api/v1/search/{keyword}", "configurable", "浏览", "搜索（番剧 + 种子，本地库；本地无番剧时按需查询 bgm.tv / TMDB）", ["guest"]),
+  spec("GET", "/api/v1/torrents/hash/{ih}", "configurable", "浏览", "种子收录状态与文件刮削结果", ["guest"]),
   spec("POST", "/api/v1/torrents/hash/{ih}/play", "configurable", "播放", "打开种子（按 infohash）", ["guest"]),
   spec("POST", "/api/v1/torrents/moe/{id}/play", "configurable", "播放", "打开种子（按 bangumi.moe ID）", ["guest"]),
   spec("POST", "/api/v1/torrents/hash/{ih}/seed", "configurable", "播放", "让服务器下载做种（消耗服务器资源）", ["member"]),
   spec("GET", "/webseed/hash/{ih}/{path...}", "configurable", "播放", "WebSeed 文件下载（HTTP 加速，消耗服务器流量）", ["member"]),
+  spec("GET", "/api/v1/torrents/hash/{ih}/webseed/events", "configurable", "播放", "等待 WebSeed 就绪（服务器推送）", ["member"]),
+  spec("GET", "/api/v1/torrents/hash/{ih}/webseed/events/file/{idx}", "configurable", "播放", "等待指定文件的 WebSeed 就绪（服务器推送）", ["member"]),
   spec("POST", "/api/v1/torrents/hash/{ih}/report", "user", "播放", "举报种子", ["member"]),
   adm("GET", "/stats", "概览 · 查看"),
   adm("GET", "/settings", "站点设置 · 查看"),
@@ -328,6 +341,14 @@ export const permissionSpecs: Spec[] = [
   adm("PUT", "/qb-servers/id/{id}", "qB 服务器 · 修改"),
   adm("DELETE", "/qb-servers/id/{id}", "qB 服务器 · 删除"),
   adm("POST", "/qb-servers/id/{id}/test", "qB 服务器 · 新建/操作"),
+  adm("GET", "/sources", "抓取源 · 查看"),
+  adm("GET", "/sources/schema", "抓取源 · 查看"),
+  adm("POST", "/sources", "抓取源 · 新建/操作"),
+  adm("POST", "/sources/probe", "抓取源 · 新建/操作"),
+  adm("PUT", "/sources/id/{id}", "抓取源 · 修改"),
+  adm("DELETE", "/sources/id/{id}", "抓取源 · 删除"),
+  adm("POST", "/sources/id/{id}/run", "抓取源 · 新建/操作"),
+  adm("GET", "/metadata-jobs", "元数据队列 · 查看"),
   adm("GET", "/users", "用户 · 查看"),
   adm("PUT", "/users/id/{id}", "用户 · 修改"),
   adm("GET", "/invites", "邀请码 · 查看"),
@@ -349,3 +370,68 @@ export const permissionSpecs: Spec[] = [
   { key: "GET /meta/v1/", method: "GET", path: "/meta/v1/…", group: "映射库", label: "读取映射库（作品 / 种子文件映射）", access: "configurable", default_roles: ["guest"] },
   { key: "PUT /meta/v1/", method: "PUT", path: "/meta/v1/torrents/hash/{ih}/files/{idx}", group: "映射库", label: "纠正映射", access: "admin", default_roles: null },
 ]
+
+// ---------- 抓取源 ----------
+
+export const sourceSchema: SourceSchema = {
+  kinds: [
+    { value: "rss", label: "RSS / Atom", description: "通用 RSS/Atom：enclosure/link 中的 .torrent、磁力链接或 nyaa:infoHash", example_url: "https://nyaa.si/?page=rss&c=1_3&f=0" },
+    { value: "bangumi_moe", label: "bangumi.moe", description: "bangumi.moe JSON 最新列表第 1 页（含标签与文件列表，作为强刮削线索）", example_url: "https://bangumi.moe/api/torrent/page/1" },
+  ],
+  min_interval_min: 5,
+  default_interval_min: 15,
+}
+
+function src(id: number, name: string, kind: string, url: string, p: Partial<Source> = {}): Source {
+  const ran = p.last_run_at !== undefined ? p.last_run_at : iso((3 + id * 2) * 60_000)
+  return {
+    id,
+    name,
+    kind,
+    url,
+    interval_min: 15,
+    enabled: true,
+    proxy_disabled: false,
+    last_run_at: ran,
+    last_ok_at: ran,
+    last_items: 75,
+    last_new: 12,
+    last_error: "",
+    fail_count: 0,
+    running: false,
+    next_run_at: ran ? new Date(new Date(ran).getTime() + 15 * 60_000).toISOString() : null,
+    created_at: iso(3 * DAY),
+    updated_at: iso(3 * DAY),
+    ...p,
+  }
+}
+
+export const sources: Source[] = [
+  src(1, "bangumi.moe", "bangumi_moe", "https://bangumi.moe/api/torrent/page/1", { last_items: 30, last_new: 0 }),
+  src(2, "蜜柑计划", "rss", "https://mikanani.me/RSS/Classic", { last_items: 100, last_new: 29 }),
+  src(3, "Nyaa", "rss", "https://nyaa.si/?page=rss&c=1_3&f=0", { last_new: 41 }),
+  src(4, "动漫花园", "rss", "https://share.dmhy.org/topics/rss/sort_id/2/rss.xml", {
+    last_error: "GET https://share.dmhy.org/topics/rss/sort_id/2/rss.xml: dial tcp: i/o timeout",
+    fail_count: 3,
+    last_ok_at: iso(2 * DAY),
+    interval_min: 30,
+  }),
+  src(5, "ACG.RIP", "rss", "https://acg.rip/.xml", { enabled: false, last_run_at: null, last_ok_at: null, next_run_at: null, last_items: 0, last_new: 0 }),
+]
+
+export const metadataJobs: MetadataJob[] = Array.from({ length: 14 }, (_, i): MetadataJob => {
+  const status: MetadataJob["status"] = i === 0 ? "running" : i < 3 ? "pending" : i === 5 ? "failed" : "done"
+  return {
+    infohash: hexHash(700 + i),
+    source_id: [3, 2, 3, 2, 3][i % 5],
+    status,
+    attempts: status === "failed" ? 3 : status === "pending" ? 0 : 1,
+    next_at: iso(-(i + 1) * 30_000),
+    server_id: 1,
+    added: status !== "pending",
+    started_at: status === "pending" ? null : iso(i * 90_000),
+    last_error: status === "failed" ? "获取元数据超时（2 分钟）" : "",
+    created_at: iso(i * 120_000 + 60_000),
+    updated_at: iso(i * 80_000),
+  }
+})

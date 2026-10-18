@@ -143,3 +143,51 @@ func special(m []string) (ParsedName, bool) {
 	}
 	return ParsedName{Kind: "extra", Confidence: 0.5}, true
 }
+
+var (
+	// directories that hold specials/extras in batch releases ("SPs", "CDs", "Scans", "特典映像", …)
+	reSPDir    = regexp.MustCompile(`(?i)^(SPs?|Specials?|OVAs?|OADs?)$`)
+	reExtraDir = regexp.MustCompile(`(?i)^(Extras?|Bonus|Menus?|CMs?|PVs?|Previews?|Trailers?|Samples?|Scans|NC|NCOP|NCED|NCOPED|NC[\s._-]?OP[\s._-]?ED|Others?|Making|Interview)s?$|特典|映像特典|予告|番宣|无字|NCOP|NCED`)
+	// anywhere in the file name: samples and bonus material
+	reExtraName = regexp.MustCompile(`(?i)\bsample\b|特典|映像特典|予告|番宣|\bmaking\b`)
+)
+
+// ClassifyFile decides the kind (episode|sp|op|ed|extra|other) and episode number of one
+// file of a torrent. Non-video files are "other"; NCOP/NCED, PV, CM, Menu, Sample and
+// 特典 material are op/ed/extra (never mapped to an episode). title is the torrent title,
+// used when the torrent has a single video whose own name carries no number.
+func ClassifyFile(p, title string, videos int) ParsedName {
+	if !IsVideo(p) {
+		return ParsedName{Kind: "other"}
+	}
+	clean := strings.ReplaceAll(p, "\\", "/")
+	dirs := strings.Split(clean, "/")
+	name := dirs[len(dirs)-1]
+	dirs = dirs[:len(dirs)-1]
+	r := ParseEpisode(name)
+	if r.Kind == "op" || r.Kind == "ed" || r.Kind == "extra" {
+		return r
+	}
+	if reExtraName.MatchString(name) {
+		return ParsedName{Kind: "extra", Confidence: 0.5}
+	}
+	for _, d := range dirs {
+		d = strings.TrimSpace(d)
+		if reSPDir.MatchString(d) {
+			if r.Kind == "episode" || r.Kind == "sp" {
+				return ParsedName{Kind: "sp", Episode: r.Episode, Confidence: 0.5}
+			}
+			return ParsedName{Kind: "sp", Confidence: 0.4}
+		}
+		if reExtraDir.MatchString(d) {
+			return ParsedName{Kind: "extra", Confidence: 0.5}
+		}
+	}
+	if r.Episode == nil && r.Kind == "other" && videos == 1 && title != "" {
+		t := ParseTitle(title)
+		if t.Kind != "extra" && t.Kind != "op" && t.Kind != "ed" {
+			r = t
+		}
+	}
+	return r
+}

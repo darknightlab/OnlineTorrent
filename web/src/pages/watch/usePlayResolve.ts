@@ -10,7 +10,7 @@ export function usePlayAttempt() {
   return loading ? "pending" : `${user?.id ?? "guest"}:${user?.role ?? ""}:${user?.vip_until ?? ""}`
 }
 
-/** 要打开的种子：按 infohash，或按 bangumi.moe ID（受信元数据，仅旧链接 /watch?t= 使用） */
+/** 要打开的种子：按 infohash，或按 bangumi.moe ID（仅旧链接 /watch?t= 使用） */
 export type PlaySource = { kind: "hash"; ih: string } | { kind: "moe"; id: string }
 
 /** 播放前已知的展示信息（来自列表页 / 单集文件列表），只用于占位，不参与判定 */
@@ -69,14 +69,15 @@ export function usePlayResolve(
   const [skip, setSkip] = useState(0)
   const skipRef = useRef<() => void>(() => {})
   const key = sourceKey(src)
-  const knownAction = known?.action ?? ""
+  // 只有非 allow 的已知结果会影响判定；allow 与未知等价（播放页 ↔ 单集页切换时不重新请求）
+  const knownAction = known && known.action !== "allow" ? known.action : ""
 
   useEffect(() => {
     if (!src) {
       setState({ status: "idle" })
       return
     }
-    if (known && known.action !== "allow" && skip === 0) {
+    if (known && knownAction && skip === 0) {
       setState(gateOf(known.action, known.reason))
       return
     }

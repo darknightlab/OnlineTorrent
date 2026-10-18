@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/darknightlab/onlinetorrent/internal/catalog"
+	"github.com/darknightlab/onlinetorrent/internal/crawl"
 	"github.com/darknightlab/onlinetorrent/internal/httpx"
 	"github.com/darknightlab/onlinetorrent/internal/meta"
 	"github.com/darknightlab/onlinetorrent/internal/policy"
@@ -28,6 +29,7 @@ type Server struct {
 	St      *store.Store
 	Meta    *meta.Store
 	Cat     *catalog.Catalog
+	Crawl   *crawl.Crawler
 	Pool    *qb.Pool
 	Policy  *policy.Engine
 	Log     *slog.Logger
@@ -46,6 +48,8 @@ type Server struct {
 
 	postChecks sync.Map      // infohash -> struct{}: post-checks in flight
 	postSem    chan struct{} // caps concurrent post-checks
+
+	seededAt sync.Map // infohash -> time.Time of the last seed request (status "pending")
 
 	recheckMu sync.Mutex
 	checked   map[string]uint64 // infohash -> policy generation it was last checked at

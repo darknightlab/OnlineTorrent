@@ -31,7 +31,8 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.route(mux, "GET", "/api/v1/schedule", AccessConfigurable, "浏览", "新番时间表", []string{store.RoleGuest}, s.getSchedule)
 	s.route(mux, "GET", "/api/v1/subjects/{provider}/{id}", AccessConfigurable, "浏览", "条目详情（单季）", []string{store.RoleGuest}, s.getSubject)
 	s.route(mux, "GET", "/api/v1/subjects/{provider}/{id}/episodes/{n}", AccessConfigurable, "浏览", "单集资源列表", []string{store.RoleGuest}, s.getEpisode)
-	s.route(mux, "GET", "/api/v1/torrents/search", AccessConfigurable, "浏览", "搜索种子", []string{store.RoleGuest}, s.getSearch)
+	s.route(mux, "GET", "/api/v1/search/{keyword}", AccessConfigurable, "浏览", "搜索（番剧 + 种子，本地库；本地无番剧时按需查询 bgm.tv / TMDB）", []string{store.RoleGuest}, s.getSearch)
+	s.route(mux, "GET", "/api/v1/torrents/hash/{ih}", AccessConfigurable, "浏览", "种子收录状态与文件刮削结果", []string{store.RoleGuest}, s.getTorrentStatus)
 
 	s.route(mux, "POST", "/api/v1/torrents/hash/{ih}/play", AccessConfigurable, "播放", "打开种子（按 infohash）", []string{store.RoleGuest}, s.playHash)
 	s.route(mux, "POST", "/api/v1/torrents/moe/{id}/play", AccessConfigurable, "播放", "打开种子（按 bangumi.moe ID）", []string{store.RoleGuest}, s.playMoe)
@@ -339,28 +340,66 @@ func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// maxCatalogPage caps upstream paging (deep pages are rarely useful and uncached).
+// maxCatalogPage caps paging (deep pages are rarely useful).
 const maxCatalogPage = 50
 
 func catalogPage(r *http.Request) int { return min(httpx.Page(r), maxCatalogPage) }
 
+const (
+	searchPageSize    = 30
+	searchMaxSubjects = 24
+)
+
+type searchResp struct {
+	Subjects  []subjectOut      `json:"subjects"`
+	Torrents  []catalog.Torrent `json:"torrents"`
+	Page      int               `json:"page"`
+	PageCount int               `json:"page_count"`
+	Total     int               `json:"total"`
+}
+
+// GET /api/v1/search/{keyword}?page=
+// subjects (page 1 only): local works by title/Chinese title/aliases; if none, bgm.tv (and
+// TMDB with a key) are asked once and the hits stored as works. torrents: local catalogue
+// titles + file names, newest first.
 func (s *Server) getSearch(w http.ResponseWriter, r *http.Request) error {
 	if err := s.rateLimitN(r, "catalog", 20, 3*time.Second); err != nil {
 		return err
 	}
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	q := strings.TrimSpace(r.PathValue("keyword"))
 	if q == "" {
 		return httpx.E(400, "bad_request", "请输入搜索关键词")
 	}
 	if utf8.RuneCountInString(q) > 100 {
 		return httpx.E(400, "bad_request", "搜索关键词过长（最多 100 字）")
 	}
+	ctx := r.Context()
 	page := catalogPage(r)
-	items, pc, err := s.Cat.Search(r.Context(), q, page)
-	if err != nil {
-		return httpx.E(502, "upstream", "bangumi.moe 暂时无法访问")
+	out := searchResp{Subjects: []subjectOut{}, Page: page}
+	if page == 1 {
+		works, err := s.Meta.SearchWorksFTS(ctx, q, searchMaxSubjects)
+		if err != nil {
+			return err
+		}
+		if len(works) == 0 && utf8.RuneCountInString(q) >= 2 && s.limiter.allow("extsearch:"+ipKey(r), 5, 30*time.Second) {
+			if ext, err := s.Cat.SearchSubjectsExternal(ctx, q); err == nil {
+				works = ext
+			} else {
+				s.Log.Info("external subject search failed", "q", q, "err", err)
+			}
+		}
+		for _, wk := range works {
+			out.Subjects = append(out.Subjects, s.subjectCard(r, wk, false))
+		}
 	}
-	httpx.JSON(w, 200, map[string]any{"page": page, "page_count": pc, "items": s.withAccess(r, items)})
+	list, total, err := s.Meta.SearchTorrents(ctx, q, (page-1)*searchPageSize, searchPageSize)
+	if err != nil {
+		return err
+	}
+	out.Total = total
+	out.PageCount = min(max(1, (total+searchPageSize-1)/searchPageSize), maxCatalogPage)
+	out.Torrents = s.withAccess(r, catalog.FromCatalogList(list))
+	httpx.JSON(w, 200, out)
 	return nil
 }
 

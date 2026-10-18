@@ -37,7 +37,13 @@ func (s *Server) resolveSubject(r *http.Request) (*meta.Work, error) {
 }
 
 func (s *Server) subjectView(r *http.Request, work *meta.Work) subjectOut {
-	if work.Summary == "" && work.External["bgm"] != "" {
+	return s.subjectCard(r, work, true)
+}
+
+// subjectCard builds the Subject JSON; detail fetches a missing summary from bgm.tv once
+// (subject pages only, never for search result lists).
+func (s *Server) subjectCard(r *http.Request, work *meta.Work, detail bool) subjectOut {
+	if detail && work.Summary == "" && work.External["bgm"] != "" {
 		s.fetchBgmDetail(r.Context(), work)
 	}
 	item := s.Cat.ScheduleItemByKey(work.Key) // includes latest torrent / episode
@@ -58,26 +64,20 @@ func (s *Server) subjectView(r *http.Request, work *meta.Work) subjectOut {
 	return subjectOut{ScheduleItem: item, Summary: work.Summary, Type: work.Type, Official: work.Official, External: work.External, Tags: []string{}}
 }
 
+const subjectTorrentLimit = 100
+
 // GET /api/v1/subjects/{provider}/{id}
 func (s *Server) getSubject(w http.ResponseWriter, r *http.Request) error {
 	work, err := s.resolveSubject(r)
 	if err != nil {
 		return err
 	}
-	var list []*catalog.Torrent
-	if id := work.External["bangumi_moe"]; id != "" {
-		list, _, err = s.Cat.ByTag(r.Context(), id, 1)
-	} else {
-		q := work.TitleCN
-		if q == "" {
-			q = work.Title
-		}
-		list, _, err = s.Cat.Search(r.Context(), q, 1)
-	}
+	// torrents with a file mapped to this work, from the local catalogue (newest first)
+	rows, err := s.Meta.TorrentsByWork(r.Context(), work.Key, subjectTorrentLimit, true)
 	if err != nil {
-		list = nil
+		return err
 	}
-	httpx.JSON(w, 200, map[string]any{"subject": s.subjectView(r, work), "torrents": s.withAccess(r, list)})
+	httpx.JSON(w, 200, map[string]any{"subject": s.subjectView(r, work), "torrents": s.withAccess(r, catalog.FromCatalogList(rows))})
 	return nil
 }
 
@@ -117,7 +117,7 @@ func (s *Server) getEpisode(w http.ResponseWriter, r *http.Request) error {
 	}
 	list := make([]scored, 0, len(files))
 	for _, f := range files {
-		sub := policy.Subject{Infohash: f.Infohash, Title: f.Title, Files: []string{f.Path}, Team: f.Team, Trusted: f.SourceID != ""}
+		sub := policy.Subject{Infohash: f.Infohash, Title: f.Title, Files: []string{f.Path}, Team: f.Team, Trusted: f.Trusted}
 		d, err := s.Policy.Decide(r.Context(), u, sub)
 		if err != nil {
 			return err

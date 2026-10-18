@@ -67,7 +67,7 @@ export interface NamedRef {
 }
 
 export interface Torrent {
-  /** bangumi.moe 的 _id，或 ih:{infohash} */
+  /** 不透明 ID（某些来源的条目 ID，或 ih:{infohash}）；页面链接一律用 infohash */
   id: string
   infohash: string
   title: string
@@ -76,7 +76,8 @@ export interface Torrent {
   team: NamedRef | null
   tags: NamedRef[]
   published_at: string
-  source: "bangumi.moe" | "user"
+  /** 抓取源名称（后台可改名）或 "user"（用户提交的磁力） */
+  source: string
   access: Access
 }
 
@@ -141,7 +142,10 @@ export interface EpisodeFile {
   torrent_title: string
   team: string
   published_at: string
+  /** 来源条目 ID（可空） */
   source_id: string
+  /** 抓取源名称或 "user" */
+  source?: string
   confidence: number
   access: Access
 }
@@ -157,6 +161,38 @@ export interface Paged<T> {
   page: number
   page_count: number
   items: T[]
+}
+
+/** GET /search/{keyword}?page= */
+export interface SearchResponse {
+  /** 只在第 1 页返回（其余页为 []） */
+  subjects: Subject[]
+  torrents: Torrent[]
+  page: number
+  page_count: number
+  /** 匹配的种子总数 */
+  total: number
+}
+
+export type TorrentFileKind = "episode" | "sp" | "op" | "ed" | "extra" | "other"
+
+/** GET /torrents/hash/{ih} 的单个文件 */
+export interface TorrentStatusFile {
+  index: number
+  path: string
+  size_bytes: number
+  kind: TorrentFileKind
+  /** 未刮削到条目时省略 */
+  subject?: { subject_id: number; bgm_id?: number | null; title: string; title_cn: string }
+  /** 仅在有 subject 时给出；可为小数（12.5） */
+  episode?: number
+}
+
+/** GET /torrents/hash/{ih}：收录状态与逐文件刮削结果 */
+export interface TorrentStatus {
+  status: "unknown" | "pending" | "ready"
+  title: string
+  files: TorrentStatusFile[]
 }
 
 export interface PlayMeta {
@@ -375,6 +411,77 @@ export interface AuditEntry {
   target: string
   detail: string
   created_at: string
+}
+
+// ---------- 抓取源 ----------
+
+export type SourceKind = "rss" | "bangumi_moe" | (string & {})
+
+export interface Source {
+  id: number
+  name: string
+  kind: SourceKind
+  url: string
+  interval_min: number
+  enabled: boolean
+  /** true = 不走上游代理，直连 */
+  proxy_disabled: boolean
+  last_run_at: string | null
+  last_ok_at: string | null
+  /** 上次成功抓取时 Feed 中的条目数 */
+  last_items: number
+  /** 上次新收录的种子数 */
+  last_new: number
+  last_error: string
+  /** 连续失败次数（间隔 × 2^n 退避） */
+  fail_count: number
+  running: boolean
+  next_run_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface SourceInput {
+  name?: string
+  kind?: SourceKind
+  url: string
+  interval_min?: number
+  enabled?: boolean
+  proxy_disabled?: boolean
+}
+
+export interface SourceSchema {
+  kinds: { value: string; label: string; description: string; example_url: string }[]
+  min_interval_min: number
+  default_interval_min: number
+}
+
+export interface SourceProbeRequest {
+  kind?: SourceKind
+  url: string
+  proxy_disabled?: boolean
+}
+
+export interface SourceProbeResult {
+  title: string
+  link: string
+  format: string
+  item_count: number
+  samples: { title: string; url?: string; published_at?: string; infohash?: string; torrent_url?: string; magnet: boolean }[]
+}
+
+export interface MetadataJob {
+  infohash: string
+  source_id: number
+  status: "pending" | "running" | "done" | "failed"
+  attempts: number
+  next_at: string | null
+  server_id: number
+  added: boolean
+  started_at: string | null
+  last_error: string
+  created_at: string
+  updated_at: string
 }
 
 export interface AdminStats {

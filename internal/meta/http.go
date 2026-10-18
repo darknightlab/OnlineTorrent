@@ -80,7 +80,7 @@ func (s *Store) Handler(authz Authz) http.Handler {
 			httpx.Fail(w, httpx.E(400, "bad_request", "需要 q 参数（≤100 字）"))
 			return
 		}
-		ws, err := s.SearchWorks(r.Context(), qs, 50)
+		ws, err := s.SearchWorksFTS(r.Context(), qs, 50)
 		if err != nil {
 			httpx.Fail(w, err)
 			return

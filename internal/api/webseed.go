@@ -54,7 +54,7 @@ func (s *Server) webseedAllowed(r *http.Request, ih string) (bool, error) {
 	}
 	sub := policy.Subject{Infohash: ih}
 	if rec != nil {
-		sub.Title, sub.Files, sub.Team, sub.Tags, sub.Trusted = rec.Title, rec.Files, rec.Team, rec.Tags, rec.Source == "bangumi.moe"
+		sub.Title, sub.Files, sub.Team, sub.Tags, sub.Trusted = rec.Title, rec.Files, rec.Team, rec.Tags, rec.Trusted
 		if sub.Title == "" {
 			sub.Title = rec.UserTitle
 		}

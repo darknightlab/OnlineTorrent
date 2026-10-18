@@ -7,6 +7,7 @@ import {
   History,
   KeySquare,
   Menu,
+  Rss,
   ScrollText,
   Server,
   Settings2,
@@ -26,6 +27,7 @@ import Overview from "./Overview"
 import SettingsPage from "./Settings"
 import PermissionsPage from "./Permissions"
 import QBServers from "./QBServers"
+import SourcesPage from "./Sources"
 import UsersPage from "./Users"
 import Codes from "./Codes"
 import Rules from "./Rules"
@@ -37,6 +39,7 @@ const NAV = [
   { to: "/admin/settings", label: "站点设置", icon: Settings2 },
   { to: "/admin/permissions", label: "接口权限", icon: KeySquare },
   { to: "/admin/qb", label: "qB 服务器", icon: Server },
+  { to: "/admin/sources", label: "抓取源", icon: Rss },
   { to: "/admin/users", label: "用户", icon: Users },
   { to: "/admin/codes", label: "邀请码 / 兑换码", icon: Ticket },
   { to: "/admin/rules", label: "策略规则", icon: ShieldCheck },
@@ -113,6 +116,7 @@ export default function AdminApp() {
             <Route path="settings" element={<SettingsPage />} />
             <Route path="permissions" element={<PermissionsPage />} />
             <Route path="qb" element={<QBServers />} />
+            <Route path="sources" element={<SourcesPage />} />
             <Route path="users" element={<UsersPage />} />
             <Route path="codes" element={<Codes />} />
             <Route path="rules" element={<Rules />} />

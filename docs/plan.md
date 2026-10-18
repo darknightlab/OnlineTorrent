@@ -33,7 +33,7 @@
   ┌─────────────┴──────────────┐
   │ otd  (主服务, 单镜像)        │──── qBittorrent 5.3 池 (WebRTC 种子)
   │  - 前端静态 + /api          │
-  │  - 用户/会话/角色            │──── bangumi.moe (缓存代理)
+  │  - 用户/会话/角色            │──── 抓取源 (bangumi.moe / RSS，后台定时抓取入库)
   │  - 策略 policy.Decide()     │
   │  - qB 池/看门狗/清理         │
   │  - 后台管理 /admin          │
@@ -103,30 +103,36 @@
 
 ## 抓取与刮削（2026-10 设计，取代对 bangumi.moe 的实时反代）
 
+> 状态（后端）：1–4 已实现（`internal/crawl`、`internal/store/sources.go`、`internal/meta/catalog.go`、`internal/catalog/external.go`；接口见 [api.md](api.md)「搜索」「抓取源」「GET /torrents/hash/{ih}」）。前端已完成：搜索页（番剧卡片 + 种子列表）、单集页指定资源 `/subject/{p}/{id}/episode/{n}/hash/{ih}[/file/{idx}]`、播放页做种后轮询并无缝切到单集页（`web/src/pages/watch/Playback.tsx`：播放页与单集页路由共用同一组件，Player 以 infohash 为 key，不重建会话）、后台「抓取源」页（含元数据队列）。
+
 原则：不再在用户请求路径上实时请求 bangumi.moe（搜索 / 条目种子 / 时间表最新一集全部读本地库）。种子来自后台抓取源与用户提交的磁力。暂不做历史统一补抓。
 
-### 1. 抓取源（admin 可配，存 SQLite）
-`sources(id, name, kind, url, interval_min, enabled, trusted, etag, last_modified, last_run_at, last_ok_at, last_new, last_error)`
+### 1. 抓取源（admin 可配，存 SQLite）✅
+`sources(id, name, kind, url, interval_min, enabled, etag, last_modified, last_run_at, last_ok_at, last_new, last_error)`
 - kind：`rss`（通用 RSS/Atom：enclosure .torrent / magnet / nyaa:infoHash）、`bangumi_moe`（其 JSON latest 第 1 页，含标签 ID 与文件列表，作为强刮削线索）。
-- 默认：bangumi.moe（受信，启用）、蜜柑 Mikan RSS（启用）、Nyaa 1_3（启用）、动漫花园、ACG.RIP（内置但关闭）。间隔默认 15 分钟，最小 5。
+- 所有抓取源的种子都视为资源站种子（无用户磁力门槛；只有用户自行粘贴的未知磁力有「至少登录」门槛）。
+- 默认：bangumi.moe（启用）、蜜柑 Mikan RSS（启用）、Nyaa 1_3（启用）、动漫花园、ACG.RIP（内置但关闭）。间隔默认 15 分钟，最小 5。
 - 只抓第一页；条件 GET（ETag / If-Modified-Since）；每个 host 串行；UA 标明站点。
-- 后台：列表、增改删、启停、「立即抓取」、显示上次结果/错误。
+- 后台：列表、增改删、启停、「立即抓取」、显示上次结果/错误。✅ 接口 `/api/v1/admin/sources…`（另有 `schema`、`probe` 测试，同 YotsubaNews）；前端页面待做。
+- 实现补充：连续失败指数退避（interval × 2^n，最多 6 小时）；已处理条目记在 `source_items`（30 天），不会重复下载 .torrent；只有全部条目处理完才记住 ETag；直连时只允许公网地址（.torrent 链接来自第三方 Feed，防 SSRF）；`upstream.proxy` 为空时走环境变量代理。
 
-### 2. 入库流水线（每个 infohash 只做一次）
+### 2. 入库流水线（每个 infohash 只做一次）✅
 RSS 条目 → infohash + 文件列表：
 1. 有 .torrent（enclosure/link）：下载（≤5MB、限速）本地解析 bencode → infohash（v1）+ 文件列表。
 2. 只有磁力：进入「qB 元数据队列」：qB 添加时 `stopCondition=MetadataReceived`、分类 `projectk-meta`，轮询文件列表，取到后删除（若该种子同时被做种请求则保留）。并发 3、单个超时 2 分钟，失败重试 3 次；状态存库，重启续跑。
 3. 文件分类：视频扩展名；排除 NCOP/NCED/PV/CM/Menu/Sample/特典；集数解析；kind = episode|sp|op|ed|extra|other。
 4. 刮削：沿用 meta.match（bangumi.moe 标签 → 强匹配；标题/别名模糊匹配），写 torrent_files(work_key, episode, confidence, method)。低可信度进入后台待确认（TODO UI）。
+   - 已实现：torrent_files 现在保存全部文件（非视频 kind=other）；`meta.ClassifyFile` 处理 SPs/特典 目录与 Sample；抓取源 `trusted` 取代原来的「Source == bangumi.moe」受信判断（otd.db torrents.trusted、meta.db torrents.trusted）；会员 seed 后由做种检查（postCheck + 10 分钟复查）入库刮削；元数据队列的种子被做种请求时转入做种分类（`qb.Pool.Push` → adoptMeta）。
+   - 待改进：标题/别名匹配命中率一般（如 Skymoon/ANi 的罗马音标题），可加 FTS 候选 + 相似度打分。
 RSS 信息（标题、发布时间、字幕组、来源条目 ID）作补充；文件列表以种子为准。
 
-### 3. 搜索（本地优先 + 外部按需）
+### 3. 搜索（本地优先 + 外部按需）✅（旧 `GET /api/v1/torrents/search` 已删除）
 `GET /api/v1/search/{keyword}` → `{ subjects: Subject[], torrents: Torrent[], page, page_count }`
 - subjects：本地 works（标题/中文名/别名，FTS5 trigram）。本地无结果时按需查外部：bangumi.tv 搜索 API（type=动画），TMDB（设置了 key 时），结果写入 works 后返回；负结果缓存 1 小时；外部请求限速。
 - torrents：本地 torrents 标题 + 文件名 FTS5（trigram，中日文可搜）。
 - 磁力/infohash 不走搜索：前端直接进入 /watch/hash/{ih}。
 
-### 4. 用户提交的磁力
+### 4. 用户提交的磁力 ✅（后端：`GET /api/v1/torrents/hash/{ih}`；前端轮询与切换 ✅）
 - 游客：只在浏览器 WebTorrent 播放（现状）。
 - 会员（有做种权限）：播放同时 `POST …/seed` 让 qB 下载；后端发现 qB 拿到元数据即入库 + 刮削。
   前端轮询 `GET /api/v1/torrents/hash/{ih}`（`{status: pending|ready, files: [{index,path,size,kind,subject?,episode?}]}`），

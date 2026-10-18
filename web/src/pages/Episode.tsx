@@ -1,132 +1,27 @@
-import { useEffect, useMemo, useRef, useState } from "react"
-import { Link, useLocation, useParams } from "react-router-dom"
+// 单集页（/subject/:provider/:id/episode/:n[/hash/:ih[/file/:index]]）的界面部件；页面逻辑见 watch/Playback.tsx
+import { useEffect, useMemo, useRef } from "react"
+import { Link } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { ChevronRight, Film, HardDrive, Layers, ListVideo, Sparkles } from "lucide-react"
-import { Container } from "@/components/layout/Container"
+import { ChevronRight, Film, HardDrive, Layers, ListVideo, Pin, Sparkles } from "lucide-react"
 import { AccessBadge } from "@/components/badges"
-import { ErrorState } from "@/components/states"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-import { isApiError } from "@/lib/api"
-import { qk, useEpisode, useSiteOrFallback } from "@/lib/queries"
+import { qk } from "@/lib/queries"
 import { displayTitle } from "@/lib/schedule"
 import type { EpisodeFile, EpisodeResponse, Subject } from "@/lib/types"
 import { formatBytes, formatDateTime, timeAgo, WEEKDAYS } from "@/lib/format"
-import { useDocumentTitle, useNow } from "@/lib/hooks"
+import { useNow } from "@/lib/hooks"
 import { cn, episodeHref, subjectHref } from "@/lib/utils"
-import { StatusPage } from "./NotFound"
-import { usePlayAttempt, usePlayResolve } from "./watch/usePlayResolve"
-import { PlayGate } from "./watch/PlayGate"
-import { Player, type PlayerParts } from "./watch/Player"
+import type { PlayerParts } from "./watch/Player"
 
 /** 与 Player 相同的两栏布局（移动端单栏） */
-const GRID = "grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-5 xl:grid-cols-[minmax(0,1fr)_400px]"
+export const GRID = "grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-5 xl:grid-cols-[minmax(0,1fr)_400px]"
 /** 移动端 / 平板全宽（抵消 Container 的左右内边距） */
-const BLEED = "-mx-3 sm:-mx-4 lg:mx-0"
-
-/**
- * /subject/:provider/:id/episode/:n（参照哔哩哔哩番剧播放页）：
- * 播放器 → 标题 / 信息 / 操作 → 选集 → 资源 → 播放详情；桌面端选集与资源在右栏。
- * 自动选资源（items[0]）播放，可切换其他资源；URL 保持不变。
- */
-export default function EpisodePage() {
-  const { provider = "", id = "", n = "" } = useParams()
-  const ep = /^\d+$/.test(n) ? Number(n) : NaN
-  const { data, isPending, error, refetch } = useEpisode(provider, id, ep)
-  useDocumentTitle(data ? `${displayTitle(data.subject)} 第 ${data.episode} 话` : "单集")
-
-  if (!(ep > 0)) return <StatusPage code="404" title="集数无效" description="链接中的集数格式有误。" />
-  if (isPending) return <EpisodeSkeleton />
-  if (error) {
-    if (isApiError(error) && error.status === 404)
-      return <StatusPage code="404" title="番剧不存在" description="该番剧可能尚未收录，或链接有误。" />
-    return (
-      <Container className="py-8">
-        <Card>
-          <ErrorState error={error} onRetry={() => refetch()} />
-        </Card>
-      </Container>
-    )
-  }
-
-  return (
-    <Container className="pb-6 lg:py-5">
-      {data.items.length === 0 ? (
-        <EmptyEpisode data={data} />
-      ) : (
-        // 换集时重置选中的资源
-        <EpisodePlayer key={`${provider}/${id}/${data.episode}`} subject={data.subject} episode={data.episode} items={data.items} />
-      )}
-    </Container>
-  )
-}
-
-function EpisodePlayer({ subject, episode, items }: { subject: Subject; episode: number; items: EpisodeFile[] }) {
-  const loc = useLocation()
-  const here = `${loc.pathname}${loc.search}`
-  const site = useSiteOrFallback()
-  const attempt = usePlayAttempt()
-  const [sel, setSel] = useState(0)
-  const item = items[Math.min(sel, items.length - 1)]
-  const hint = { infohash: item.infohash, title: item.torrent_title, team: item.team || null }
-  const { state, skipWait, retry } = usePlayResolve(
-    { kind: "hash", ih: item.infohash },
-    { hint, trackers: site.trackers, attempt, known: item.access },
-  )
-
-  const select = (i: number) => {
-    setSel(i)
-    window.scrollTo({ top: 0, behavior: "smooth" })
-  }
-  const side = (
-    <>
-      <EpisodeList subject={subject} episode={episode} hasItems />
-      <SourceList items={items} selected={sel} onSelect={select} />
-    </>
-  )
-  const shareURL = () => `${location.origin}${episodeHref(subject, episode)}`
-
-  if (state.status === "ready")
-    return (
-      <Player
-        key={state.magnet}
-        magnet={state.magnet}
-        play={state.play}
-        direct={state.direct}
-        hint={hint}
-        shareURL={shareURL}
-        fileIndex={item.file_index}
-        poster={subject.cover ?? ""}
-        renderInfo={(parts) => <EpisodeInfo subject={subject} episode={episode} parts={parts} />}
-        side={side}
-        collapseDetails
-      />
-    )
-  return (
-    <div className={GRID}>
-      <section className="min-w-0">
-        {state.status !== "idle" && (
-          <PlayGate
-            state={state}
-            title={item.torrent_title}
-            here={here}
-            skipWait={skipWait}
-            retry={retry}
-            docTitle={false}
-            className={cn(BLEED, "max-w-none rounded-none border-x-0 border-t-0 shadow-none lg:rounded-xl lg:border")}
-          />
-        )}
-        <EpisodeInfo subject={subject} episode={episode} />
-      </section>
-      <aside className="min-w-0 space-y-4 lg:space-y-5">{side}</aside>
-    </div>
-  )
-}
+export const BLEED = "-mx-3 sm:-mx-4 lg:mx-0"
 
 /** 无资源：保留选集，资源区给出提示 */
-function EmptyEpisode({ data }: { data: EpisodeResponse }) {
+export function EmptyEpisode({ data }: { data: EpisodeResponse }) {
   const s = data.subject
   return (
     <div className={GRID}>
@@ -167,7 +62,7 @@ function airedCount(s: Subject) {
 }
 
 /** 播放器下方：标题（链接到番剧页）、信息行、操作与统计 */
-function EpisodeInfo({ subject: s, episode, parts }: { subject: Subject; episode: number; parts?: PlayerParts }) {
+export function EpisodeInfo({ subject: s, episode, parts }: { subject: Subject; episode: number; parts?: PlayerParts }) {
   const title = displayTitle(s)
   const total = airedCount(s)
   const weekly = s.weekday >= 0 && s.weekday <= 6 && s.air_time ? `每${WEEKDAYS[s.weekday]} ${s.air_time} 更新` : null
@@ -193,7 +88,7 @@ function EpisodeInfo({ subject: s, episode, parts }: { subject: Subject; episode
 }
 
 /** 移动端为无边框的分区，桌面端为右栏卡片 */
-function SideSection({
+export function SideSection({
   id,
   icon: Icon,
   title,
@@ -221,7 +116,7 @@ function SideSection({
 }
 
 /** 选集：移动端单行横向滚动，桌面端每行 6 个 */
-function EpisodeList({ subject: s, episode, hasItems }: { subject: Subject; episode: number; hasItems: boolean }) {
+export function EpisodeList({ subject: s, episode, hasItems }: { subject: Subject; episode: number; hasItems: boolean }) {
   const qc = useQueryClient()
   const total = airedCount(s)
   const count = Math.max(total, episode)
@@ -305,21 +200,41 @@ function sourceTags(f: EpisodeFile) {
   return tags
 }
 
-function SourceList({ items, selected, onSelect }: { items: EpisodeFile[]; selected: number; onSelect: (i: number) => void }) {
+/** 资源的唯一键 */
+export const sourceKey = (f: Pick<EpisodeFile, "infohash" | "file_index">) => `${f.infohash}:${f.file_index}`
+
+/**
+ * 资源列表。`extra`：URL 指定、但不在本集已知文件中的资源（显示在最上方）。
+ * `selected`：正在播放的资源键（sourceKey）。
+ */
+export function SourceList({
+  items,
+  extra,
+  selected,
+  onSelect,
+}: {
+  items: EpisodeFile[]
+  extra?: EpisodeFile | null
+  selected: string | null
+  onSelect: (f: EpisodeFile) => void
+}) {
   const now = useNow()
+  const list = extra ? [extra, ...items] : items
   return (
-    <SideSection id="sources-title" icon={Layers} title="资源" extra={`${items.length} 个`}>
+    <SideSection id="sources-title" icon={Layers} title="资源" extra={`${list.length} 个`}>
       <ul className={cn(BLEED, "divide-y border-y lg:-mx-4 lg:-mb-4 lg:border-b-0")}>
-        {items.map((f, i) => {
-          const active = i === selected
+        {list.map((f, n) => {
+          const i = extra ? n - 1 : n
+          const pinned = !!extra && n === 0
+          const active = sourceKey(f) === selected
           const blocked = f.access.action === "block"
           const name = baseName(f.path)
           return (
-            <li key={`${f.infohash}:${f.file_index}`} className="relative">
+            <li key={pinned ? "extra" : sourceKey(f)} className="relative">
               {active && <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-primary" />}
               <button
                 type="button"
-                onClick={() => onSelect(i)}
+                onClick={() => onSelect(f)}
                 aria-current={active ? "true" : undefined}
                 className={cn(
                   "flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none sm:px-4",
@@ -330,6 +245,12 @@ function SourceList({ items, selected, onSelect }: { items: EpisodeFile[]; selec
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1 overflow-hidden">
                     {active && <Badge variant="default">播放中</Badge>}
+                    {pinned && (
+                      <Badge variant="accent-soft" title="通过链接指定的资源（尚未收录到本集）">
+                        <Pin />
+                        指定
+                      </Badge>
+                    )}
                     {i === 0 && (
                       <Badge variant="soft" title="服务器自动推荐">
                         <Sparkles />
@@ -353,10 +274,12 @@ function SourceList({ items, selected, onSelect }: { items: EpisodeFile[]; selec
                   </span>
                 </span>
                 <span className="shrink-0 text-right text-[11px] leading-5 tabular-nums text-muted-foreground">
-                  <span className="flex items-center justify-end gap-1">
-                    <HardDrive className="h-3 w-3" />
-                    {formatBytes(f.size_bytes)}
-                  </span>
+                  {f.size_bytes > 0 && (
+                    <span className="flex items-center justify-end gap-1">
+                      <HardDrive className="h-3 w-3" />
+                      {formatBytes(f.size_bytes)}
+                    </span>
+                  )}
                   {f.published_at && (
                     <span className="block" title={formatDateTime(f.published_at)}>
                       {timeAgo(f.published_at, now)}
@@ -372,20 +295,33 @@ function SourceList({ items, selected, onSelect }: { items: EpisodeFile[]; selec
   )
 }
 
-function EpisodeSkeleton() {
+/** 整页骨架（单集数据加载中，尚未开始播放） */
+export function EpisodeSkeleton() {
   return (
-    <Container className="pb-6 lg:py-5">
-      <div className={GRID}>
-        <div className="min-w-0">
-          <Skeleton className={cn(BLEED, "aspect-video rounded-none lg:rounded-xl")} />
-          <Skeleton className="mt-4 h-5 w-2/3" />
-          <Skeleton className="mt-2 h-3.5 w-1/2" />
-        </div>
-        <div className="space-y-4">
-          <Skeleton className="h-24 w-full rounded-xl" />
-          <Skeleton className="h-48 w-full rounded-xl" />
-        </div>
+    <div className={GRID}>
+      <div className="min-w-0">
+        <Skeleton className={cn(BLEED, "aspect-video rounded-none lg:rounded-xl")} />
+        <EpisodeInfoSkeleton />
       </div>
-    </Container>
+      <EpisodeSideSkeleton />
+    </div>
+  )
+}
+
+export function EpisodeInfoSkeleton() {
+  return (
+    <div className="pt-3 lg:pt-4" aria-hidden>
+      <Skeleton className="h-5 w-2/3" />
+      <Skeleton className="mt-2 h-3.5 w-1/2" />
+    </div>
+  )
+}
+
+export function EpisodeSideSkeleton() {
+  return (
+    <div className="space-y-4" aria-hidden>
+      <Skeleton className="h-24 w-full rounded-xl" />
+      <Skeleton className="h-48 w-full rounded-xl" />
+    </div>
   )
 }

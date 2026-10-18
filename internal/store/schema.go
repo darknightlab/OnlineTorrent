@@ -171,4 +171,70 @@ CREATE TABLE route_seeds (
 	seeded_at TEXT NOT NULL
 );
 `,
+	// 4: crawl sources (admin-editable, see internal/crawl), their per-item memory, the qB
+	// metadata queue for magnet-only items, and the generalized "trusted source" flag.
+	`
+CREATE TABLE sources (
+	id             INTEGER PRIMARY KEY,
+	name           TEXT NOT NULL,
+	kind           TEXT NOT NULL CHECK (kind IN ('rss','bangumi_moe')),
+	url            TEXT NOT NULL UNIQUE,
+	interval_min   INTEGER NOT NULL DEFAULT 15,
+	enabled        INTEGER NOT NULL DEFAULT 1,
+	trusted        INTEGER NOT NULL DEFAULT 0,
+	proxy_disabled INTEGER NOT NULL DEFAULT 0,   -- 1 = ignore upstream.proxy, connect directly
+	etag           TEXT NOT NULL DEFAULT '',
+	last_modified  TEXT NOT NULL DEFAULT '',
+	last_run_at    TEXT,
+	last_ok_at     TEXT,
+	last_items     INTEGER NOT NULL DEFAULT 0,   -- items in the feed at the last successful run
+	last_new       INTEGER NOT NULL DEFAULT 0,   -- torrents newly ingested/queued at the last run
+	last_error     TEXT NOT NULL DEFAULT '',
+	fail_count     INTEGER NOT NULL DEFAULT 0,   -- consecutive failures (exponential backoff)
+	created_at     TEXT NOT NULL,
+	updated_at     TEXT NOT NULL
+);
+INSERT INTO sources(name,kind,url,interval_min,enabled,trusted,created_at,updated_at) VALUES
+	('bangumi.moe','bangumi_moe','https://bangumi.moe/api/torrent/page/1',15,1,1,strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+	('蜜柑计划','rss','https://mikanani.me/RSS/Classic',15,1,0,strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+	('Nyaa','rss','https://nyaa.si/?page=rss&c=1_3&f=0',15,1,0,strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+	('动漫花园','rss','https://share.dmhy.org/topics/rss/sort_id/2/rss.xml',15,0,0,strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+	('ACG.RIP','rss','https://acg.rip/.xml',15,0,0,strftime('%Y-%m-%dT%H:%M:%SZ','now'),strftime('%Y-%m-%dT%H:%M:%SZ','now'));
+
+-- feed items already handled (so .torrent files are not downloaded again every run)
+CREATE TABLE source_items (
+	source_id INTEGER NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+	guid      TEXT NOT NULL,
+	infohash  TEXT NOT NULL DEFAULT '',
+	seen_at   TEXT NOT NULL,
+	PRIMARY KEY (source_id, guid)
+);
+CREATE INDEX source_items_seen ON source_items(seen_at);
+
+-- magnet-only items: qB fetches the metadata (category projectk-meta), then we delete it
+CREATE TABLE metadata_jobs (
+	infohash   TEXT PRIMARY KEY,
+	source_id  INTEGER REFERENCES sources(id) ON DELETE SET NULL,
+	status     TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','running','done','failed')),
+	attempts   INTEGER NOT NULL DEFAULT 0,
+	next_at    TEXT NOT NULL,
+	server_id  INTEGER,                         -- qB server the torrent was added to
+	added      INTEGER NOT NULL DEFAULT 0,      -- 1 = we added it to qB (only then may we delete it)
+	started_at TEXT,
+	last_error TEXT NOT NULL DEFAULT '',
+	trackers   TEXT NOT NULL DEFAULT '[]',      -- JSON: udp/http trackers from the feed's magnet
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+CREATE INDEX metadata_jobs_due ON metadata_jobs(status, next_at);
+
+ALTER TABLE torrents ADD COLUMN trusted INTEGER NOT NULL DEFAULT 0;
+UPDATE torrents SET trusted = 1 WHERE source = 'bangumi.moe';
+`,
+	// crawled torrents are all "catalogue" torrents (the user-magnet floor only applies to
+	// user-pasted magnets); the per-source trusted flag is gone.
+	`
+ALTER TABLE sources DROP COLUMN trusted;
+UPDATE torrents SET trusted = 1 WHERE source NOT IN ('', 'user');
+`,
 }

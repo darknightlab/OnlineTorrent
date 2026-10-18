@@ -4,7 +4,7 @@ import { Header } from "./Header"
 import { MobileTabBar } from "./MobileTabBar"
 import { MobileTopBar, mobileTopBarVisible } from "./MobileTopBar"
 import { Footer } from "./Footer"
-import { cn } from "@/lib/utils"
+import { cn, infohashOfPath } from "@/lib/utils"
 export { Container } from "./Container"
 
 export function Shell() {
@@ -15,11 +15,10 @@ export function Shell() {
   const prev = useRef(pathname)
 
   useEffect(() => {
-    // 同一种子内切换文件（/watch/hash/{ih}[/file/{i}]）不回到顶部
-    const same = (p: string) => p.match(/^\/watch\/hash\/([^/]+)/)?.[1]
-    const a = same(prev.current)
+    // 同一种子内切换文件、播放页切到单集页（同一 infohash，播放器不重建）不回到顶部
+    const a = infohashOfPath(prev.current)
     prev.current = pathname
-    if (a && a === same(pathname)) return
+    if (a && a === infohashOfPath(pathname)) return
     window.scrollTo({ top: 0 })
   }, [pathname])
 

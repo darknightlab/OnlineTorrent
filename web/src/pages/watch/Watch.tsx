@@ -1,5 +1,5 @@
 import { useEffect } from "react"
-import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
+import { Navigate, useLocation, useNavigate, useSearchParams } from "react-router-dom"
 import { Magnet } from "lucide-react"
 import { Container } from "@/components/layout/Container"
 import { TorrentSearchBox } from "@/components/TorrentSearchBox"
@@ -20,38 +20,6 @@ export interface WatchLocationState {
 
 export function hintOf(t: Torrent | undefined): PlayHint | undefined {
   return t ? { infohash: t.infohash, title: t.title, team: t.team?.name ?? null } : undefined
-}
-
-/** /watch/hash/:ih 与 /watch/hash/:ih/file/:index（同一路由，切换文件不重新挂载播放器） */
-export default function WatchPage() {
-  const { ih: rawIh = "", "*": rest = "" } = useParams()
-  const loc = useLocation()
-  const navigate = useNavigate()
-  const st = (loc.state as WatchLocationState | null) ?? {}
-  const ih = normalizeInfohash(rawIh)
-  const m = rest.match(/^file\/(\d+)\/?$/)
-  const fileIndex = m ? Number(m[1]) : null
-  const site = useSiteOrFallback()
-  const attempt = usePlayAttempt()
-  const hint = st.torrent?.infohash === ih ? hintOf(st.torrent) : undefined
-  const { state, skipWait, retry } = usePlayResolve(ih ? { kind: "hash", ih } : null, { hint, trackers: site.trackers, attempt, preload: st.preload })
-
-  if (!ih || (rest && !m)) return <StatusPage code="404" title="链接无效" description="播放链接格式有误，请检查 infohash。" />
-  // 统一为小写 hex（base32 / 大写链接）
-  if (rawIh !== ih) return <Navigate replace to={watchHref(ih, fileIndex)} state={loc.state} />
-
-  return (
-    <WatchView
-      state={state}
-      skipWait={skipWait}
-      retry={retry}
-      hint={hint}
-      fileIndex={fileIndex}
-      onFileChange={(i) => {
-        if (i !== fileIndex) navigate(watchHref(ih, i), { replace: true, state: loc.state })
-      }}
-    />
-  )
 }
 
 /** 旧链接 /watch?uri=|ih=|t=；无参数时显示粘贴磁力页 */

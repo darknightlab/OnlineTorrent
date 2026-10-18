@@ -75,7 +75,8 @@ function pickInitial(files: FileSnap[]) {
 }
 
 /**
- * 播放器（播放页与单集页共用）。换种子时由父组件以 key={magnet} 重新挂载。
+ * 播放器（播放页与单集页共用）。换种子时由父组件以 key={infohash} 重新挂载；
+ * 同一种子在播放页 / 单集页之间切换时保持同一实例（见 Playback.tsx），会话与播放进度不变。
  * - fileIndex：要播放的文件（URL /file/{index} 或单集映射）；无效或为空时自动选择
  * - onFileChange：用户在文件列表里切换可播放文件时回调（播放页据此更新 URL）
  */
@@ -87,6 +88,7 @@ export function Player({
   shareURL,
   fileIndex = null,
   onFileChange,
+  onCurrentChange,
   poster: posterProp,
   showMeta = true,
   renderInfo,
@@ -100,6 +102,8 @@ export function Player({
   shareURL: (infohash: string | null, fileIndex: number | null) => string
   fileIndex?: number | null
   onFileChange?: (index: number) => void
+  /** 正在播放的文件变化（含自动选择） */
+  onCurrentChange?: (index: number | null) => void
   /** 封面（不传时按 play.meta 查询条目） */
   poster?: string
   /** 是否在标题下显示条目 / 集数链接 */
@@ -267,6 +271,10 @@ export function Player({
     const f = session?.snapshot()?.files[fileIndex]
     if (f && isPlayable(f.kind)) setCurrent(fileIndex)
   }, [fileIndex, session])
+
+  const onCurrentRef = useRef(onCurrentChange)
+  onCurrentRef.current = onCurrentChange
+  useEffect(() => onCurrentRef.current?.(current), [current])
 
   const file = current !== null ? snap?.files[current] : undefined
   const url = session && current !== null && streaming ? session.fileURL(current) : null

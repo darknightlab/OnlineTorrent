@@ -74,6 +74,50 @@ CREATE INDEX torrent_files_ep ON torrent_files(work_key, episode);
 ALTER TABLE works ADD COLUMN id INTEGER;
 UPDATE works SET id = rowid;
 CREATE UNIQUE INDEX works_id ON works(id);
+`,
+	// 3: torrents become the local catalogue (crawled from sources, no live bangumi.moe
+	// proxying): listing fields, trust flag, pending state (metadata not known yet), a stable
+	// integer seq for the FTS index; trigram full-text search over torrents and works.
+	`
+ALTER TABLE torrents ADD COLUMN seq INTEGER;
+ALTER TABLE torrents ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE torrents ADD COLUMN file_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE torrents ADD COLUMN team_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE torrents ADD COLUMN tags TEXT NOT NULL DEFAULT '[]';        -- JSON [{id,name}] (bangumi.moe tags; ids also hint matching)
+ALTER TABLE torrents ADD COLUMN trusted INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE torrents ADD COLUMN source_kind TEXT NOT NULL DEFAULT '';  -- bangumi_moe|rss|user
+ALTER TABLE torrents ADD COLUMN page_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE torrents ADD COLUMN status TEXT NOT NULL DEFAULT 'ready';  -- ready (files known) | pending
+UPDATE torrents SET seq = rowid;
+UPDATE torrents SET trusted = 1, source_kind = 'bangumi_moe' WHERE source = 'bangumi.moe';
+UPDATE torrents SET source_kind = 'user' WHERE source = 'user';
+UPDATE torrents SET file_count = (SELECT COUNT(*) FROM torrent_files f WHERE f.infohash = torrents.infohash),
+	size_bytes = (SELECT COALESCE(SUM(size_bytes),0) FROM torrent_files f WHERE f.infohash = torrents.infohash);
+CREATE UNIQUE INDEX torrents_seq ON torrents(seq);
+CREATE INDEX torrents_published ON torrents(published_at);
+CREATE INDEX torrents_source_id ON torrents(source_id) WHERE source_id != '';
+CREATE INDEX torrent_files_work ON torrent_files(work_key, infohash);
+
+CREATE VIRTUAL TABLE torrents_fts USING fts5(title, files, tokenize='trigram');
+INSERT INTO torrents_fts(rowid, title, files)
+	SELECT t.seq, t.title, COALESCE((SELECT group_concat(path, char(10)) FROM torrent_files f WHERE f.infohash = t.infohash), '') FROM torrents t;
+
+CREATE VIRTUAL TABLE works_fts USING fts5(title, title_cn, aliases, content='works', content_rowid='id', tokenize='trigram');
+INSERT INTO works_fts(works_fts) VALUES('rebuild');
+CREATE TRIGGER works_fts_ai AFTER INSERT ON works BEGIN
+	INSERT INTO works_fts(rowid, title, title_cn, aliases) VALUES (new.id, new.title, new.title_cn, new.aliases);
+END;
+CREATE TRIGGER works_fts_ad AFTER DELETE ON works BEGIN
+	INSERT INTO works_fts(works_fts, rowid, title, title_cn, aliases) VALUES ('delete', old.id, old.title, old.title_cn, old.aliases);
+END;
+CREATE TRIGGER works_fts_au AFTER UPDATE OF id, title, title_cn, aliases ON works BEGIN
+	INSERT INTO works_fts(works_fts, rowid, title, title_cn, aliases) VALUES ('delete', old.id, old.title, old.title_cn, old.aliases);
+	INSERT INTO works_fts(rowid, title, title_cn, aliases) VALUES (new.id, new.title, new.title_cn, new.aliases);
+END;
+`,
+	// every crawled torrent counts as catalogue (no user-magnet floor)
+	`
+UPDATE torrents SET trusted = 1 WHERE source_kind IN ('rss', 'bangumi_moe');
 `}
 
 // Store is the meta database.
@@ -297,16 +341,28 @@ type FileInput struct {
 	Size  int64
 }
 
-// TorrentInput describes a torrent for matching.
+// TorrentInput describes a torrent for matching / the local catalogue.
 type TorrentInput struct {
 	Infohash    string
 	Title       string
-	Source      string
-	SourceID    string
+	Source      string // crawl source name ("bangumi.moe", "Nyaa", …) or "user"
+	SourceKind  string // bangumi_moe|rss|user
+	SourceID    string // id at the source (bangumi.moe _id, feed guid)
+	Trusted     bool   // from a trusted source (policy: no user-magnet floor)
 	Team        string
+	TeamID      string
 	PublishedAt string
+	PageURL     string
+	Size        int64
+	Tags        []TagRef // display tags (bangumi.moe)
 	MoeTagIDs   []string // bangumi.moe tag ids (any type; bangumi ones resolve to works)
 	Files       []FileInput
+}
+
+// TagRef is a display tag.
+type TagRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 // FileMap is one mapped file.
@@ -335,13 +391,14 @@ type WorkRef struct {
 type TorrentMap struct {
 	Infohash string    `json:"infohash"`
 	Title    string    `json:"title"`
+	Status   string    `json:"status"` // ready | pending (file list not known yet)
 	Files    []FileMap `json:"files"`
 }
 
 // GetTorrentMap returns file mappings for a torrent.
 func (s *Store) GetTorrentMap(ctx context.Context, ih string) (*TorrentMap, error) {
 	tm := &TorrentMap{Infohash: ih, Files: []FileMap{}}
-	if err := s.R.QueryRowContext(ctx, `SELECT title FROM torrents WHERE infohash = ?`, ih).Scan(&tm.Title); err != nil {
+	if err := s.R.QueryRowContext(ctx, `SELECT title, status FROM torrents WHERE infohash = ?`, ih).Scan(&tm.Title, &tm.Status); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, store.ErrNotFound
 		}
@@ -415,14 +472,16 @@ type EpisodeFile struct {
 	Team        string  `json:"team"`
 	PublishedAt string  `json:"published_at"`
 	SourceID    string  `json:"source_id"`
+	Source      string  `json:"source"`
 	Confidence  float64 `json:"confidence"`
+	Trusted     bool    `json:"-"`
 }
 
 // EpisodeFiles lists files mapped to work+episode.
 func (s *Store) EpisodeFiles(ctx context.Context, workKey string, ep float64) ([]EpisodeFile, error) {
-	rows, err := s.R.QueryContext(ctx, `SELECT f.infohash,f.file_index,f.path,f.size_bytes,t.title,t.team,t.published_at,t.source_id,f.confidence
+	rows, err := s.R.QueryContext(ctx, `SELECT f.infohash,f.file_index,f.path,f.size_bytes,t.title,t.team,t.published_at,t.source_id,t.source,f.confidence,t.trusted
 		FROM torrent_files f JOIN torrents t ON t.infohash = f.infohash
-		WHERE f.work_key = ? AND f.episode = ? AND f.status != 'rejected' ORDER BY t.published_at DESC LIMIT 200`, workKey, ep)
+		WHERE f.work_key = ? AND f.episode = ? AND f.kind = 'episode' AND f.status != 'rejected' ORDER BY t.published_at DESC LIMIT 200`, workKey, ep)
 	if err != nil {
 		return nil, err
 	}
@@ -430,7 +489,7 @@ func (s *Store) EpisodeFiles(ctx context.Context, workKey string, ep float64) ([
 	out := []EpisodeFile{}
 	for rows.Next() {
 		var e EpisodeFile
-		if err := rows.Scan(&e.Infohash, &e.Index, &e.Path, &e.Size, &e.Title, &e.Team, &e.PublishedAt, &e.SourceID, &e.Confidence); err != nil {
+		if err := rows.Scan(&e.Infohash, &e.Index, &e.Path, &e.Size, &e.Title, &e.Team, &e.PublishedAt, &e.SourceID, &e.Source, &e.Confidence, &e.Trusted); err != nil {
 			return nil, err
 		}
 		out = append(out, e)

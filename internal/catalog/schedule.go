@@ -149,6 +149,10 @@ func PickLatest(ts []*Torrent, maxBytes int64) (*Torrent, *float64) {
 		if reHiRes.MatchString(t.Title) {
 			sc += 2
 		}
+		// trusted sources skip the user-magnet floor (guests can play them)
+		if t.Trusted {
+			sc += 5
+		}
 		if reCHS.MatchString(t.Title) {
 			sc++
 		}
@@ -222,35 +226,38 @@ func (c *Catalog) rebuildSchedule(ctx context.Context) {
 	// covers: resolve api.bgm.tv image redirects once (they can take ~20s) and store the final URL
 	c.resolveCovers(ctx, works, items)
 
-	// phase 2: latest torrent per anime (bounded concurrency; ByTag is cached for an hour).
-	// Only refetch shows that aired within the last 3 days or have no torrent yet.
-	recent := now.AddDate(0, 0, -3).UTC().Format(time.RFC3339)
-	sem := make(chan struct{}, 3)
-	var wg sync.WaitGroup
-	for _, it := range items {
-		if it.MoeTagID == nil {
-			continue
-		}
-		if it.LatestTorrent != nil && (it.LastAirAt == nil || *it.LastAirAt < recent) {
-			continue
-		}
-		wg.Add(1)
-		sem <- struct{}{}
-		go func() {
-			defer wg.Done()
-			defer func() { <-sem }()
-			cctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			defer cancel()
-			list, _, err := c.ByTag(cctx, *it.MoeTagID, 1)
-			if err != nil {
-				return
-			}
-			it.LatestTorrent, it.LatestEpisode = PickLatest(list, maxBytes)
-		}()
-	}
-	wg.Wait()
+	// phase 2: latest torrent per anime, from the local catalogue
+	c.fillLatest(ctx, items, maxBytes)
 	c.publishSchedule(now, items)
 	c.log.Info("schedule rebuilt", "items", len(items))
+}
+
+// fillLatest picks each item's latest torrent / episode from torrents mapped to the work.
+func (c *Catalog) fillLatest(ctx context.Context, items []*ScheduleItem, maxBytes int64) {
+	for _, it := range items {
+		list, err := c.meta.TorrentsByWork(ctx, it.Key, 40, true)
+		if err != nil {
+			c.log.Warn("schedule: torrents", "work", it.Key, "err", err)
+			continue
+		}
+		if t, ep := PickLatest(FromCatalogList(list), maxBytes); t != nil {
+			it.LatestTorrent, it.LatestEpisode = t, ep
+		}
+	}
+}
+
+// RefreshLatest recomputes the latest torrents of the current schedule (called by the
+// crawler after it ingested new torrents).
+func (c *Catalog) RefreshLatest(ctx context.Context) {
+	c.rebuildMu.Lock()
+	defer c.rebuildMu.Unlock()
+	prev := c.Schedule()
+	if prev == nil {
+		return
+	}
+	items := cloneItems(prev.Items)
+	c.fillLatest(ctx, items, int64(c.st.Num(store.KeyMaxAutoSize))<<20)
+	c.publishSchedule(time.Now(), items)
 }
 
 func cloneItems(items []*ScheduleItem) []*ScheduleItem {

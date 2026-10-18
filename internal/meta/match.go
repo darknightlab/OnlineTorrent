@@ -2,6 +2,7 @@ package meta
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"strings"
 	"time"
@@ -10,11 +11,16 @@ import (
 	"github.com/darknightlab/onlinetorrent/internal/store"
 )
 
-// Match records a torrent and (re)computes automatic mappings for its video files.
-// Rows with status verified/rejected are never overwritten.
+// Match records a torrent with its file list and (re)computes automatic mappings for
+// every file (all files are stored; only video episodes get a work + episode). Rows with
+// status verified/rejected are never overwritten. With no files the torrent is stored as
+// pending (see UpsertPending).
 func (s *Store) Match(ctx context.Context, t TorrentInput) error {
 	if t.Infohash == "" {
 		return nil
+	}
+	if len(t.Files) == 0 {
+		return s.UpsertPending(ctx, t)
 	}
 	now := store.Now()
 	t.Title = store.Trunc(t.Title, store.MaxTitleBytes)
@@ -22,56 +28,145 @@ func (s *Store) Match(ctx context.Context, t TorrentInput) error {
 	if len(t.Files) > store.MaxFilesStored {
 		t.Files = t.Files[:store.MaxFilesStored]
 	}
-	if _, err := s.W.ExecContext(ctx, `INSERT INTO torrents(infohash,title,source,source_id,team,published_at,updated_at) VALUES(?,?,?,?,?,?,?)
-		ON CONFLICT(infohash) DO UPDATE SET title=CASE WHEN excluded.title!='' THEN excluded.title ELSE title END,
-		source=CASE WHEN excluded.source!='' THEN excluded.source ELSE source END,
-		source_id=CASE WHEN excluded.source_id!='' THEN excluded.source_id ELSE source_id END,
-		team=CASE WHEN excluded.team!='' THEN excluded.team ELSE team END,
-		published_at=CASE WHEN excluded.published_at!='' THEN excluded.published_at ELSE published_at END,
-		updated_at=excluded.updated_at`,
-		t.Infohash, t.Title, t.Source, t.SourceID, t.Team, t.PublishedAt, now); err != nil {
+	var total int64
+	for _, f := range t.Files {
+		total += f.Size
+	}
+	if t.Size > total {
+		total = t.Size
+	}
+	if err := s.upsertTorrentRow(ctx, t, "ready", len(t.Files), total, now); err != nil {
 		return err
+	}
+	// matching uses the stored title/tags when the caller only knows the files (qB metadata)
+	if t.Title == "" || len(t.MoeTagIDs) == 0 {
+		if st, ok := s.GetTorrentInput(ctx, t.Infohash); ok {
+			if t.Title == "" {
+				t.Title = st.Title
+			}
+			if len(t.MoeTagIDs) == 0 {
+				t.MoeTagIDs = st.MoeTagIDs
+			}
+		}
 	}
 
 	work, method, wconf := s.resolveWork(ctx, t)
 
-	var videos []FileInput
+	videos := 0
 	for _, f := range t.Files {
 		if IsVideo(f.Path) {
-			videos = append(videos, f)
+			videos++
 		}
 	}
-	for _, f := range videos {
-		p := ParseEpisode(f.Path)
-		if p.Episode == nil && len(videos) == 1 && p.Kind == "other" {
-			p = ParseTitle(t.Title)
-		}
+	for _, f := range t.Files {
+		p := ClassifyFile(f.Path, t.Title, videos)
 		kind := p.Kind
-		if kind == "other" && p.Episode == nil && len(videos) == 1 && work != nil && strings.EqualFold(work.Type, "movie") {
+		if IsVideo(f.Path) && kind == "other" && p.Episode == nil && videos == 1 && work != nil && strings.EqualFold(work.Type, "movie") {
 			one := 1.0
 			kind, p.Episode, p.Confidence = "episode", &one, 0.7
 		}
-		// a video without an episode number stays "other"
+		// only episodes/specials are mapped to the work; other files are just listed
 		var wk any
 		conf := 0.0
-		m := method
-		if work != nil {
+		m := ""
+		var ep *float64
+		if work != nil && (kind == "episode" || kind == "sp") {
 			wk = work.Key
 			conf = wconf
+			m = method
+			ep = p.Episode
 			if p.Episode != nil {
 				conf = wconf * max(p.Confidence, 0.5)
 				m += "+name"
 			}
+		} else if kind == "episode" || kind == "sp" {
+			ep = p.Episode
 		}
 		if _, err := s.W.ExecContext(ctx, `INSERT INTO torrent_files(infohash,file_index,path,size_bytes,kind,work_key,episode,confidence,status,method,updated_at) VALUES(?,?,?,?,?,?,?,?, 'auto', ?, ?)
 			ON CONFLICT(infohash,file_index) DO UPDATE SET path=excluded.path, size_bytes=CASE WHEN excluded.size_bytes>0 THEN excluded.size_bytes ELSE size_bytes END,
 			kind=excluded.kind, work_key=excluded.work_key, episode=excluded.episode, confidence=excluded.confidence, method=excluded.method, updated_at=excluded.updated_at
 			WHERE torrent_files.status = 'auto'`,
-			t.Infohash, f.Index, store.Trunc(f.Path, store.MaxPathBytes), f.Size, kind, wk, p.Episode, conf, m, now); err != nil {
+			t.Infohash, f.Index, store.Trunc(f.Path, store.MaxPathBytes), f.Size, kind, wk, ep, conf, m, now); err != nil {
 			return err
 		}
 	}
-	return nil
+	return s.refreshFTS(ctx, t.Infohash)
+}
+
+// UpsertPending records a torrent whose file list is not known yet (magnet-only feed item
+// waiting for qB metadata). An existing row only gets missing fields filled in.
+func (s *Store) UpsertPending(ctx context.Context, t TorrentInput) error {
+	if t.Infohash == "" {
+		return nil
+	}
+	t.Title = store.Trunc(t.Title, store.MaxTitleBytes)
+	t.Team = store.Trunc(t.Team, 100)
+	if err := s.upsertTorrentRow(ctx, t, "pending", 0, t.Size, store.Now()); err != nil {
+		return err
+	}
+	return s.refreshFTS(ctx, t.Infohash)
+}
+
+// upsertTorrentRow inserts or merges the torrents row. status "pending" never downgrades a
+// ready row; trust only ever goes up; non-empty incoming fields win.
+func (s *Store) upsertTorrentRow(ctx context.Context, t TorrentInput, status string, files int, size int64, now string) error {
+	tags := "[]"
+	if len(t.Tags) > 0 {
+		if len(t.Tags) > 50 {
+			t.Tags = t.Tags[:50]
+		}
+		b, _ := json.Marshal(t.Tags)
+		tags = string(b)
+	}
+	_, err := s.W.ExecContext(ctx, `INSERT INTO torrents(infohash,seq,title,source,source_id,team,team_id,published_at,size_bytes,file_count,tags,trusted,source_kind,page_url,status,updated_at)
+		VALUES(?,(SELECT COALESCE(MAX(seq),0)+1 FROM torrents),?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(infohash) DO UPDATE SET title=CASE WHEN excluded.title!='' AND (title='' OR `+takeSource+`) THEN excluded.title ELSE title END,
+		source=CASE WHEN `+takeSource+` THEN excluded.source ELSE source END,
+		source_kind=CASE WHEN `+takeSource+` THEN excluded.source_kind ELSE source_kind END,
+		source_id=CASE WHEN `+takeSource+` THEN excluded.source_id ELSE source_id END,
+		team=CASE WHEN excluded.team!='' THEN excluded.team ELSE team END,
+		team_id=CASE WHEN excluded.team_id!='' THEN excluded.team_id ELSE team_id END,
+		published_at=CASE WHEN excluded.published_at!='' AND (published_at='' OR excluded.trusted > trusted) THEN excluded.published_at ELSE published_at END,
+		size_bytes=CASE WHEN excluded.size_bytes>0 THEN excluded.size_bytes ELSE size_bytes END,
+		file_count=CASE WHEN excluded.file_count>0 THEN excluded.file_count ELSE file_count END,
+		tags=CASE WHEN excluded.tags!='[]' THEN excluded.tags ELSE tags END,
+		trusted=MAX(trusted, excluded.trusted),
+		page_url=CASE WHEN excluded.page_url!='' AND page_url='' THEN excluded.page_url ELSE page_url END,
+		status=CASE WHEN excluded.status='ready' THEN 'ready' ELSE status END,
+		seq=COALESCE(seq, excluded.seq),
+		updated_at=excluded.updated_at`,
+		t.Infohash, t.Title, t.Source, store.Trunc(t.SourceID, 200), t.Team, store.Trunc(t.TeamID, 64), t.PublishedAt, size, files, tags,
+		boolInt(t.Trusted), t.SourceKind, store.Trunc(t.PageURL, 500), status, now)
+	return err
+}
+
+// takeSource: the incoming source replaces the stored one if the stored one is unknown or
+// a user submission, or if the incoming one is a crawl source at least as trusted.
+const takeSource = `(excluded.source != '' AND (source IN ('', 'user') OR (excluded.source != 'user' AND excluded.trusted >= trusted)))`
+
+// refreshFTS rewrites the full-text row of a torrent (title + every file path).
+func (s *Store) refreshFTS(ctx context.Context, ih string) error {
+	var seq int64
+	var title string
+	if err := s.W.QueryRowContext(ctx, `SELECT seq, title FROM torrents WHERE infohash = ?`, ih).Scan(&seq, &title); err != nil {
+		return err
+	}
+	var files string
+	if err := s.W.QueryRowContext(ctx, `SELECT COALESCE(group_concat(path, char(10)), '') FROM torrent_files WHERE infohash = ?`, ih).Scan(&files); err != nil {
+		return err
+	}
+	if _, err := s.W.ExecContext(ctx, `DELETE FROM torrents_fts WHERE rowid = ?`, seq); err != nil {
+		return err
+	}
+	_, err := s.W.ExecContext(ctx, `INSERT INTO torrents_fts(rowid, title, files) VALUES(?,?,?)`, seq, title, files)
+	return err
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // resolveWork finds the work: bangumi.moe bangumi tag (via bangumi-data) first,

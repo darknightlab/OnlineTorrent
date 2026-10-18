@@ -1,9 +1,17 @@
 // VITE_MOCK=1 时安装：拦截 /api/v1/* 的 fetch，返回 fixtures 数据（只在 dev/mock 构建中被动态 import）。
 // 切换身份：?mock_user=guest|member|vip|admin（保存在 sessionStorage）；默认 admin。
 import * as fx from "./fixtures"
-import type { AdminUser, EpisodeFile, GrantRole, MeResponse, PermissionItem, PlayResponse, QBServer, Rule, Subject, Torrent, User } from "@/lib/types"
+import type { AdminUser, EpisodeFile, GrantRole, MeResponse, PermissionItem, PlayResponse, QBServer, Rule, Source, Subject, Torrent, TorrentStatus, User } from "@/lib/types"
 
 type Handler = (ctx: { params: Record<string, string>; query: URLSearchParams; body: any }) => unknown
+
+/** 非 200 的成功响应（如 202） */
+class Status {
+  constructor(
+    public status: number,
+    public data: unknown,
+  ) {}
+}
 
 class HttpError {
   constructor(
@@ -157,6 +165,78 @@ function playOf(t: Torrent | undefined, ih: string): PlayResponse {
   }
 }
 
+// ---- 收录状态（GET /torrents/hash/{ih}）----
+/** 请求服务器做种的时间：做种后 ~5 秒「刮削完成」 */
+const seededAt = new Map<string, number>()
+const MAP_DELAY_MS = 5000
+/** ?mock_map=none：用户磁力刮削不到条目（演示留在播放页） */
+const MOCK_MAP = new URLSearchParams(location.search).get("mock_map")
+
+/** 与 mock 播放引擎生成的文件列表一致：0 为视频，其余为字幕 / 图片 / 文本 */
+function mockFiles(name: string) {
+  const base = name.replace(/\.(mkv|mp4)$/i, "")
+  const video = `${base}${/HEVC|MKV/i.test(base) ? ".mkv" : ".mp4"}`
+  return [video, `${base}.sc.ass`, `${base}.tc.ass`, "cover.jpg", "readme.txt"].map((n, index) => ({
+    index,
+    path: `${base}/${n}`,
+    size_bytes: index === 0 ? 368 * 1024 * 1024 : 46 * 1024,
+    kind: index === 0 ? ("episode" as const) : ("other" as const),
+  }))
+}
+
+function torrentStatus(ih: string): TorrentStatus {
+  const t = torrents.find((x) => x.infohash === ih)
+  const at = seededAt.get(ih)
+  if (!t) {
+    // 用户磁力：做种前 unknown；做种后 pending，约 5 秒后 ready 并映射到某番最新一集
+    if (at === undefined) return { status: "unknown", title: "", files: [] }
+    if (Date.now() - at < MAP_DELAY_MS) return { status: "pending", title: "", files: [] }
+    const name = "Unknown torrent"
+    const a = MOCK_MAP === "none" ? undefined : subjects.find((x) => x.latest_episode)
+    return {
+      status: "ready",
+      title: name,
+      files: mockFiles(name).map((f) =>
+        f.index === 0 && a ? { ...f, subject: { subject_id: a.subject_id, bgm_id: a.bgm_id, title: a.title, title_cn: a.title_cn }, episode: a.latest_episode ?? 1 } : f,
+      ),
+    }
+  }
+  const a = subjectOfTorrent(t)
+  const ep = epOf(t.title)
+  return {
+    status: "ready",
+    title: t.title,
+    files: mockFiles(t.title).map((f) =>
+      f.index === 0 && a && ep > 0 ? { ...f, subject: { subject_id: a.subject_id, bgm_id: a.bgm_id, title: a.title, title_cn: a.title_cn }, episode: ep } : f,
+    ),
+  }
+}
+
+// ---- 抓取源 ----
+const sources = fx.sources
+
+function probe(body: { kind?: string; url?: string }) {
+  const url = String(body.url ?? "").trim()
+  if (!/^https?:\/\//.test(url)) throw new HttpError(400, "bad_request", "地址必须是 http(s) 链接")
+  if (/fail|example\.com/.test(url)) throw new HttpError(400, "source_probe_failed", "没有可识别的种子条目（需要 enclosure .torrent、磁力链接或 nyaa:infoHash）")
+  const moe = body.kind === "bangumi_moe"
+  const host = new URL(url).hostname
+  return {
+    title: moe ? "bangumi.moe" : `${host} - RSS`,
+    link: `https://${host}/`,
+    format: moe ? "bangumi.moe JSON" : "rss 2.0",
+    item_count: moe ? 30 : 75,
+    samples: torrents.slice(0, 3).map((t, i) => ({
+      title: t.title,
+      url: `https://${host}/view/${1000 + i}`,
+      published_at: t.published_at,
+      infohash: i === 2 ? undefined : t.infohash,
+      torrent_url: i === 1 ? `https://${host}/download/${1000 + i}.torrent` : undefined,
+      magnet: i !== 1,
+    })),
+  }
+}
+
 function requireAdmin() {
   const u = currentUser()
   if (!u) throw new HttpError(401, "login_required", "请先登录")
@@ -212,18 +292,24 @@ const routes: [string, string, Handler][] = [
         torrent_title: t.title,
         team: t.team?.name ?? "",
         published_at: t.published_at,
-        source_id: t.source === "bangumi.moe" ? t.id : "",
+        source_id: t.id.startsWith("ih:") ? "" : t.id,
+        source: t.source,
         confidence: i === 0 ? 0.95 : 0.8,
         access: t.access,
       }))
     return { subject: a, episode: n, items }
   }],
-  ["GET", "/torrents/search", ({ query }) => {
-    requirePerm("GET /api/v1/torrents/search")
-    const kw = (query.get("q") || "").toLowerCase().split(/\s+/).filter(Boolean)
-    const list = torrents.filter((t) => kw.every((k) => t.title.toLowerCase().includes(k) || t.team?.name.toLowerCase().includes(k)))
-    return page(list, Number(query.get("page") || 1))
+  ["GET", "/search/:keyword", ({ params, query }) => {
+    requirePerm("GET /api/v1/search/{keyword}")
+    const kw = params.keyword.toLowerCase().split(/\s+/).filter(Boolean)
+    const p = Math.min(50, Math.max(1, Number(query.get("page") || 1)))
+    const hit = (s: string) => kw.every((k) => s.toLowerCase().includes(k))
+    const subs = p === 1 ? subjects.filter((a) => hit(`${a.title} ${a.title_cn}`)).slice(0, 24) : []
+    const list = torrents.filter((t) => hit(`${t.title} ${t.team?.name ?? ""}`))
+    const pg = page(list, p, 30)
+    return { subjects: subs, torrents: pg.items, page: pg.page, page_count: Math.min(50, pg.page_count), total: list.length }
   }],
+  ["GET", "/torrents/hash/:ih", ({ params }) => (requirePerm("GET /api/v1/torrents/hash/{ih}"), torrentStatus(params.ih.toLowerCase()))],
   ["POST", "/torrents/hash/:ih/play", ({ params }) => {
     const ih = params.ih.toLowerCase()
     if (!/^[0-9a-f]{40}$/.test(ih)) throw new HttpError(400, "bad_request", "infohash 格式错误")
@@ -240,12 +326,85 @@ const routes: [string, string, Handler][] = [
     const t = torrents.find((x) => x.infohash === params.ih.toLowerCase())
     if (t?.access.action === "block") throw new HttpError(451, "blocked", t.access.reason || "该资源已被屏蔽")
     if (t && t.size_bytes > fx.site.max_auto_size_bytes) throw new HttpError(413, "too_large", `该种子过大（超过 ${fx.site.max_auto_size_bytes >> 20} MB），服务器不参与做种`)
+    if (!seededAt.has(params.ih.toLowerCase())) seededAt.set(params.ih.toLowerCase(), Date.now())
     return { seeded_by: ["ams"] }
   }],
   ["POST", "/torrents/hash/:ih/report", () => (requirePerm("POST /api/v1/torrents/hash/{ih}/report"), {})],
 
   // ---- admin ----
   ["GET", "/admin/stats", () => (requireAdmin(), fx.stats())],
+  ["GET", "/admin/sources", () => (requireAdmin(), { items: sources })],
+  ["GET", "/admin/sources/schema", () => (requireAdmin(), fx.sourceSchema)],
+  ["POST", "/admin/sources/probe", ({ body }) => (requireAdmin(), probe(body))],
+  ["POST", "/admin/sources", ({ body }) => {
+    requireAdmin()
+    const url = String(body.url ?? "").trim()
+    if (sources.some((x) => x.url === url)) throw new HttpError(409, "source_exists", "该地址已存在")
+    const r = probe(body)
+    const now = new Date().toISOString()
+    const s: Source = {
+      id: Math.max(0, ...sources.map((x) => x.id)) + 1,
+      name: body.name || r.title,
+      kind: body.kind || "rss",
+      url,
+      interval_min: Math.max(5, Number(body.interval_min) || 15),
+      enabled: body.enabled ?? true,
+      proxy_disabled: !!body.proxy_disabled,
+      last_run_at: null,
+      last_ok_at: null,
+      last_items: 0,
+      last_new: 0,
+      last_error: "",
+      fail_count: 0,
+      running: false,
+      next_run_at: body.enabled ?? true ? now : null,
+      created_at: now,
+      updated_at: now,
+    }
+    sources.push(s)
+    return new Status(201, s)
+  }],
+  ["PUT", "/admin/sources/id/:id", ({ params, body }) => {
+    requireAdmin()
+    const s = sources.find((x) => x.id === Number(params.id))
+    if (!s) throw new HttpError(404, "not_found", "抓取源不存在")
+    if ((body.url !== undefined && body.url !== s.url) || (body.kind !== undefined && body.kind !== s.kind)) probe({ ...s, ...body })
+    if (body.interval_min !== undefined && Number(body.interval_min) < 5) throw new HttpError(400, "bad_request", "间隔最小 5 分钟")
+    Object.assign(s, body, { updated_at: new Date().toISOString() })
+    if (!s.enabled) s.next_run_at = null
+    else if (body.enabled || body.url) s.next_run_at = new Date().toISOString()
+    return s
+  }],
+  ["DELETE", "/admin/sources/id/:id", ({ params }) => {
+    requireAdmin()
+    sources.splice(sources.findIndex((x) => x.id === Number(params.id)), 1)
+    return { items: sources }
+  }],
+  ["POST", "/admin/sources/id/:id/run", ({ params }) => {
+    requireAdmin()
+    const s = sources.find((x) => x.id === Number(params.id))
+    if (!s) throw new HttpError(404, "not_found", "抓取源不存在")
+    if (s.running) throw new HttpError(409, "busy", "正在抓取")
+    s.running = true
+    window.setTimeout(() => {
+      const now = new Date().toISOString()
+      s.running = false
+      s.last_run_at = now
+      if (s.id === 4) {
+        s.fail_count += 1
+        s.last_error = "GET https://share.dmhy.org/topics/rss/sort_id/2/rss.xml: dial tcp: i/o timeout"
+      } else {
+        s.last_ok_at = now
+        s.last_error = ""
+        s.fail_count = 0
+        s.last_new = Math.floor(Math.random() * 6)
+        s.last_items = s.last_items || 50
+      }
+      s.next_run_at = s.enabled ? new Date(Date.now() + s.interval_min * 60_000 * 2 ** s.fail_count).toISOString() : null
+    }, 4000)
+    return new Status(202, { ...s })
+  }],
+  ["GET", "/admin/metadata-jobs", () => (requireAdmin(), { items: fx.metadataJobs })],
   ["GET", "/admin/permissions", () => (requireAdmin(), permissionsView())],
   ["PUT", "/admin/permissions", ({ body }) => {
     requireAdmin()
@@ -486,6 +645,7 @@ export function installMock() {
     try {
       const body = init?.body ? JSON.parse(String(init.body)) : {}
       const data = m.h({ params: m.params, query: url.searchParams, body })
+      if (data instanceof Status) return json(data.status, data.data)
       return json(200, data ?? {})
     } catch (e) {
       if (e instanceof HttpError) return json(e.status, { error: { code: e.code, message: e.message } })

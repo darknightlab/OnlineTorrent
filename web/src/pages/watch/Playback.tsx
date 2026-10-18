@@ -1,0 +1,319 @@
+// 播放页与单集页共用的路由组件：
+//   /watch/hash/:ih[/file/:index]
+//   /subject/:provider/:id/episode/:n[/hash/:ih[/file/:index]]
+// 这几条路由在 App.tsx 中渲染同一个元素（同一 lazy 组件、同一层级），React Router 不给路由元素加 key，
+// 因此在它们之间导航时本组件不会重新挂载。播放器始终渲染在 <Container><Player key={infohash} /></Container>
+// 这一固定位置，所以「播放页 → 单集页（同一 infohash）」或「单集页切换同一种子内的文件」时 Player 实例、
+// WebTorrent 会话与 <video> 元素都保持不变，播放进度不会中断。
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { Navigate, useLocation, useNavigate, useParams } from "react-router-dom"
+import { useQuery } from "@tanstack/react-query"
+import { Container } from "@/components/layout/Container"
+import { Card } from "@/components/ui/card"
+import { ErrorState } from "@/components/states"
+import { api, isApiError } from "@/lib/api"
+import { PERM, can, qk, useEpisode, useMe, useSiteOrFallback } from "@/lib/queries"
+import { displayTitle } from "@/lib/schedule"
+import type { EpisodeFile, EpisodeResponse, TorrentStatus } from "@/lib/types"
+import { useDocumentTitle } from "@/lib/hooks"
+import { cn, episodeSourceHref, normalizeInfohash, watchHref } from "@/lib/utils"
+import { StatusPage } from "@/pages/NotFound"
+import {
+  BLEED,
+  EmptyEpisode,
+  EpisodeInfo,
+  EpisodeInfoSkeleton,
+  EpisodeList,
+  EpisodeSideSkeleton,
+  EpisodeSkeleton,
+  GRID,
+  SourceList,
+  sourceKey,
+} from "@/pages/Episode"
+import { usePlayAttempt, usePlayResolve, type PlayHint } from "./usePlayResolve"
+import { PlayGate } from "./PlayGate"
+import { Player } from "./Player"
+import { hintOf, type WatchLocationState } from "./Watch"
+
+/** 做种后轮询收录状态：间隔与最长时间 */
+const POLL_MS = 3_000
+const POLL_MAX_MS = 3 * 60_000
+
+const seg = encodeURIComponent
+
+export default function PlaybackPage() {
+  const params = useParams()
+  const loc = useLocation()
+  const navigate = useNavigate()
+  const st = (loc.state as WatchLocationState | null) ?? {}
+  const site = useSiteOrFallback()
+  const attempt = usePlayAttempt()
+
+  // ---- 解析路由 ----
+  const isEpisode = params.n !== undefined
+  const provider = params.provider ?? ""
+  const subjectId = params.id ?? ""
+  const ep = isEpisode && /^\d+$/.test(params.n!) ? Number(params.n) : NaN
+  const rawIh = params.ih
+  const urlIh = rawIh !== undefined ? normalizeInfohash(rawIh) : null
+  const badIndex = params.index !== undefined && !/^\d+$/.test(params.index)
+  const urlIndex = params.index !== undefined && !badIndex ? Number(params.index) : null
+  /** 单集页路径前缀（保持 URL 中的 provider/id 写法） */
+  const epBase = isEpisode ? `/subject/${seg(provider)}/${seg(subjectId)}/episode/${params.n}` : ""
+  const sourceHref = useCallback(
+    (ih: string, idx: number | null) => (isEpisode ? `${epBase}/hash/${seg(ih)}${idx !== null ? `/file/${idx}` : ""}` : watchHref(ih, idx)),
+    [isEpisode, epBase],
+  )
+
+  // ---- 单集数据 ----
+  const epQ = useEpisode(isEpisode ? provider : "", subjectId, ep)
+  const epData = epQ.data
+  const items = useMemo(() => epData?.items ?? [], [epData])
+
+  // ---- 要播放的资源：URL 指定，否则单集页自动推荐（items[0]） ----
+  const auto = isEpisode && !urlIh ? (items[0] ?? null) : null
+  const ih = urlIh ?? auto?.infohash ?? null
+  const fileIndex = urlIh ? urlIndex : (auto?.file_index ?? null)
+  const listed = urlIh ? (items.find((f) => f.infohash === urlIh && (urlIndex === null || f.file_index === urlIndex)) ?? null) : auto
+  const hint: PlayHint | undefined = listed
+    ? { infohash: listed.infohash, title: listed.torrent_title, team: listed.team || null }
+    : st.torrent?.infohash === ih
+      ? hintOf(st.torrent)
+      : undefined
+  const { state, skipWait, retry } = usePlayResolve(ih ? { kind: "hash", ih } : null, {
+    hint,
+    trackers: site.trackers,
+    attempt,
+    preload: urlIh ? st.preload : undefined,
+    // 自动推荐的资源已知 access（非 allow 时直接提示，不发请求）；URL 指定的以服务端判定为准
+    known: auto?.access,
+  })
+
+  // 正在播放的文件（Player 回报，含自动选择）
+  const [playing, setPlaying] = useState<number | null>(null)
+  useEffect(() => setPlaying(null), [ih])
+
+  const ready = state.status === "ready"
+  useAutoEpisodeSwitch({
+    ih: !isEpisode && ready && !state.direct ? ih : null,
+    playing,
+    onMapped: (href) => navigate(href, { replace: true, state: loc.state }),
+  })
+
+  useDocumentTitle(isEpisode && epData ? `${displayTitle(epData.subject)} 第 ${epData.episode} 话` : isEpisode ? "单集" : undefined)
+
+  // ---- 校验 / 规范化 ----
+  if (rawIh !== undefined && (!urlIh || badIndex)) return <StatusPage code="404" title="链接无效" description="播放链接格式有误，请检查 infohash。" />
+  if (isEpisode && !(ep > 0)) return <StatusPage code="404" title="集数无效" description="链接中的集数格式有误。" />
+  // 统一为小写 hex（base32 / 大写链接）
+  if (urlIh && rawIh !== urlIh) return <Navigate replace to={sourceHref(urlIh, urlIndex)} state={loc.state} />
+
+  const here = `${loc.pathname}${loc.search}`
+
+  // ================= 播放页 =================
+  if (!isEpisode) {
+    const shareURL = (h: string | null, idx: number | null) => `${location.origin}${h ? watchHref(h, idx) : here}`
+    return (
+      <Container className="py-0 sm:py-5">
+        {ready ? (
+          <Player
+            key={ih}
+            magnet={state.magnet}
+            play={state.play}
+            direct={state.direct}
+            hint={hint}
+            shareURL={shareURL}
+            fileIndex={fileIndex}
+            onFileChange={(i) => i !== urlIndex && navigate(watchHref(ih!, i), { replace: true, state: loc.state })}
+            onCurrentChange={setPlaying}
+          />
+        ) : (
+          <div className="pt-3 sm:pt-0">
+            {state.status !== "idle" && <PlayGate state={state} title={hint?.title} here={here} skipWait={skipWait} retry={retry} />}
+          </div>
+        )}
+      </Container>
+    )
+  }
+
+  // ================= 单集页 =================
+  if (!urlIh) {
+    if (epQ.isPending)
+      return (
+        <Container className="pb-6 lg:py-5">
+          <EpisodeSkeleton />
+        </Container>
+      )
+    if (epQ.error) return <EpisodeError error={epQ.error} retry={() => epQ.refetch()} />
+    if (items.length === 0)
+      return (
+        <Container className="pb-6 lg:py-5">
+          <EmptyEpisode data={epData!} />
+        </Container>
+      )
+  }
+
+  const selected = ih ? (listed ? sourceKey(listed) : sourceKey({ infohash: ih, file_index: fileIndex ?? playing ?? -1 })) : null
+  const select = (f: EpisodeFile) => {
+    if (sourceKey(f) === selected) return
+    navigate(`${epBase}/hash/${seg(f.infohash)}/file/${f.file_index}`, { replace: true })
+    window.scrollTo({ top: 0, behavior: "smooth" })
+  }
+  const side = epData ? (
+    <EpisodeSide data={epData} ih={ih} fileIndex={fileIndex ?? playing} listed={!!listed} playName={ready ? state.play?.name : undefined} hint={hint} selected={selected} onSelect={select} />
+  ) : epQ.error ? (
+    <Card>
+      <ErrorState error={epQ.error} onRetry={() => epQ.refetch()} />
+    </Card>
+  ) : (
+    <EpisodeSideSkeleton />
+  )
+  const info = (parts?: Parameters<typeof EpisodeInfo>[0]["parts"]) =>
+    epData ? <EpisodeInfo subject={epData.subject} episode={epData.episode} parts={parts} /> : <EpisodeInfoSkeleton />
+  const shareURL = (h: string | null, idx: number | null) => `${location.origin}${h ? sourceHref(h, idx) : here}`
+
+  return (
+    <Container className="pb-6 lg:py-5">
+      {ready ? (
+        <Player
+          key={ih}
+          magnet={state.magnet}
+          play={state.play}
+          direct={state.direct}
+          hint={hint}
+          shareURL={shareURL}
+          fileIndex={fileIndex}
+          onFileChange={(i) => i !== fileIndex && navigate(sourceHref(ih!, i), { replace: true, state: loc.state })}
+          onCurrentChange={setPlaying}
+          poster={epData ? (epData.subject.cover ?? "") : undefined}
+          renderInfo={(parts) => info(parts)}
+          side={side}
+          collapseDetails
+        />
+      ) : (
+        <div className={GRID}>
+          <section className="min-w-0">
+            {state.status !== "idle" && (
+              <PlayGate
+                state={state}
+                title={hint?.title}
+                here={here}
+                skipWait={skipWait}
+                retry={retry}
+                docTitle={false}
+                className={cn(BLEED, "max-w-none rounded-none border-x-0 border-t-0 shadow-none lg:rounded-xl lg:border")}
+              />
+            )}
+            {info()}
+          </section>
+          <aside className="min-w-0 space-y-4 lg:space-y-5">{side}</aside>
+        </div>
+      )}
+    </Container>
+  )
+}
+
+function EpisodeError({ error, retry }: { error: unknown; retry: () => void }) {
+  if (isApiError(error) && error.status === 404) return <StatusPage code="404" title="番剧不存在" description="该番剧可能尚未收录，或链接有误。" />
+  return (
+    <Container className="py-8">
+      <Card>
+        <ErrorState error={error} onRetry={retry} />
+      </Card>
+    </Container>
+  )
+}
+
+/** 单集页右栏：选集 + 资源（URL 指定但未收录到本集的资源置顶） */
+function EpisodeSide({
+  data,
+  ih,
+  fileIndex,
+  listed,
+  playName,
+  hint,
+  selected,
+  onSelect,
+}: {
+  data: EpisodeResponse
+  ih: string | null
+  fileIndex: number | null
+  listed: boolean
+  playName?: string
+  hint?: PlayHint
+  selected: string | null
+  onSelect: (f: EpisodeFile) => void
+}) {
+  // 播放页轮询留下的收录状态（只读缓存，不发请求）提供文件名与大小
+  const status = useQuery<TorrentStatus>({ queryKey: qk.torrentStatus(ih ?? ""), queryFn: () => api.torrentStatus(ih!), enabled: false }).data
+  const extra = useMemo<EpisodeFile | null>(() => {
+    if (!ih || listed) return null
+    const f = fileIndex !== null ? status?.files.find((x) => x.index === fileIndex) : undefined
+    const title = status?.title || playName || hint?.title || ih
+    return {
+      infohash: ih,
+      file_index: fileIndex ?? -1,
+      path: f?.path ?? title,
+      size_bytes: f?.size_bytes ?? 0,
+      torrent_title: title,
+      team: hint?.team ?? "",
+      published_at: "",
+      source_id: "",
+      source: "user",
+      confidence: 0,
+      access: { action: "allow", reason: "" },
+    }
+  }, [ih, listed, fileIndex, status, playName, hint?.title, hint?.team])
+  return (
+    <>
+      <EpisodeList subject={data.subject} episode={data.episode} hasItems={data.items.length > 0 || !!ih} />
+      <SourceList items={data.items} extra={extra} selected={extra ? sourceKey(extra) : selected} onSelect={onSelect} />
+    </>
+  )
+}
+
+/**
+ * 播放页（有做种权限时）：服务器做种后轮询 GET /torrents/hash/{ih}，
+ * 正在播放的文件被刮削到某番某集时切到对应单集页（同一 Player 实例，不中断播放）。
+ * ih 为 null 时不轮询；收录完成（ready）且当前文件未映射、或超过 3 分钟后停止。
+ */
+function useAutoEpisodeSwitch({ ih, playing, onMapped }: { ih: string | null; playing: number | null; onMapped: (href: string) => void }) {
+  const me = useMe()
+  const allowed = can(me.data, PERM.seed) && can(me.data, PERM.torrentStatus)
+  const [stopped, setStopped] = useState<string | null>(null)
+  const startedAt = useRef<{ ih: string; at: number } | null>(null)
+  const active = !!ih && allowed && stopped !== ih
+  if (active && startedAt.current?.ih !== ih) startedAt.current = { ih: ih!, at: Date.now() }
+
+  const q = useQuery({
+    queryKey: qk.torrentStatus(ih ?? ""),
+    queryFn: ({ signal }) => api.torrentStatus(ih!, signal),
+    enabled: active,
+    refetchInterval: POLL_MS,
+    refetchIntervalInBackground: true,
+    retry: false,
+    staleTime: 0,
+    gcTime: 10 * 60_000,
+  })
+  const data = active ? q.data : undefined
+  const onMappedRef = useRef(onMapped)
+  onMappedRef.current = onMapped
+
+  useEffect(() => {
+    if (!active || !ih) return
+    const timeout = () => Date.now() - (startedAt.current?.at ?? Date.now()) > POLL_MAX_MS
+    if (q.error && !(isApiError(q.error) && q.error.unavailable)) return setStopped(ih)
+    if (data && playing !== null) {
+      const f = data.files.find((x) => x.index === playing)
+      const n = f?.episode
+      if (f?.subject && n !== undefined && Number.isInteger(n) && n > 0) {
+        setStopped(ih)
+        onMappedRef.current(episodeSourceHref(f.subject, n, ih, playing))
+        return
+      }
+      // 收录完成但当前文件没有映射：留在播放页
+      if (data.status === "ready") return setStopped(ih)
+    }
+    if (timeout()) setStopped(ih)
+  }, [active, ih, data, playing, q.error, q.dataUpdatedAt])
+}

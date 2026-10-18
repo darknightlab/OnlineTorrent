@@ -13,6 +13,13 @@ import (
 	"github.com/darknightlab/onlinetorrent/internal/store"
 )
 
+// MetaCategory is the qB category used for metadata-only fetches of crawled magnets
+// (torrents there are stopped after metadata arrives and deleted by the crawler).
+func MetaCategory(category string) string { return category + "-meta" }
+
+// MetaCategory of this server.
+func (s *Server) MetaCategory() string { return MetaCategory(s.Cfg.Category) }
+
 // Status is the live state of a server.
 type Status struct {
 	Online      bool   `json:"online"`
@@ -119,6 +126,7 @@ func (p *Pool) Check(ctx context.Context, s *Server) Status {
 		}
 	}
 	_ = s.Client.CreateCategory(ctx, s.Cfg.Category)
+	_ = s.Client.CreateCategory(ctx, s.MetaCategory())
 	if ts, err := s.Client.Info(ctx, s.Cfg.Category); err == nil {
 		st.Torrents = len(ts)
 	}
@@ -172,6 +180,9 @@ func (p *Pool) Push(ctx context.Context, ih, name string, trackers []string, tim
 			cctx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
 			err := s.Client.Add(cctx, AddParams{URLs: uri, Category: s.Cfg.Category, SeedingTimeLimitMin: s.Cfg.SeedingTimeLimitMin, RatioLimit: s.Cfg.RatioLimit})
+			if err == nil {
+				p.adoptMeta(cctx, s, ih)
+			}
 			if err == nil && s.Cfg.AddWSSTrackers && len(wss) > 0 {
 				// the torrent may need a moment to appear
 				for i := 0; i < 3; i++ {
@@ -201,6 +212,25 @@ func (p *Pool) Push(ctx context.Context, ih, name string, trackers []string, tim
 		res.SeededBy = []string{}
 	}
 	return res
+}
+
+// adoptMeta: if the torrent already sits in our metadata category (a crawler metadata
+// fetch, stopped after metadata arrived), Add was a no-op — move it to the seeding
+// category, apply the share limits and start it, so the crawler no longer deletes it.
+func (p *Pool) adoptMeta(ctx context.Context, s *Server, ih string) {
+	ts, err := s.Client.Info(ctx, "", ih)
+	if err != nil || len(ts) == 0 || ts[0].Category != s.MetaCategory() {
+		return
+	}
+	if err := s.Client.SetCategory(ctx, ih, s.Cfg.Category); err != nil {
+		p.log.Warn("adopt meta torrent: setCategory", "server", s.Cfg.Name, "hash", ih, "err", err)
+		return
+	}
+	_ = s.Client.SetShareLimits(ctx, ih, s.Cfg.RatioLimit, s.Cfg.SeedingTimeLimitMin)
+	if err := s.Client.Start(ctx, ih); err != nil {
+		p.log.Warn("adopt meta torrent: start", "server", s.Cfg.Name, "hash", ih, "err", err)
+	}
+	p.log.Info("adopted metadata torrent for seeding", "server", s.Cfg.Name, "hash", ih)
 }
 
 // Remove deletes a torrent (with files) from every server.

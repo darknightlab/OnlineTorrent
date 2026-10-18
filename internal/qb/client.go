@@ -203,6 +203,9 @@ type AddParams struct {
 	Category            string
 	SeedingTimeLimitMin int
 	RatioLimit          float64 // -2 global, -1 unlimited
+	// StopCondition "MetadataReceived" stops the torrent once metadata arrives (qB ≥ 4.5;
+	// metadata-only fetches). Empty = qB default (None).
+	StopCondition string
 }
 
 // Add adds magnet(s). qB 5.x returns 200/202 with JSON or "Ok."; 409 when all failed (often "already exists").
@@ -220,10 +223,40 @@ func (c *Client) Add(ctx context.Context, p AddParams) error {
 	if p.SeedingTimeLimitMin == 0 {
 		f.Set("seedingTimeLimit", "-2")
 	}
+	if p.StopCondition != "" {
+		f.Set("stopCondition", p.StopCondition)
+		f.Del("sequentialDownload")
+		f.Del("firstLastPiecePrio")
+	}
 	_, status, err := c.do(ctx, http.MethodPost, "torrents/add", f)
 	if status == http.StatusConflict {
 		return nil // already present
 	}
+	return err
+}
+
+// SetCategory moves torrents to a category.
+func (c *Client) SetCategory(ctx context.Context, hash, category string) error {
+	_, _, err := c.do(ctx, http.MethodPost, "torrents/setCategory", url.Values{"hashes": {hash}, "category": {category}})
+	return err
+}
+
+// Start resumes torrents (qB 5: torrents/start; qB 4: torrents/resume).
+func (c *Client) Start(ctx context.Context, hash string) error {
+	_, status, err := c.do(ctx, http.MethodPost, "torrents/start", url.Values{"hashes": {hash}})
+	if status == http.StatusNotFound {
+		_, _, err = c.do(ctx, http.MethodPost, "torrents/resume", url.Values{"hashes": {hash}})
+	}
+	return err
+}
+
+// SetShareLimits sets ratio / seeding time limits (-2 = global, -1 = unlimited).
+func (c *Client) SetShareLimits(ctx context.Context, hash string, ratio float64, seedingTimeMin int) error {
+	if seedingTimeMin == 0 {
+		seedingTimeMin = -2
+	}
+	_, _, err := c.do(ctx, http.MethodPost, "torrents/setShareLimits", url.Values{"hashes": {hash},
+		"ratioLimit": {strconv.FormatFloat(ratio, 'f', -1, 64)}, "seedingTimeLimit": {strconv.Itoa(seedingTimeMin)}, "inactiveSeedingTimeLimit": {"-2"}})
 	return err
 }
 

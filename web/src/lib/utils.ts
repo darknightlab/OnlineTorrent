@@ -79,6 +79,19 @@ export function episodeHref(s: SubjectRef, n: number) {
   return p ? `/subject/${p.provider}/${encodeURIComponent(p.id)}/episode/${n}` : "/"
 }
 
+/** 单集页指定资源：/subject/{provider}/{id}/episode/{n}/hash/{ih}[/file/{index}] */
+export function episodeSourceHref(s: SubjectRef, n: number, infohash: string, fileIndex?: number | null) {
+  const base = episodeHref(s, n)
+  if (base === "/") return watchHref(infohash, fileIndex)
+  const ih = `${base}/hash/${encodeURIComponent(infohash.toLowerCase())}`
+  return fileIndex === undefined || fileIndex === null ? ih : `${ih}/file/${fileIndex}`
+}
+
+/** 从播放类路径（/watch/hash/{ih}… 或 …/episode/{n}/hash/{ih}…）中取 infohash */
+export function infohashOfPath(pathname: string): string | null {
+  return pathname.match(/^\/(?:watch|subject\/[^/]+\/[^/]+\/episode\/[^/]+)\/hash\/([^/]+)/)?.[1]?.toLowerCase() ?? null
+}
+
 /** 搜索页 /search/{keyword}[?page=n] */
 export function searchHref(keyword: string, page?: number) {
   const k = keyword.trim()

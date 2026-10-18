@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/darknightlab/onlinetorrent/internal/meta"
 	"github.com/darknightlab/onlinetorrent/internal/policy"
 	"github.com/darknightlab/onlinetorrent/internal/qb"
 	"github.com/darknightlab/onlinetorrent/internal/store"
@@ -93,7 +92,7 @@ func (s *Server) oversized(ctx context.Context, t qb.Torrent) bool {
 		return false
 	}
 	rec, _ := s.St.GetTorrent(ctx, t.Hash)
-	return rec == nil || rec.Source != "bangumi.moe"
+	return rec == nil || !rec.Trusted
 }
 
 // checkSeeded evaluates a torrent that qB has metadata for: records the real name/files,
@@ -116,7 +115,7 @@ func (s *Server) checkSeeded(ctx context.Context, gen uint64, ih, name string, f
 		total = size
 	}
 	rec, _ := s.St.GetTorrent(ctx, ih)
-	trusted := rec != nil && rec.Source == "bangumi.moe"
+	trusted := rec != nil && rec.Trusted
 
 	sub := policy.Subject{Infohash: ih, Title: name, Files: paths, Trusted: trusted}
 	if rec != nil {
@@ -128,11 +127,12 @@ func (s *Server) checkSeeded(ctx context.Context, gen uint64, ih, name string, f
 	if !trusted {
 		// the qB metadata name is the trusted title for user torrents (H3)
 		_ = s.St.UpsertTorrent(ctx, store.TorrentRecord{Infohash: ih, Title: name, Size: total, Files: paths, Source: "user"})
-		in := meta.TorrentInput{Infohash: ih, Title: name, Source: "user"}
-		for i, f := range files {
-			in.Files = append(in.Files, meta.FileInput{Index: i, Path: f.Name, Size: f.Size})
+	}
+	// ingest + scrape into the catalogue (no-op when it already has the file list)
+	if s.Crawl != nil {
+		if err := s.Crawl.IngestQBMetadata(ctx, ih, name, files); err != nil {
+			s.Log.Warn("ingest qB metadata", "ih", ih, "err", err)
 		}
-		s.Cat.MatchTorrent(in)
 	}
 
 	d, err := s.Policy.Requirement(ctx, sub)

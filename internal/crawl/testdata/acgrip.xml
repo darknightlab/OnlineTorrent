@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:torrent="http://xmlns.ezrss.it/0.1/" xmlns:media="http://search.yahoo.com/mrss/">
+  <channel>
+    <title>ACG.RIP</title>
+    <description>ACG.RIP has super cow power</description>
+    <link>https://acg.rip/.xml</link>
+    <ttl>1800</ttl>
+    <item>
+      <title>[LoliHouse] 青箱 第二季 / Ao no Hako S2 / Blue Box S2 - 28 [WebRip 1080p HEVC-10bit AAC][简繁内封字幕]</title>
+      <description>&lt;img src="https://i.imgur.com/5BgVwtM.jpeg"&gt;&lt;br&gt;&lt;br&gt;&lt;strong&gt;青箱 第二季&lt;/strong&gt;&lt;br&gt;&lt;br&gt;&lt;strong&gt;Ao no Hako S2&lt;/strong&gt;&lt;br&gt;&lt;br&gt;&lt;strong&gt;アオのハコ Season 2&lt;/strong&gt;&lt;br&gt;&lt;br&gt;&lt;br&gt;&lt;strong&gt;字幕：Netflix&lt;/strong&gt;&lt;br&gt;&lt;b...</description>
+      <pubDate>Sun, 18 Oct 2026 03:39:54 -0700</pubDate>
+      <link>https://acg.rip/t/365552</link>
+      <guid>https://acg.rip/t/365552</guid>
+      <enclosure url="https://acg.rip/t/365552.torrent" type="application/x-bittorrent"/>
+      <torrent:contentLength>849733632</torrent:contentLength>
+      <media:content url="https://acg.rip/t/365552.torrent" fileSize="849733632"/>
+    </item>
+    <item>
+      <title>[黒ネズミたち] 鑽石王牌 act2 第二季 / Diamond no Ace: Act II Second Season - 15 (CR 1920x1080 AVC AAC MKV)</title>
+      <description>&lt;img src="https://i0.wp.com/imgsrv.crunchyroll.com/catalog/crunchyroll/f98ddc9705b286b4b053823961b1df5b.png"&gt;&lt;br&gt;&lt;hr&gt;&lt;br&gt;&lt;span style="font-size: 3em;"&gt;&lt;strong&gt;&lt;em&gt;Diamond no Ace: Act II Second Seas...</description>
+      <pubDate>Sun, 18 Oct 2026 02:01:40 -0700</pubDate>
+      <link>https://acg.rip/t/365550</link>
+      <guid>https://acg.rip/t/365550</guid>
+      <enclosure url="https://acg.rip/t/365550.torrent" type="application/x-bittorrent"/>
+      <torrent:contentLength>1050641408</torrent:contentLength>
+      <media:content url="https://acg.rip/t/365550.torrent" fileSize="1050641408"/>
+    </item>
+    <item>
+      <title>[黒ネズミたち] 青之蘆葦 第二季 / Ao Ashi Season 2 - 03 (CR 1920x1080 AVC AAC MKV)</title>
+      <description>&lt;img src="https://i0.wp.com/imgsrv.crunchyroll.com/catalog/crunchyroll/8655436733b3ad8f05d509d495bcf60f.png"&gt;&lt;br&gt;&lt;hr&gt;&lt;br&gt;&lt;span style="font-size: 3em;"&gt;&lt;strong&gt;&lt;em&gt;Ao Ashi Season 2&lt;/em&gt;&lt;/strong&gt; - E...</description>
+      <pubDate>Sun, 18 Oct 2026 02:01:03 -0700</pubDate>
+      <link>https://acg.rip/t/365549</link>
+      <guid>https://acg.rip/t/365549</guid>
+      <enclosure url="https://acg.rip/t/365549.torrent" type="application/x-bittorrent"/>
+      <torrent:contentLength>968518656</torrent:contentLength>
+      <media:content url="https://acg.rip/t/365549.torrent" fileSize="968518656"/>
+    </item>
+    <item>
+      <title>[黒ネズミたち] 鑽石王牌 act2 第二季 / Diamond no Ace: Act II Second Season - 15 (Baha 1920x1080 AVC AAC MP4)</title>
+      <description>&lt;img src="https://i0.wp.com/p2.bahamut.com.tw/B/2KU/04/767a217f279d3d00b9af76ae3820rog5.JPG"&gt;&lt;br&gt;&lt;hr&gt;&lt;br&gt;&lt;span style="font-size: 3em;"&gt;&lt;strong&gt;&lt;em&gt;Diamond no Ace: Act II Second Season&lt;/em&gt;&lt;/strong&gt;...</description>
+      <pubDate>Sun, 18 Oct 2026 02:00:55 -0700</pubDate>
+      <link>https://acg.rip/t/365548</link>
+      <guid>https://acg.rip/t/365548</guid>
+      <enclosure url="https://acg.rip/t/365548.torrent" type="application/x-bittorrent"/>
+      <torrent:contentLength>409765888</torrent:contentLength>
+      <media:content url="https://acg.rip/t/365548.torrent" fileSize="409765888"/>
+    </item>
+</channel></rss>
