@@ -30,6 +30,7 @@ import { isPlayable, likelyUnsupported, type Engine, type FileKind, type FileSna
 import { segmentCount } from "./PieceBar"
 import { VideoControls } from "./VideoControls"
 import { useWebseedEvents } from "./useWebseedEvents"
+import { useStallWatchdog } from "./useStallWatchdog"
 import { ReportDialog } from "./ReportDialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -290,6 +291,8 @@ export function Player({
     done: !!snap?.done,
     log,
   })
+  // WebTorrent SW 流的请求偶尔永久挂起：检测到卡死且数据已在本地时自动重新加载
+  useStallWatchdog({ video: videoRef, url: file?.kind === "video" ? url : null, segments, log })
   const unsupported = file ? likelyUnsupported(file.name) || likelyUnsupported(snap?.name ?? "") : null
   useDocumentTitle(file?.name ?? snap?.name ?? play?.name ?? hint?.title ?? "播放")
 
