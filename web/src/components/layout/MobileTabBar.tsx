@@ -1,14 +1,12 @@
 import { NavLink } from "react-router-dom"
 import { Home, Search, User } from "lucide-react"
-import { useUser } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 
 export function MobileTabBar() {
-  const { user } = useUser()
   const tabs = [
     { to: "/", label: "首页", icon: Home, end: true },
     { to: "/search", label: "搜索", icon: Search },
-    { to: user ? "/me" : "/login", label: user ? "我的" : "登录", icon: User },
+    { to: "/me", label: "我的", icon: User },
   ]
   return (
     <nav

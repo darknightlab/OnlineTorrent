@@ -35,6 +35,8 @@ export function Shell() {
         id="main"
         className={cn(
           "flex-1",
+          // 移动端没有顶栏：避开刘海/状态栏
+          !isAdmin && "pt-safe md:pt-0",
           // 为移动端底部 Tab 栏留出空间
           !isAdmin && "pb-[calc(3.75rem+env(safe-area-inset-bottom))] md:pb-0",
         )}

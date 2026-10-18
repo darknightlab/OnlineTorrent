@@ -1,7 +1,7 @@
 import { Check, Monitor, Moon, Sun } from "lucide-react"
 import { useTheme, type Theme } from "@/lib/theme"
 import { Button } from "@/components/ui/button"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 
 const options: { value: Theme; label: string; icon: typeof Sun }[] = [
   { value: "light", label: "浅色", icon: Sun },
@@ -55,5 +55,28 @@ export function ThemeSegmented() {
         </button>
       ))}
     </div>
+  )
+}
+
+/** 用户菜单里的主题选项（不关闭菜单） */
+export function ThemeMenuItems() {
+  const { theme, setTheme } = useTheme()
+  return (
+    <>
+      <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">主题</DropdownMenuLabel>
+      {options.map((o) => (
+        <DropdownMenuItem
+          key={o.value}
+          onSelect={(e) => {
+            e.preventDefault()
+            setTheme(o.value)
+          }}
+        >
+          <o.icon />
+          <span className="flex-1">{o.label}</span>
+          {theme === o.value && <Check className="!text-primary-text" />}
+        </DropdownMenuItem>
+      ))}
+    </>
   )
 }

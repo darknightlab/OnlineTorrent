@@ -382,7 +382,7 @@ export function Player({
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-5 xl:grid-cols-[minmax(0,1fr)_400px]">
       <section className="min-w-0">
         {/* 播放区：移动端吸顶、全宽 */}
-        <div className="sticky top-14 z-20 -mx-3 bg-black sm:-mx-4 lg:static lg:mx-0 lg:overflow-hidden lg:rounded-xl lg:shadow-lg">
+        <div className="sticky top-[env(safe-area-inset-top)] z-20 -mx-3 bg-black sm:-mx-4 md:top-14 lg:static lg:mx-0 lg:overflow-hidden lg:rounded-xl lg:shadow-lg">
           <div
             ref={stageRef}
             tabIndex={url && file?.kind === "video" ? 0 : undefined}

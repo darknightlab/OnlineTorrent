@@ -1,10 +1,9 @@
-import { Link, useLocation, useNavigate } from "react-router-dom"
-import { LogIn, LogOut, Shield, User as UserIcon } from "lucide-react"
+import { useLocation, useNavigate } from "react-router-dom"
+import { LogIn, LogOut, Shield, User as UserIcon, UserPlus } from "lucide-react"
 import { Logo } from "./Logo"
-import { ThemeToggle } from "./ThemeToggle"
+import { ThemeMenuItems } from "./ThemeToggle"
 import { Container } from "./Container"
 import { TorrentSearchBox } from "@/components/TorrentSearchBox"
-import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,20 +14,26 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useLogout, useUser } from "@/lib/queries"
 import { RoleBadge } from "@/components/badges"
+import { cn } from "@/lib/utils"
 
 
 export function Header() {
-  // 搜索页自带大搜索框，顶栏不再重复显示（保留占位以免右侧按钮跳动）
-  const onSearch = /^\/search(\/|$)/.test(useLocation().pathname)
+  const { pathname } = useLocation()
+  // 搜索页自带大搜索框，顶栏不再重复显示
+  const onSearch = /^\/search(\/|$)/.test(pathname)
+  // 移动端不显示顶栏（用底部导航）；后台页面除外（后台的移动端菜单依赖顶栏）
+  const isAdmin = pathname.startsWith("/admin")
   return (
-    <header className="sticky top-0 z-40 border-b bg-header pt-safe backdrop-blur-md supports-[backdrop-filter]:bg-header">
-      <Container className="flex h-14 items-center gap-3 lg:gap-5">
+    <header
+      className={cn(
+        "sticky top-0 z-40 border-b bg-header pt-safe backdrop-blur-md supports-[backdrop-filter]:bg-header",
+        !isAdmin && "hidden md:block",
+      )}
+    >
+      <Container className="flex h-14 items-center gap-3">
         <Logo />
-        <div className="mx-auto hidden min-w-0 flex-1 md:block md:max-w-md lg:max-w-xl">
-          {!onSearch && <TorrentSearchBox size="sm" />}
-        </div>
-        <div className="ml-auto flex shrink-0 items-center gap-0.5 md:ml-0">
-          <ThemeToggle />
+        <div className="ml-auto flex min-w-0 items-center gap-2">
+          {!onSearch && <TorrentSearchBox size="sm" className="hidden w-56 md:block lg:w-72" />}
           <UserMenu />
         </div>
       </Container>
@@ -43,12 +48,29 @@ function UserMenu() {
   if (loading) return <div className="ml-1 h-8 w-8 animate-pulse rounded-full bg-muted" aria-hidden />
   if (!user) {
     return (
-      <Button asChild size="sm" className="ml-1 hidden sm:inline-flex">
-        <Link to="/login">
-          <LogIn />
-          登录
-        </Link>
-      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            aria-label="账户与设置"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <UserIcon className="h-5 w-5" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuItem onSelect={() => navigate("/login")}>
+            <LogIn />
+            登录
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => navigate("/register")}>
+            <UserPlus />
+            注册
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <ThemeMenuItems />
+        </DropdownMenuContent>
+      </DropdownMenu>
     )
   }
   return (
@@ -80,6 +102,8 @@ function UserMenu() {
             后台管理
           </DropdownMenuItem>
         )}
+        <DropdownMenuSeparator />
+        <ThemeMenuItems />
         <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => logout.mutate()}>
           <LogOut />
