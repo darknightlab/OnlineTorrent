@@ -78,6 +78,7 @@
 - 时间表自动选种优先 AVC/H.264（浏览器兼容），HEVC/10bit 降权。
 
 ## TODO（低优先级）
+- **系列（series）**：一个系列包含多个条目（subject，一般一季一个）。可用 bgm.tv `/v0/subjects/{id}/subjects` 的续集/前传关系或 anime-offline-database 聚合；页面 `/series/{provider}/{id}`，条目页显示「同系列其他季」。
 - dandanplay 弹幕（需 AppId/Secret，用户暂无账号）
 - 番剧页按集分组（映射库已有文件级集数，前端目前是种子列表 + 字幕组筛选）
 - 映射纠错的后台界面（API `PUT /meta/v1/torrents/{ih}/files/{idx}` 已有）
