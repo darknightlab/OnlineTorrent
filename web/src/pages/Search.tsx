@@ -33,7 +33,7 @@ export default function SearchPage() {
   return (
     <Container className="py-4 sm:py-6">
       <div className="mx-auto max-w-3xl">
-        <TorrentSearchBox key={q} defaultValue={q} autoFocus={!q} placeholder="输入关键词搜索种子，或粘贴磁力链接" />
+        <TorrentSearchBox key={q} size="sm" defaultValue={q} autoFocus={!q} />
         {!q && (
           <div className="mt-4 flex flex-wrap items-center gap-2 text-[13px]">
             <span className="text-muted-foreground">试试：</span>
@@ -74,7 +74,7 @@ export default function SearchPage() {
           {data && <Pager page={data.page} pageCount={data.page_count} onChange={(p) => setSp(p > 1 ? { page: String(p) } : {})} />}
         </section>
       )}
-      {!q && <EmptyState icon={SearchIcon} className="mt-8" title="搜索 bangumi.moe 上的种子" description="支持番剧名、字幕组、分辨率等关键词，多个关键词用空格分隔。" />}
+      {!q && <EmptyState icon={SearchIcon} className="mt-8" title="搜索种子" description="支持番剧名、字幕组、分辨率等关键词，多个关键词用空格分隔。" />}
     </Container>
   )
 }
