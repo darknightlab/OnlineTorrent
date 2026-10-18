@@ -57,6 +57,9 @@ type siteResp struct {
 	ICEServers       []map[string]any `json:"ice_servers"`
 	MaxAutoSizeBytes int64            `json:"max_auto_size_bytes"`
 	Webseed          siteWebseed      `json:"webseed"`
+	// MaxPushSizeBytes is the playable torrent size limit; the browser cache budget is
+	// min(this, 25% of the origin storage quota).
+	MaxPushSizeBytes int64 `json:"max_push_size_bytes"`
 }
 
 type siteWebseed struct {
@@ -80,7 +83,8 @@ func (s *Server) getSite(w http.ResponseWriter, r *http.Request) error {
 		Name: s.St.Str(store.KeySiteName), AnnouncementMD: s.St.Str(store.KeyAnnouncement),
 		Registration: reg, InviteRequired: reg == "invite", TurnstileSiteKey: s.St.Str(store.KeyTurnstileSiteKey),
 		Trackers: trackers, ICEServers: ice, MaxAutoSizeBytes: int64(s.St.Num(store.KeyMaxAutoSize)) << 20,
-		Webseed: siteWebseed{Enabled: s.St.Bool(store.KeyWebseedEnabled)},
+		Webseed:          siteWebseed{Enabled: s.St.Bool(store.KeyWebseedEnabled)},
+		MaxPushSizeBytes: int64(s.St.Num(store.KeyMaxPushSize)) << 20,
 	})
 	return nil
 }

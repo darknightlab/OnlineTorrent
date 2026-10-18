@@ -81,7 +81,7 @@ class WTSession implements Session {
       // ut_metadata 需要已连接的节点；没有任何连接就拿到元数据，说明来自 xs=（HTTP）
       if (this.xs && torrent.wires.length === 0) this.log("info", "已通过 HTTP 从服务器获取种子信息")
       this.log("info", `已获取种子信息：${torrent.name}`)
-      this.prioritizeEdges()
+      this.applyFocus()
       this.listeners.metadata.forEach((cb) => cb())
     })
     torrent.on("ready", () => live() && this.log("info", "种子已就绪，开始下载"))
@@ -117,8 +117,9 @@ class WTSession implements Session {
       const ih = old.infoHash
       await new Promise<void>((r) => old.destroy({ destroyStore: true }, () => r()))
       if (this.destroyed) return false
-      const t = this.client.add(data, { announce: this.announce })
+      const t = this.client.add(data, { announce: this.announce, deselect: true })
       this.xs = false // 元数据来自 .torrent，不再是 xs=
+      this.applied = null
       this.attach(t)
       t.on("infoHash", () => {
         if (ih && t.infoHash !== ih) this.log("error", `服务器返回的种子文件与磁力不符（${t.infoHash}）`)
@@ -140,13 +141,37 @@ class WTSession implements Session {
     this.listeners.log.forEach((cb) => cb(level, msg))
   }
 
-  /** 每个文件首尾 piece 优先（旧版行为） */
-  private prioritizeEdges() {
-    for (const f of this.torrent.files) {
-      if (!f.length) continue
-      this.torrent.select(f._endPiece, f._endPiece, EDGE_PRIORITY)
-      this.torrent.select(f._startPiece, f._startPiece, EDGE_PRIORITY)
+  /**
+   * 只下载正在播放的文件：种子以 deselect 方式添加（webtorrent 默认会选中整个种子，合集里每一集都会被下载；
+   * 浏览器按 OPFS 文件逻辑大小计配额，写一下文件末尾就会占满整集大小）。
+   * 选中当前文件的全部 piece，首尾 piece 优先（容器索引 moov / Cues 通常在首尾，起播与拖动都需要）。
+   * 播放器读取（拖动进度条）时 webtorrent 会为读取范围另加高优先级选择，不受影响。
+   */
+  private focused: number | null = null
+  private applied: { start: number; end: number } | null = null
+
+  focusFile(index: number | null) {
+    this.focused = index
+    this.applyFocus()
+  }
+
+  private applyFocus() {
+    const t = this.torrent
+    if (this.destroyed || !t?.files?.length) return
+    const f = this.focused !== null ? t.files[this.focused] : undefined
+    const next = f && f.length ? { start: f._startPiece, end: f._endPiece } : null
+    const prev = this.applied
+    if (prev && next && prev.start === next.start && prev.end === next.end) return
+    if (prev) {
+      t.deselect(prev.start, prev.end)
+      t.deselect(prev.start, prev.start)
+      t.deselect(prev.end, prev.end)
     }
+    this.applied = next
+    if (!next) return
+    t.select(next.start, next.end, 0)
+    t.select(next.end, next.end, EDGE_PRIORITY)
+    t.select(next.start, next.start, EDGE_PRIORITY)
   }
 
   on<K extends keyof SessionEvents>(ev: K, cb: SessionEvents[K]) {
@@ -262,7 +287,7 @@ export const webtorrentEngine: Engine = {
     // 同一 infohash 已存在（例如 StrictMode 重复挂载）时先移除
     const existing = await client.get(magnet).catch(() => null)
     if (existing) await new Promise<void>((r) => existing.destroy({ destroyStore: true }, () => r()))
-    const torrent = client.add(magnet, { announce: opts.announce })
+    const torrent = client.add(magnet, { announce: opts.announce, deselect: true })
     return new WTSession(client, torrent, streaming, opts.announce, /[?&]xs=https?%3A/i.test(magnet))
   },
   streamingReady() {

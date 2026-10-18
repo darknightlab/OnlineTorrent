@@ -312,6 +312,10 @@ export function Player({
   useEffect(() => onCurrentRef.current?.(current), [current])
 
   const file = current !== null ? snap?.files[current] : undefined
+  // 只下载正在播放的文件（合集里其余文件不下载）；元数据就绪前调用会在就绪后生效
+  useEffect(() => {
+    session?.focusFile?.(current)
+  }, [session, current])
   const url = session && current !== null && streaming ? session.fileURL(current) : null
   useWebseedEvents({
     session,

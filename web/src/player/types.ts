@@ -59,6 +59,8 @@ export interface Session {
    * 返回是否已采用；已有元数据时不做任何事。mock 引擎不实现。
    */
   loadTorrentFile?(data: Uint8Array): Promise<boolean>
+  /** 只下载这个文件（其余文件不下载；null = 都不下载）。元数据就绪前调用会在就绪后生效。 */
+  focusFile?(index: number | null): void
   on<K extends keyof SessionEvents>(ev: K, cb: SessionEvents[K]): () => void
   destroy(): void
 }
