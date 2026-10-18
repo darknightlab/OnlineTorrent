@@ -28,7 +28,8 @@ type statusFile struct {
 	Size    int64          `json:"size_bytes"`
 	Kind    string         `json:"kind"`
 	Subject *statusSubject `json:"subject,omitempty"`
-	Episode *float64       `json:"episode,omitempty"`
+	Episode *float64       `json:"episode,omitempty"`     // main episodes only (kind episode)
+	Key     string         `json:"episode_key,omitempty"` // "12", "12.5", "sp1", "ncop1"… (with subject)
 }
 
 type statusResp struct {
@@ -59,7 +60,10 @@ func (s *Server) getTorrentStatus(w http.ResponseWriter, r *http.Request) error 
 					if v, err := strconv.ParseInt(f.Work.External["bgm"], 10, 64); err == nil {
 						sf.Subject.BgmID = &v
 					}
-					sf.Episode = f.Episode
+					if f.Kind == "episode" {
+						sf.Episode = f.Episode
+					}
+					sf.Key = f.EpisodeKey
 				}
 				out.Files = append(out.Files, sf)
 			}

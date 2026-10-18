@@ -74,6 +74,9 @@ func serve(args []string) error {
 
 	// every background goroutine is tracked so the DBs are only closed after they exit
 	var wg sync.WaitGroup
+	// one-off: re-classify stored files (specials keep their number, see meta.Reclassify)
+	wg.Add(1)
+	go func() { defer wg.Done(); ms.ReclassifyOnce(ctx, log) }()
 	pool := qb.NewPool(st, log)
 	if err := pool.Reload(ctx); err != nil {
 		return err

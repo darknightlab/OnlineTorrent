@@ -33,6 +33,7 @@ func main() {
 	defer ms.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	go ms.ReclassifyOnce(ctx, log)
 	go func() {
 		for {
 			hc := &http.Client{Timeout: 3 * time.Minute}

@@ -12,6 +12,7 @@ import (
 	"github.com/darknightlab/onlinetorrent/internal/catalog"
 	"github.com/darknightlab/onlinetorrent/internal/httpx"
 	"github.com/darknightlab/onlinetorrent/internal/magnet"
+	"github.com/darknightlab/onlinetorrent/internal/meta"
 	"github.com/darknightlab/onlinetorrent/internal/policy"
 	"github.com/darknightlab/onlinetorrent/internal/store"
 )
@@ -27,8 +28,10 @@ type playMeta struct {
 	SubjectKey string   `json:"subject_key"`
 	BgmID      string   `json:"bgm_id,omitempty"`
 	Title      string   `json:"title"`
-	Episode    *float64 `json:"episode"`
-	FileIndex  int      `json:"file_index"` // the mapped file (watch/hash/{ih}/file/{file_index})
+	Episode    *float64 `json:"episode"`       // main episodes only (null for specials)
+	Key        string   `json:"episode_key"`   // "12", "12.5", "sp1", "ncop1"…
+	Label      string   `json:"episode_label"` // "第 12 话", "SP1", "NCOP1"…
+	FileIndex  int      `json:"file_index"`    // the mapped file (watch/hash/{ih}/file/{file_index})
 }
 
 type playResp struct {
@@ -159,19 +162,42 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request, in playReq) error 
 		Magnet: magnet.Build(t.Infohash, t.Title, s.St.List(store.KeyTrackers)), SeededBy: []string{}, Webseeds: []string{},
 	}
 	if tm, err := s.Meta.GetTorrentMap(ctx, t.Infohash); err == nil {
-		for _, f := range tm.Files {
-			if f.Work != nil && f.Kind == "episode" {
-				title := f.Work.TitleCN
-				if title == "" {
-					title = f.Work.Title
-				}
-				resp.Meta = &playMeta{SubjectID: f.Work.ID, SubjectKey: f.Work.Key, BgmID: f.Work.External["bgm"], Title: title, Episode: f.Episode, FileIndex: f.Index}
-				break
-			}
-		}
+		resp.Meta = playMetaOf(tm)
 	}
 	httpx.JSON(w, 200, resp)
 	return nil
+}
+
+// playMetaOf picks the first mapped main episode of the torrent, else its first mapped
+// special (a torrent of only NCOP/NCED, SP, …).
+func playMetaOf(tm *meta.TorrentMap) *playMeta {
+	var pick *meta.FileMap
+	for i := range tm.Files {
+		f := &tm.Files[i]
+		if f.Work == nil || f.EpisodeKey == "" {
+			continue
+		}
+		if f.Kind == "episode" {
+			pick = f
+			break
+		}
+		if pick == nil {
+			pick = f
+		}
+	}
+	if pick == nil {
+		return nil
+	}
+	title := pick.Work.TitleCN
+	if title == "" {
+		title = pick.Work.Title
+	}
+	key, _ := meta.ParseEpisodeKey(pick.EpisodeKey)
+	m := &playMeta{SubjectID: pick.Work.ID, SubjectKey: pick.Work.Key, BgmID: pick.Work.External["bgm"], Title: title, Key: key.String(), Label: key.Label(), FileIndex: pick.Index}
+	if key.Kind == meta.KeyMain {
+		m.Episode = pick.Episode
+	}
+	return m
 }
 
 // markSeeded remembers a seed request (GET /torrents/hash/{ih} reports "pending").

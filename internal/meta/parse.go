@@ -27,6 +27,10 @@ var (
 	reNC       = regexp.MustCompile(`(?i)\b(NCOP|NCED)\s?(\d{0,3})\b`)
 	reSpecial  = regexp.MustCompile(`(?i)\b(NCOP|NCED|OP|ED|PV|CM|Preview|Menu|SP|OVA|OAD|Special|Trailer|Teaser)\s?(\d{0,3})\b`)
 	reLastDash = regexp.MustCompile(`\s[-–—]\s`)
+	// specials written as an uppercase token with the number attached ("Show SP02", "CM02"),
+	// or a whole file name that is just a special token ("ncop.mkv", "PV 1.mkv")
+	reAttached = regexp.MustCompile(`\b(SP|OVA|OAD|PV|CM)(\d{1,3})\b`)
+	reWholeSP  = regexp.MustCompile(`(?i)^(NCOP|NCED|OP|ED|PV|CM|SP|OVA|OAD|Special|Trailer|Teaser)\s?(\d{0,3})$`)
 	// trailing episode for plain file names ("Show 03.mp4"): exactly two digits or a
 	// zero-padded number, preceded by a word, so titles like "Mob Psycho 100" don't match.
 	reTrailing = regexp.MustCompile(`\S\s+(\d{2}|0\d{2,3})(?:v\d)?\s*$`)
@@ -35,7 +39,7 @@ var (
 // ParsedName is the result of release-name parsing.
 type ParsedName struct {
 	Episode    *float64
-	Kind       string // episode|sp|op|ed|extra|other
+	Kind       string // episode|sp|op|ed|pv|cm|extra|other
 	Confidence float64
 }
 
@@ -107,13 +111,19 @@ func parse(name string, allowTrailing bool) ParsedName {
 			return p
 		}
 	}
+	noBr := strings.TrimSpace(reBrackets.ReplaceAllString(clean, " "))
+	if p, ok := special(reWholeSP.FindStringSubmatch(noBr)); ok {
+		return p
+	}
+	if p, ok := special(reAttached.FindStringSubmatch(noBr)); ok {
+		return p
+	}
 
 	// 3. weaker markers
 	if m := reEPWord.FindStringSubmatch(clean); m != nil {
 		return episode(f64(m[1]), 0.8)
 	}
 	if allowTrailing {
-		noBr := strings.TrimSpace(reBrackets.ReplaceAllString(clean, " "))
 		if m := reTrailing.FindStringSubmatch(noBr); m != nil {
 			return episode(f64(m[1]), 0.6)
 		}
@@ -133,29 +143,46 @@ func special(m []string) (ParsedName, bool) {
 		return ParsedName{}, false
 	}
 	k := strings.ToUpper(m[1])
+	// specials keep their number; unnumbered ones are number 1
+	num := f64(m[2])
+	if num == nil {
+		one := 1.0
+		num = &one
+	}
 	switch {
 	case strings.HasPrefix(k, "NCOP") || k == "OP":
-		return ParsedName{Kind: "op", Confidence: 0.6}, true
+		return ParsedName{Kind: "op", Episode: num, Confidence: 0.6}, true
 	case strings.HasPrefix(k, "NCED") || k == "ED":
-		return ParsedName{Kind: "ed", Confidence: 0.6}, true
+		return ParsedName{Kind: "ed", Episode: num, Confidence: 0.6}, true
 	case k == "SP" || k == "OVA" || k == "OAD" || k == "SPECIAL":
-		return ParsedName{Kind: "sp", Episode: f64(m[2]), Confidence: 0.5}, true
+		return ParsedName{Kind: "sp", Episode: num, Confidence: 0.5}, true
+	case k == "PV" || k == "TRAILER" || k == "TEASER":
+		return ParsedName{Kind: "pv", Episode: num, Confidence: 0.5}, true
+	case k == "CM":
+		return ParsedName{Kind: "cm", Episode: num, Confidence: 0.5}, true
 	}
-	return ParsedName{Kind: "extra", Confidence: 0.5}, true
+	return ParsedName{Kind: "extra", Confidence: 0.5}, true // Menu, Preview (予告)
 }
 
 var (
 	// directories that hold specials/extras in batch releases ("SPs", "CDs", "Scans", "特典映像", …)
 	reSPDir    = regexp.MustCompile(`(?i)^(SPs?|Specials?|OVAs?|OADs?)$`)
+	// directories of one special kind (the file name may only carry a number: "PVs/Show 01.mkv")
+	rePVDir   = regexp.MustCompile(`(?i)^(PVs?|Trailers?|Teasers?)$`)
+	reCMDir   = regexp.MustCompile(`(?i)^CMs?$`)
+	reNCOPDir = regexp.MustCompile(`(?i)^NCOPs?$`)
+	reNCEDDir = regexp.MustCompile(`(?i)^NCEDs?$`)
 	reExtraDir = regexp.MustCompile(`(?i)^(Extras?|Bonus|Menus?|CMs?|PVs?|Previews?|Trailers?|Samples?|Scans|NC|NCOP|NCED|NCOPED|NC[\s._-]?OP[\s._-]?ED|Others?|Making|Interview)s?$|特典|映像特典|予告|番宣|无字|NCOP|NCED`)
 	// anywhere in the file name: samples and bonus material
 	reExtraName = regexp.MustCompile(`(?i)\bsample\b|特典|映像特典|予告|番宣|\bmaking\b`)
 )
 
-// ClassifyFile decides the kind (episode|sp|op|ed|extra|other) and episode number of one
-// file of a torrent. Non-video files are "other"; NCOP/NCED, PV, CM, Menu, Sample and
-// 特典 material are op/ed/extra (never mapped to an episode). title is the torrent title,
-// used when the torrent has a single video whose own name carries no number.
+// ClassifyFile decides the kind (episode|sp|op|ed|pv|cm|extra|other) and episode number of
+// one file of a torrent. Non-video files are "other". Specials (sp, NCOP = op, NCED = ed,
+// pv, cm) keep their number (unnumbered = 1) and are mapped like episodes (episode key
+// "sp1", "ncop1", …); Menu, Sample, Preview and 特典 material are "extra" (never mapped).
+// title is the torrent title, used when the torrent has a single video whose own name
+// carries no number.
 func ClassifyFile(p, title string, videos int) ParsedName {
 	if !IsVideo(p) {
 		return ParsedName{Kind: "other"}
@@ -165,7 +192,8 @@ func ClassifyFile(p, title string, videos int) ParsedName {
 	name := dirs[len(dirs)-1]
 	dirs = dirs[:len(dirs)-1]
 	r := ParseEpisode(name)
-	if r.Kind == "op" || r.Kind == "ed" || r.Kind == "extra" {
+	switch r.Kind {
+	case "op", "ed", "pv", "cm", "extra":
 		return r
 	}
 	if reExtraName.MatchString(name) {
@@ -173,11 +201,25 @@ func ClassifyFile(p, title string, videos int) ParsedName {
 	}
 	for _, d := range dirs {
 		d = strings.TrimSpace(d)
-		if reSPDir.MatchString(d) {
-			if r.Kind == "episode" || r.Kind == "sp" {
-				return ParsedName{Kind: "sp", Episode: r.Episode, Confidence: 0.5}
+		dirKind := ""
+		switch {
+		case reSPDir.MatchString(d):
+			dirKind = "sp"
+		case rePVDir.MatchString(d):
+			dirKind = "pv"
+		case reCMDir.MatchString(d):
+			dirKind = "cm"
+		case reNCOPDir.MatchString(d):
+			dirKind = "op"
+		case reNCEDDir.MatchString(d):
+			dirKind = "ed"
+		}
+		if dirKind != "" {
+			if (r.Kind == "episode" || r.Kind == "sp") && r.Episode != nil {
+				return ParsedName{Kind: dirKind, Episode: r.Episode, Confidence: 0.5}
 			}
-			return ParsedName{Kind: "sp", Confidence: 0.4}
+			one := 1.0
+			return ParsedName{Kind: dirKind, Episode: &one, Confidence: 0.4}
 		}
 		if reExtraDir.MatchString(d) {
 			return ParsedName{Kind: "extra", Confidence: 0.5}
@@ -185,7 +227,7 @@ func ClassifyFile(p, title string, videos int) ParsedName {
 	}
 	if r.Episode == nil && r.Kind == "other" && videos == 1 && title != "" {
 		t := ParseTitle(title)
-		if t.Kind != "extra" && t.Kind != "op" && t.Kind != "ed" {
+		if t.Kind == "episode" || t.Kind == "sp" {
 			r = t
 		}
 	}

@@ -108,22 +108,40 @@ func (s *Store) Handler(authz Authz) http.Handler {
 			httpx.JSON(w, 200, wk)
 		}
 	})
+	// episode keys with mapped files: [{key, kind, number, label, files}]
+	mux.HandleFunc("GET /meta/v1/subjects/{provider}/{id}/episodes", func(w http.ResponseWriter, r *http.Request) {
+		wk, ok := subject(w, r)
+		if !ok {
+			return
+		}
+		keys, err := s.EpisodeKeys(r.Context(), wk.Key)
+		if err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		items := make([]map[string]any, 0, len(keys))
+		for _, k := range keys {
+			items = append(items, map[string]any{"key": k.Key.String(), "kind": k.Key.Kind, "number": k.Key.Number, "label": k.Key.Label(), "files": k.Files})
+		}
+		httpx.JSON(w, 200, map[string]any{"items": items})
+	})
+	// {ep} is an episode key: "12", "12.5", "sp1", "ncop1", …
 	mux.HandleFunc("GET /meta/v1/subjects/{provider}/{id}/episodes/{ep}/files", func(w http.ResponseWriter, r *http.Request) {
 		wk, ok := subject(w, r)
 		if !ok {
 			return
 		}
-		ep, okEp := atof(r.PathValue("ep"))
+		key, okEp := ParseEpisodeKey(r.PathValue("ep"))
 		if !okEp {
 			httpx.Fail(w, httpx.E(400, "bad_request", "无效集数"))
 			return
 		}
-		files, err := s.EpisodeFiles(r.Context(), wk.Key, ep)
+		files, err := s.EpisodeFiles(r.Context(), wk.Key, key)
 		if err != nil {
 			httpx.Fail(w, err)
 			return
 		}
-		httpx.JSON(w, 200, map[string]any{"items": files})
+		httpx.JSON(w, 200, map[string]any{"key": key.String(), "items": files})
 	})
 	return mux
 }

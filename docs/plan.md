@@ -146,3 +146,56 @@ RSS 信息（标题、发布时间、字幕组、来源条目 ID）作补充；�
 ### 以后（TODO）
 - 统一历史补抓；TVDB / AniDB（AniDB 用其 titles dump，遵守限流）。
 - 内置 BT 客户端 / tracker（统计用户上传量）。
+
+## bangumi Archive 导入（bgm.tv 官方每周数据 dump）
+
+来源：<https://github.com/bangumi/Archive>（每周三 05:00 北京时间更新；官方说明「方便不需要实时数据的场景，减少爬虫」）。
+最新文件：`https://raw.githubusercontent.com/bangumi/Archive/master/aux/latest.json` → `{browser_download_url, size, digest(sha256), created_at}`。
+
+### dump 结构（2026-10-13 实测）
+zip 内 9 个 jsonlines 文件，只用 3 个：
+
+| 文件 | 压缩 | 解压 | 用途 |
+|---|---|---|---|
+| `subject.jsonlines` | 290 MB | 987 MB | 条目（`type=2` 为动画） |
+| `episode.jsonlines` | 67 MB | 340 MB | 章节 |
+| `subject-relations.jsonlines` | 6 MB | 75 MB | 条目关联（系列） |
+
+字段：
+- subject：`id, type, name, name_cn, infobox(wiki 原文), platform, summary, nsfw, date, tags, score, rank, meta_tags…`。infobox 里有 `别名={[…][…]}`、`话数`、`放送开始`、`放送星期`、`播放结束`、`官方网站`。
+- episode：`id, subject_id, sort, type(0 正片/1 SP/2 OP/3 ED/4 PV/5 MAD/6 其他), name, name_cn, airdate, duration, disc, description`。
+- subject-relations：`subject_id, relation_type, related_subject_id, order`（类型码见 bangumi/common：2 前传、3 续集、4 总集篇、5 全集、6 番外篇…）。
+
+### 下载：HTTP Range 流式读取，不落盘
+GitHub release 支持 Range（不支持后缀式 `bytes=-N`，要用绝对区间）。
+1. 读 `latest.json`；`digest` 与上次相同则跳过。
+2. Range 取 zip 末尾 64 KB → 解析中央目录，得到各文件的本地头偏移和压缩大小（兼容 zip64）。
+3. 对 3 个需要的文件各发一个 Range 请求 → 跳过本地头 → `flate` 流式解压 → 按行解析 JSON（行可能很长，用 `bufio.Reader`，不用默认 Scanner）。
+4. 总下载约 363 MB/周，内存恒定，不占磁盘。最后校验整体 sha256 不可行（只下载部分），改为校验每个文件的 CRC32（中央目录里有）。
+
+### 导入（写入映射库 meta.db）
+- **条目**：只保留 `type=2`。键 `bgm:{id}`，已有作品（来自 bangumi-data）就合并，否则新建，分配新的本站数字 ID（已有 ID 不变）。
+  - 合并优先级：放送时间、各平台外部 ID 以 bangumi-data 为准；中文名、简介、别名（取并集）、平台类型、NSFW、标签、评分、排名、开播/完结日期以 dump 为准。
+  - infobox 用 `github.com/bangumi/wiki-parser-go` 解析。
+  - 封面：dump 不含图片，沿用现有方式（访问时按需解析 lain.bgm.tv 地址并缓存）。
+- **章节**：新表 `episodes(work_key, bgm_ep_id, type, sort, name, name_cn, airdate, duration)`；不存长简介（省空间）。类型映射到集标识：0→正片 `{sort}`、1→`sp{sort}`、2→`ncop{sort}`、3→`nced{sort}`、4→`pv{sort}`；5 MAD / 6 其他暂不进选集。
+  - 注意：分割放送的第二季，bangumi 的 `sort` 可能延续第一季（13–24），而字幕组文件写 01–12。刮削时：文件集数 n 在该条目正片 `sort` 里存在就直接对应，否则按「该条目最小 sort + n − 1」换算。
+- **关联**：新表 `subject_relations(subject_bgm_id, related_bgm_id, relation_type, ord)`，两端都是动画才保存。之后用 前传/续集/总集篇/全集/番外篇 的连通分量生成「系列（series）」。
+- 批量写入：每 5000 行一个事务；写完后重建全文索引（`INSERT INTO works_fts(works_fts) VALUES('rebuild')`）。
+- 预计体积：动画条目约 3 万、章节约 30–40 万行，映射库增加约 50–150 MB（导入后实测再更新）。
+
+### 调度与后台
+- 每周三 06:00（北京时间）自动同步一次；启动时若从未同步过则立即同步。
+- 设置：`bgm_archive.enabled`（默认开）。
+- 后台「数据同步」：上次同步时间、dump 日期、digest、条目/章节/关联数量、耗时、错误；「立即同步」按钮（运行中返回 409）。
+
+### 同步后可以改进的地方
+- 选集列表改用官方章节数据（含 SP/OP/ED/PV），并显示每集标题、播出日期；无资源的集置灰。
+- 搜索的番剧结果全部来自本地（bgm.tv 实时搜索只作最后兜底）。
+- 别名大幅增加，刮削（尤其罗马音标题）命中率提高。
+- 条目页显示标签、评分、排名。
+- NSFW：作为策略规则可用的字段（`subject_nsfw`），默认不做处理，由管理员在「策略规则」里决定。
+- 系列页 `/series/{provider}/{id}`。
+
+### 顺序
+等「特殊集」功能完成并部署后再实施，避免同时改映射库。

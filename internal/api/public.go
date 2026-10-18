@@ -30,6 +30,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 	s.route(mux, "GET", "/api/v1/schedule", AccessConfigurable, "浏览", "新番时间表", []string{store.RoleGuest}, s.getSchedule)
 	s.route(mux, "GET", "/api/v1/subjects/{provider}/{id}", AccessConfigurable, "浏览", "条目详情（单季）", []string{store.RoleGuest}, s.getSubject)
+	s.route(mux, "GET", "/api/v1/subjects/{provider}/{id}/episodes", AccessConfigurable, "浏览", "选集列表（正片 + SP / NCOP / NCED / PV / CM）", []string{store.RoleGuest}, s.getEpisodes)
 	s.route(mux, "GET", "/api/v1/subjects/{provider}/{id}/episodes/{n}", AccessConfigurable, "浏览", "单集资源列表", []string{store.RoleGuest}, s.getEpisode)
 	s.route(mux, "GET", "/api/v1/search/{keyword}", AccessConfigurable, "浏览", "搜索（番剧 + 种子，本地库；本地无番剧时按需查询 bgm.tv / TMDB）", []string{store.RoleGuest}, s.getSearch)
 	s.route(mux, "GET", "/api/v1/torrents/hash/{ih}", AccessConfigurable, "浏览", "种子收录状态与文件刮削结果", []string{store.RoleGuest}, s.getTorrentStatus)

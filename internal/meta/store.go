@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -57,7 +58,7 @@ CREATE TABLE torrent_files (
 	file_index INTEGER NOT NULL,
 	path       TEXT NOT NULL,
 	size_bytes INTEGER NOT NULL DEFAULT 0,
-	kind       TEXT NOT NULL DEFAULT 'other',  -- episode|sp|op|ed|extra|other
+	kind       TEXT NOT NULL DEFAULT 'other',  -- episode|sp|op|ed|extra|other (+ pv|cm since migration 5)
 	work_key   TEXT REFERENCES works(key) ON DELETE SET NULL,
 	episode    REAL,                           -- 12.5 allowed for recap episodes
 	confidence REAL NOT NULL DEFAULT 0,
@@ -118,6 +119,14 @@ END;
 	// every crawled torrent counts as catalogue (no user-magnet floor)
 	`
 UPDATE torrents SET trusted = 1 WHERE source_kind IN ('rss', 'bangumi_moe');
+`,
+	// 5: specials keep their number and are mapped (kind sp|op|ed|pv|cm + episode = the
+	// special's number). meta_state holds one-off jobs; the re-classification of stored
+	// files runs from Go (ReclassifyOnce) because it needs the file-name parser.
+	`
+CREATE TABLE meta_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+INSERT INTO meta_state(key, value) VALUES ('reclassify_specials_v1', 'pending');
+CREATE INDEX torrent_files_key ON torrent_files(work_key, kind, episode);
 `}
 
 // Store is the meta database.
@@ -372,7 +381,8 @@ type FileMap struct {
 	Size       int64    `json:"size_bytes"`
 	Kind       string   `json:"kind"`
 	Work       *WorkRef `json:"work"`
-	Episode    *float64 `json:"episode"`
+	Episode    *float64 `json:"episode"`               // main episode number, or the special's number (kind sp|op|ed|pv|cm)
+	EpisodeKey string   `json:"episode_key,omitempty"` // "12", "12.5", "sp1", "ncop1"… (only for mappable kinds with a number)
 	Confidence float64  `json:"confidence"`
 	Status     string   `json:"status"`
 	Method     string   `json:"method"`
@@ -428,6 +438,9 @@ func (s *Store) GetTorrentMap(ctx context.Context, ih string) (*TorrentMap, erro
 			v := ep.Float64
 			f.Episode = &v
 		}
+		if k, ok := KeyOfFile(f.Kind, f.Episode); ok {
+			f.EpisodeKey = k.String()
+		}
 		tm.Files = append(tm.Files, f)
 	}
 	if err := rows.Err(); err != nil {
@@ -477,11 +490,11 @@ type EpisodeFile struct {
 	Trusted     bool    `json:"-"`
 }
 
-// EpisodeFiles lists files mapped to work+episode.
-func (s *Store) EpisodeFiles(ctx context.Context, workKey string, ep float64) ([]EpisodeFile, error) {
+// EpisodeFiles lists files mapped to work + episode key (main episode or special).
+func (s *Store) EpisodeFiles(ctx context.Context, workKey string, key EpisodeKey) ([]EpisodeFile, error) {
 	rows, err := s.R.QueryContext(ctx, `SELECT f.infohash,f.file_index,f.path,f.size_bytes,t.title,t.team,t.published_at,t.source_id,t.source,f.confidence,t.trusted
 		FROM torrent_files f JOIN torrents t ON t.infohash = f.infohash
-		WHERE f.work_key = ? AND f.episode = ? AND f.kind = 'episode' AND f.status != 'rejected' ORDER BY t.published_at DESC LIMIT 200`, workKey, ep)
+		WHERE f.work_key = ? AND f.kind = ? AND f.episode = ? AND f.status != 'rejected' ORDER BY t.published_at DESC LIMIT 200`, workKey, key.FileKind(), key.Number)
 	if err != nil {
 		return nil, err
 	}
@@ -494,6 +507,38 @@ func (s *Store) EpisodeFiles(ctx context.Context, workKey string, ep float64) ([
 		}
 		out = append(out, e)
 	}
+	return out, rows.Err()
+}
+
+// EpisodeCount is one episode key of a work with its number of mapped files.
+type EpisodeCount struct {
+	Key   EpisodeKey
+	Files int
+}
+
+// EpisodeKeys lists every episode key (main episodes and specials) that has mapped files
+// for the work, with the number of files, sorted by LessKey.
+func (s *Store) EpisodeKeys(ctx context.Context, workKey string) ([]EpisodeCount, error) {
+	rows, err := s.R.QueryContext(ctx, `SELECT kind, episode, COUNT(*) FROM torrent_files
+		WHERE work_key = ? AND episode IS NOT NULL AND kind IN ('episode','sp','op','ed','pv','cm') AND status != 'rejected'
+		GROUP BY kind, episode`, workKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []EpisodeCount{}
+	for rows.Next() {
+		var kind string
+		var ep float64
+		var n int
+		if err := rows.Scan(&kind, &ep, &n); err != nil {
+			return nil, err
+		}
+		if k, ok := KeyOfFile(kind, &ep); ok {
+			out = append(out, EpisodeCount{k, n})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return LessKey(out[i].Key, out[j].Key) })
 	return out, rows.Err()
 }
 
@@ -521,9 +566,12 @@ type SetFile struct {
 	SubjectID *int64   `json:"subject_id"` // preferred; resolved to WorkKey
 	WorkKey   *string  `json:"work_key"`
 	Episode   *float64 `json:"episode"`
-	Kind      string   `json:"kind"`
+	Kind      string   `json:"kind"`        // episode|sp|op|ed|pv|cm|extra|other (default episode)
+	Key       string   `json:"episode_key"` // alternative to kind+episode: "12.5", "sp1", "ncop1"…
 	Status    string   `json:"status"`
 }
+
+var fileKinds = map[string]bool{"episode": true, "sp": true, "op": true, "ed": true, "pv": true, "cm": true, "extra": true, "other": true}
 
 func (s *Store) CorrectFile(ctx context.Context, ih string, idx int, p SetFile, by string) error {
 	if p.Status == "" {
@@ -534,8 +582,18 @@ func (s *Store) CorrectFile(ctx context.Context, ih string, idx int, p SetFile, 
 	default:
 		return errors.New("invalid status")
 	}
+	if p.Key != "" {
+		k, ok := ParseEpisodeKey(p.Key)
+		if !ok {
+			return errors.New("invalid episode_key")
+		}
+		p.Kind, p.Episode = k.FileKind(), &k.Number
+	}
 	if p.Kind == "" {
 		p.Kind = "episode"
+	}
+	if !fileKinds[p.Kind] {
+		return errors.New("invalid kind")
 	}
 	var wk any
 	if p.WorkKey != nil && *p.WorkKey != "" {
@@ -550,9 +608,4 @@ func (s *Store) CorrectFile(ctx context.Context, ih string, idx int, p SetFile, 
 		return store.ErrNotFound
 	}
 	return nil
-}
-
-func atof(s string) (float64, bool) {
-	v, err := strconv.ParseFloat(s, 64)
-	return v, err == nil
 }

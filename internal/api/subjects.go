@@ -4,8 +4,8 @@ import (
 	"errors"
 	"net/http"
 	"regexp"
+	"math"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/darknightlab/onlinetorrent/internal/catalog"
@@ -93,7 +93,78 @@ var (
 	reEpCHS  = regexp.MustCompile(`(?i)简|chs|\bgb\b|\bsc\b`)
 )
 
+// episodeItem is one entry of the episode list (选集).
+type episodeItem struct {
+	Key     string  `json:"key"`
+	Kind    string  `json:"kind"` // main|sp|ncop|nced|pv|cm
+	Number  float64 `json:"number"`
+	Label   string  `json:"label"`
+	Sources int     `json:"sources"`         // mapped files
+	Aired   *bool   `json:"aired,omitempty"` // main episodes only: within the aired count of the schedule
+}
+
+// maxListedEpisodes bounds the 1..n range of main episodes in the list.
+const maxListedEpisodes = 2000
+
+// episodeList merges the aired main episodes (1..max(episodes_aired, highest mapped integer
+// episode)) with every episode key that has mapped files (decimals, 0, specials).
+func episodeList(aired int, mapped []meta.EpisodeCount) []episodeItem {
+	counts := map[meta.EpisodeKey]int{}
+	top := aired
+	for _, m := range mapped {
+		counts[m.Key] = m.Files
+		if m.Key.Kind == meta.KeyMain && m.Key.Number == math.Trunc(m.Key.Number) && int(m.Key.Number) > top {
+			top = int(m.Key.Number)
+		}
+	}
+	top = min(top, maxListedEpisodes)
+	keys := make([]meta.EpisodeKey, 0, top+len(mapped))
+	seen := map[meta.EpisodeKey]bool{}
+	for n := 1; n <= top; n++ {
+		k := meta.EpisodeKey{Kind: meta.KeyMain, Number: float64(n)}
+		keys, seen[k] = append(keys, k), true
+	}
+	for _, m := range mapped {
+		if !seen[m.Key] {
+			keys, seen[m.Key] = append(keys, m.Key), true
+		}
+	}
+	sort.SliceStable(keys, func(i, j int) bool { return meta.LessKey(keys[i], keys[j]) })
+	out := make([]episodeItem, len(keys))
+	for i, k := range keys {
+		it := episodeItem{Key: k.String(), Kind: k.Kind, Number: k.Number, Label: k.Label(), Sources: counts[k]}
+		if k.Kind == meta.KeyMain {
+			a := k.Number >= 1 && k.Number <= float64(aired)
+			it.Aired = &a
+		}
+		out[i] = it
+	}
+	return out
+}
+
+// GET /api/v1/subjects/{provider}/{id}/episodes — the episode list (选集): aired main
+// episodes plus every episode key with mapped files, main episodes first, then specials.
+func (s *Server) getEpisodes(w http.ResponseWriter, r *http.Request) error {
+	work, err := s.resolveSubject(r)
+	if err != nil {
+		return err
+	}
+	mapped, err := s.Meta.EpisodeKeys(r.Context(), work.Key)
+	if err != nil {
+		return err
+	}
+	aired := 0
+	if item := s.Cat.ScheduleItemByKey(work.Key); item != nil {
+		aired = item.EpisodesAired
+	} else if item, _ := s.Cat.ItemFor(work, time.Now()); item != nil {
+		aired = item.EpisodesAired
+	}
+	httpx.JSON(w, 200, map[string]any{"items": episodeList(aired, mapped)})
+	return nil
+}
+
 // GET /api/v1/subjects/{provider}/{id}/episodes/{n}
+// {n} is an episode key ("12", "12.5", "0", "sp1", "ncop1", …; see meta.ParseEpisodeKey).
 // Lists every known file of that episode with per-user access; items[0] is the
 // automatic pick (playable for this user, browser friendly codec, sensible size).
 func (s *Server) getEpisode(w http.ResponseWriter, r *http.Request) error {
@@ -101,11 +172,11 @@ func (s *Server) getEpisode(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	ep, err := strconv.ParseFloat(r.PathValue("n"), 64)
-	if err != nil || ep < 0 || ep > 5000 {
+	key, ok := meta.ParseEpisodeKey(r.PathValue("n"))
+	if !ok {
 		return httpx.E(400, "bad_request", "无效集数")
 	}
-	files, err := s.Meta.EpisodeFiles(r.Context(), work.Key, ep)
+	files, err := s.Meta.EpisodeFiles(r.Context(), work.Key, key)
 	if err != nil {
 		return err
 	}
@@ -153,6 +224,10 @@ func (s *Server) getEpisode(w http.ResponseWriter, r *http.Request) error {
 	for i := range list {
 		items[i] = list[i].episodeFile
 	}
-	httpx.JSON(w, 200, map[string]any{"subject": s.subjectView(r, work), "episode": ep, "items": items})
+	out := map[string]any{"subject": s.subjectView(r, work), "key": key.String(), "kind": key.Kind, "number": key.Number, "label": key.Label(), "items": items}
+	if key.Kind == meta.KeyMain {
+		out["episode"] = key.Number
+	}
+	httpx.JSON(w, 200, out)
 	return nil
 }

@@ -59,29 +59,8 @@ func (s *Store) Match(ctx context.Context, t TorrentInput) error {
 		}
 	}
 	for _, f := range t.Files {
-		p := ClassifyFile(f.Path, t.Title, videos)
-		kind := p.Kind
-		if IsVideo(f.Path) && kind == "other" && p.Episode == nil && videos == 1 && work != nil && strings.EqualFold(work.Type, "movie") {
-			one := 1.0
-			kind, p.Episode, p.Confidence = "episode", &one, 0.7
-		}
-		// only episodes/specials are mapped to the work; other files are just listed
-		var wk any
-		conf := 0.0
-		m := ""
-		var ep *float64
-		if work != nil && (kind == "episode" || kind == "sp") {
-			wk = work.Key
-			conf = wconf
-			m = method
-			ep = p.Episode
-			if p.Episode != nil {
-				conf = wconf * max(p.Confidence, 0.5)
-				m += "+name"
-			}
-		} else if kind == "episode" || kind == "sp" {
-			ep = p.Episode
-		}
+		kind, p := classify(f.Path, t.Title, videos, work)
+		wk, ep, conf, m := fileMapping(work, method, wconf, kind, p)
 		if _, err := s.W.ExecContext(ctx, `INSERT INTO torrent_files(infohash,file_index,path,size_bytes,kind,work_key,episode,confidence,status,method,updated_at) VALUES(?,?,?,?,?,?,?,?, 'auto', ?, ?)
 			ON CONFLICT(infohash,file_index) DO UPDATE SET path=excluded.path, size_bytes=CASE WHEN excluded.size_bytes>0 THEN excluded.size_bytes ELSE size_bytes END,
 			kind=excluded.kind, work_key=excluded.work_key, episode=excluded.episode, confidence=excluded.confidence, method=excluded.method, updated_at=excluded.updated_at
@@ -91,6 +70,35 @@ func (s *Store) Match(ctx context.Context, t TorrentInput) error {
 		}
 	}
 	return s.refreshFTS(ctx, t.Infohash)
+}
+
+// classify is ClassifyFile plus the single-video movie rule (a movie's only video is episode 1).
+func classify(path, title string, videos int, work *Work) (string, ParsedName) {
+	p := ClassifyFile(path, title, videos)
+	kind := p.Kind
+	if IsVideo(path) && kind == "other" && p.Episode == nil && videos == 1 && work != nil && strings.EqualFold(work.Type, "movie") {
+		one := 1.0
+		kind, p.Episode, p.Confidence = "episode", &one, 0.7
+	}
+	return kind, p
+}
+
+// fileMapping: only episodes and specials (sp/op/ed/pv/cm, see MappableKind) are mapped to
+// the work; other files are just listed. wk is nil or the work key.
+func fileMapping(work *Work, method string, wconf float64, kind string, p ParsedName) (wk any, ep *float64, conf float64, m string) {
+	if !MappableKind(kind) {
+		return nil, nil, 0, ""
+	}
+	ep = p.Episode
+	if work == nil {
+		return nil, ep, 0, ""
+	}
+	conf, m = wconf, method
+	if p.Episode != nil {
+		conf = wconf * max(p.Confidence, 0.5)
+		m += "+name"
+	}
+	return work.Key, ep, conf, m
 }
 
 // UpsertPending records a torrent whose file list is not known yet (magnet-only feed item

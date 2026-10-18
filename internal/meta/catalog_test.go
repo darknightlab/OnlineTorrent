@@ -152,7 +152,7 @@ func TestCatalogAndSearch(t *testing.T) {
 	if ct, err := s.CatalogBySourceID(ctx, "bangumi_moe", "moe1"); err != nil || ct.Infohash != "aa" {
 		t.Errorf("by source id: %v", err)
 	}
-	if files, _ := s.EpisodeFiles(ctx, "bgm:400602", 28); len(files) != 1 || !files[0].Trusted || files[0].Source != "bangumi.moe" {
+	if files, _ := s.EpisodeFiles(ctx, "bgm:400602", EpisodeKey{Kind: KeyMain, Number: 28}); len(files) != 1 || !files[0].Trusted || files[0].Source != "bangumi.moe" {
 		t.Errorf("episode files: %+v", files)
 	}
 }
