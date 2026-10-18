@@ -77,8 +77,10 @@
 - **HTTP WebSeed**：实测欧洲 qB → 国内浏览器的 WebRTC 只有 ~50KB/s（高 RTT 下 SCTP 窗口受限）。利用 qB 5.3 的 `torrents/downloadFile`（支持 Range），由 otd 提供签名的 BEP19 webseed（`/webseed/{exp}.{sig}/{ih}/`），经 Cloudflare 实测 ~9MB/s。后台可设：开关、最低用户等级（默认会员，可作为大会员权益）、延迟秒数（先 P2P 再 HTTP）。只服务 qB 已完整下载的文件。
 - **HTTP 元数据（磁力 `xs=`，2026-10）**：浏览器 WebTorrent 必须先从节点（ut_metadata）拿到元数据，WebSeed 和就绪推送也依赖它；校园网等对称 NAT / UDP 受限的用户与 qB 建不起 WebRTC 连接，页面停在「正在获取种子信息…」。现在服务器保存 .torrent 原文（映射库 `torrent_metainfo`，来源：抓取源 .torrent、qB `torrents/export`、bangumi.moe 按需下载），`GET /api/v1/torrents/hash/{ih}/torrent` 提供，play 返回的磁力带 `xs=` 指向它；未知磁力由前端在做种后轮询收录状态、拿到种子文件后重新添加。bangumi.moe：抓取只读 JSON，不预先下载 .torrent（每页 30+ 个，大多没人看），改为第一次被请求时按需下载并缓存。详见 api.md。
 - 时间表自动选种优先 AVC/H.264（浏览器兼容），HEVC/10bit 降权。
+- **浏览器分块缓存（2026-10）**：OPFS 每个 piece 一个文件（`ot-pieces/<ih>/<index>`，另存 meta.json 与 .torrent），预算 = min(`max_push_size_bytes`, 25% 配额)，QuotaExceededError 时收缩到已用的 90%。淘汰顺序：旧版 / 未知 OPFS 条目 → 不在播放的种子（整种 LRU）→ 播放中种子读位置之后最远的 piece → 读前窗口之外最远的 piece；读前窗口、首尾 piece、正在读写的 piece 不淘汰。替换 WebTorrent 的文件迭代器为窗口化读取（被淘汰的区间重读时按需重下），不发 HAVE_ALL + lt_donthave + 对缺失 piece 回 reject；离开播放页保留数据，再次打开用缓存的 .torrent 与启动 bitfield 秒开。多 tab 用 Web Locks，第二个 tab 用临时目录。依赖 WebTorrent 内部接口：`npm run build`/`npm test` 会跑 `src/player/store/webtorrent-compat.test.ts`，升级后不兼容直接构建失败；运行时检查不通过则播放器报错「播放器内核不兼容：…」（不回退）。端到端测试：`npm run e2e:chunkstore`。详见 research/chunk-store.md。
 
 ## TODO（低优先级）
+- 浏览器分块缓存按稀有度淘汰：同等距离下优先淘汰 swarm 里副本多的 piece（`_rarityMap` 作次级排序键，见 web/src/player/store/policy.ts `pickVictim`）
 - dandanplay 弹幕（需 AppId/Secret，用户暂无账号）
 - 番剧页按集分组（映射库已有文件级集数，前端目前是种子列表 + 字幕组筛选）
 - ✅ 特别篇（2026-10）：集的键 `12` / `12.5` / `0` / `sp1` / `ncop1` / `nced1` / `pv1` / `cm1`（api.md「集的键」），选集列表 `GET /subjects/{p}/{id}/episodes`，SP/NCOP/NCED/PV/CM 保留编号并映射到作品（迁移 5 + 启动时一次性重新分类）。待改进：SPs 目录里文件名解析不出编号的特别篇都记为 sp1；日文写法（ノンテロップOP/ED、映像特典内的 PV）未识别。

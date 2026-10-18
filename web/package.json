@@ -6,10 +6,13 @@
   "scripts": {
     "dev": "vite",
     "dev:mock": "VITE_MOCK=1 vite",
+    "prebuild": "npm run check:webtorrent",
     "build": "tsc -b && vite build",
+    "check:webtorrent": "node --test --test-reporter=dot src/player/store/webtorrent-compat.test.ts",
     "preview": "vite preview",
     "typecheck": "tsc -b",
-    "test": "node --test src/lib/*.test.ts"
+    "test": "node --test src/lib/*.test.ts src/player/store/*.test.ts",
+    "e2e:chunkstore": "node e2e/chunkstore/run.mjs"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
@@ -30,6 +33,7 @@
     "react-router-dom": "^7.9.0",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.3.1",
+    "torrent-piece": "^4.0.1",
     "webtorrent": "^3.0.21"
   },
   "devDependencies": {

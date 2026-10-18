@@ -2,12 +2,38 @@
 // 该模块只在播放页懒加载，webtorrent 本体再按需动态 import。
 import type WebTorrentT from "webtorrent/dist/webtorrent.min.js"
 import type { WTTorrent } from "webtorrent/dist/webtorrent.min.js"
+import TorrentPiece from "torrent-piece"
 import { computeSegments } from "./segments"
 import { fileKind, type Engine, type LogLevel, type PeerSnap, type Session, type SessionEvents, type StartOptions, type TorrentSnap } from "./types"
+import { formatCacheBytes, pieceCache, type Lease } from "./store/cache"
+import { OpfsPieceStore } from "./store/opfs-piece-store"
+import {
+  IncompatibleError,
+  checkPieceCtor,
+  checkTorrentMetadata,
+  checkTorrentPrototype,
+  checkWire,
+  installReaders,
+  installWireFix,
+  type PieceCtor,
+  type TorrentLike,
+} from "./store/internals"
+import { infoHashFromMagnet } from "./store/policy"
 
 const SW_URL = "/sw.min.js"
 /** 首尾 piece 的优先级（与旧版一致），便于尽快拿到 moov/时长信息 */
 const EDGE_PRIORITY = 10
+/** 文件大于预算的这个比例时不整文件后台下载，只靠窗口化读取（否则会下载 → 淘汰 → 再下载） */
+const WINDOWED_RATIO = 0.8
+/** CacheChunkStore 在内存里缓存的完整 piece 数（piece 可能有 16 MiB） */
+const STORE_CACHE_SLOTS = 4
+
+/** 内核不兼容：明确报错（不静默回退），见 store/internals.ts 与 webtorrent-compat.test.ts */
+function incompatible(problems: string[]): never {
+  const err = new IncompatibleError(problems)
+  console.error("[webtorrent]", err.message)
+  throw err
+}
 
 let clientPromise: Promise<WebTorrentT> | null = null
 let streamPromise: Promise<boolean> | null = null
@@ -51,8 +77,26 @@ async function setupStreaming(client: WebTorrentT): Promise<boolean> {
   }
 }
 
+/** 以自定义 store 添加种子；原型层面的兼容检查不通过直接报错 */
+function addTorrent(client: WebTorrentT, id: string | Uint8Array, announce: string[], lease: Lease, bitfield: Uint8Array | undefined) {
+  const torrent = client.add(id, {
+    announce,
+    deselect: true,
+    store: OpfsPieceStore,
+    storeOpts: { lease },
+    storeCacheSlots: STORE_CACHE_SLOTS,
+    bitfield,
+  })
+  const problems = checkTorrentPrototype(Object.getPrototypeOf(torrent))
+  if (problems.length) {
+    torrent.destroy({ destroyStore: false })
+    incompatible(problems)
+  }
+  return torrent
+}
+
 class WTSession implements Session {
-  private listeners: { [K in keyof SessionEvents]: Set<SessionEvents[K]> } = { metadata: new Set(), log: new Set() }
+  private listeners: { [K in keyof SessionEvents]: Set<SessionEvents[K]> } = { metadata: new Set(), log: new Set(), fatal: new Set() }
   private torrent!: WTTorrent
   private client: WebTorrentT
   private streaming: boolean
@@ -62,19 +106,107 @@ class WTSession implements Session {
   private blobURL: string | null = null
   private destroyed = false
   private swapping = false
+  private lease: Lease
+  private fatal: string | null = null
+  private doneLogged = false
+  /** 窗口模式：只选首尾 piece，其余靠窗口化读取下载 */
+  private windowed = false
+  private unsubCache: () => void
 
-  constructor(client: WebTorrentT, torrent: WTTorrent, streaming: boolean, announce: string[], xs: boolean) {
+  constructor(client: WebTorrentT, torrent: WTTorrent, streaming: boolean, announce: string[], xs: boolean, lease: Lease) {
     this.client = client
     this.streaming = streaming
     this.announce = announce
     this.xs = xs
+    this.lease = lease
+    this.unsubCache = pieceCache.onLog((level, msg) => this.log(level, msg))
     this.attach(torrent)
     if (torrent.files?.length) queueMicrotask(() => this.listeners.metadata.forEach((cb) => cb()))
+    // 调用方在 await start() 之后才订阅 log：推迟到下一个任务
+    window.setTimeout(() => {
+      this.log("info", `缓存预算 ${formatCacheBytes(pieceCache.budget)}（已用 ${formatCacheBytes(pieceCache.stored)}）`)
+      if (lease.temp) this.log("info", "该视频已在其他标签页中播放，本页使用临时缓存（关闭后清理）")
+    }, 0)
+  }
+
+  private setFatal(msg: string) {
+    if (this.fatal || this.destroyed) return
+    this.fatal = msg
+    console.error("[webtorrent]", msg)
+    this.log("error", msg)
+    this.listeners.fatal.forEach((cb) => cb(msg))
+    try {
+      this.torrent.destroy({ destroyStore: false })
+    } catch {
+      /* ignore */
+    }
+  }
+
+  fatalError() {
+    return this.fatal
+  }
+
+  /** 播放器报告时长（用于按码率估算读前窗口） */
+  setMediaDuration(seconds: number) {
+    const live = pieceCache.entries.get(this.lease.key)?.live
+    const f = this.focused !== null ? this.torrent?.files?.[this.focused] : undefined
+    if (live && f && seconds > 0 && Number.isFinite(seconds)) live.bytesPerSec = f.length / seconds
+  }
+
+  /** 给新添加的种子装上：wire 修正、元数据时的兼容检查、窗口化读取 */
+  private instrument(torrent: WTTorrent) {
+    const t = torrent as unknown as TorrentLike
+    let wireChecked = false
+    installWireFix(t, (w) => {
+      if (wireChecked) return
+      wireChecked = true
+      const p = checkWire(w)
+      if (p.length) this.setFatal(new IncompatibleError(p).message)
+    })
+    t.once("metadata", () => {
+      const p = checkTorrentMetadata(t)
+      const own = t.pieces.find(Boolean)?.constructor as PieceCtor | undefined
+      const Piece = own ?? (TorrentPiece as unknown as PieceCtor)
+      p.push(...checkPieceCtor(Piece))
+      if (p.length) return this.setFatal(new IncompatibleError(p).message)
+      const live = pieceCache.entries.get(this.lease.key)?.live
+      if (!live || live.torrent !== t) return this.setFatal("播放器内核不兼容：自定义缓存没有被 WebTorrent 使用（store 选项无效）")
+      live.Piece = Piece
+      const tf = (torrent as unknown as { torrentFile?: Uint8Array }).torrentFile
+      if (!this.lease.temp && tf) void pieceCache.saveTorrentFile(this.lease.key, tf)
+      installReaders(t, Piece, {
+        windowBytes: () => pieceCache.protection(pieceCache.entries.get(this.lease.key)!).aheadBytes,
+        register: (r) => live.readers.add(r),
+        unregister: (r) => {
+          live.readers.delete(r)
+          live.lastPos = r.file.offset + Math.min(r.pos, r.end)
+        },
+        reading: (i, on) => {
+          if (on) live.reading.set(i, (live.reading.get(i) ?? 0) + 1)
+          else {
+            const n = (live.reading.get(i) ?? 1) - 1
+            if (n <= 0) live.reading.delete(i)
+            else live.reading.set(i, n)
+          }
+        },
+      })
+    })
+    t.on("evicted", (i: number) => {
+      // 整文件后台下载时淘汰了正在播放的文件的 piece：改为窗口模式，避免下载 → 淘汰 → 再下载
+      const f = this.focused !== null ? torrent.files?.[this.focused] : undefined
+      if (!this.windowed && f && i >= f._startPiece && i <= f._endPiece && this.torrent === torrent) {
+        this.windowed = true
+        this.log("info", "缓存空间不足以容纳整个视频，改为只缓存播放位置附近的数据")
+        this.applied = null
+        this.applyFocus(true)
+      }
+    })
   }
 
   /** 绑定种子事件；替换种子（loadTorrentFile）后旧种子的事件一律忽略 */
   private attach(torrent: WTTorrent) {
     this.torrent = torrent
+    this.instrument(torrent)
     const live = () => this.torrent === torrent && !this.destroyed
     torrent.on("metadata", () => {
       if (!live()) return
@@ -85,7 +217,12 @@ class WTSession implements Session {
       this.listeners.metadata.forEach((cb) => cb())
     })
     torrent.on("ready", () => live() && this.log("info", "种子已就绪，开始下载"))
-    torrent.on("done", () => live() && this.log("info", "全部下载完成"))
+    torrent.on("done", () => {
+      // 淘汰后再补齐时 WebTorrent 会再次 emit 'done'，只记一次
+      if (!live() || this.doneLogged) return
+      this.doneLogged = true
+      this.log("info", "全部下载完成")
+    })
     torrent.on("warning", (e) => {
       const msg = String((e as Error)?.message ?? e)
       // 浏览器只能用 ws(s) tracker；.torrent 里的 udp/http tracker 忽略是预期行为，不刷日志
@@ -115,9 +252,9 @@ class WTSession implements Session {
     try {
       const old = this.torrent
       const ih = old.infoHash
-      await new Promise<void>((r) => old.destroy({ destroyStore: true }, () => r()))
+      await new Promise<void>((r) => old.destroy({ destroyStore: false }, () => r()))
       if (this.destroyed) return false
-      const t = this.client.add(data, { announce: this.announce, deselect: true })
+      const t = addTorrent(this.client, data, this.announce, this.lease, undefined)
       this.xs = false // 元数据来自 .torrent，不再是 xs=
       this.applied = null
       this.attach(t)
@@ -155,21 +292,25 @@ class WTSession implements Session {
     this.applyFocus()
   }
 
-  private applyFocus() {
+  private applyFocus(force = false) {
     const t = this.torrent
     if (this.destroyed || !t?.files?.length) return
     const f = this.focused !== null ? t.files[this.focused] : undefined
     const next = f && f.length ? { start: f._startPiece, end: f._endPiece } : null
     const prev = this.applied
-    if (prev && next && prev.start === next.start && prev.end === next.end) return
-    if (prev) {
-      t.deselect(prev.start, prev.end)
-      t.deselect(prev.start, prev.start)
-      t.deselect(prev.end, prev.end)
-    }
+    if (!force && prev && next && prev.start === next.start && prev.end === next.end) return
+    // 非 stream selection 的 deselect 按区间裁剪，整段 deselect 一次即可清掉文件与首尾的选择
+    if (prev) t.deselect(prev.start, prev.end)
+    else if (force && next) t.deselect(next.start, next.end)
     this.applied = next
-    if (!next) return
-    t.select(next.start, next.end, 0)
+    const live = pieceCache.entries.get(this.lease.key)?.live
+    if (live) live.focus = next ? [next.start, next.end] : null
+    if (!next || !f) return
+    if (!this.windowed && f.length > WINDOWED_RATIO * pieceCache.budget) {
+      this.windowed = true
+      this.log("info", `视频（${formatCacheBytes(f.length)}）大于缓存预算的 80%，只缓存播放位置附近的数据`)
+    }
+    if (!this.windowed) t.select(next.start, next.end, 0)
     t.select(next.end, next.end, EDGE_PRIORITY)
     t.select(next.start, next.start, EDGE_PRIORITY)
   }
@@ -269,11 +410,15 @@ class WTSession implements Session {
     this.destroyed = true
     this.listeners.metadata.clear()
     this.listeners.log.clear()
+    this.listeners.fatal.clear()
+    this.unsubCache()
     if (this.blobURL) URL.revokeObjectURL(this.blobURL)
+    // 保留缓存数据（再次打开同一视频可直接从缓存播放），只由预算管理器清理
+    const lease = this.lease
     try {
-      this.torrent.destroy({ destroyStore: true })
+      this.torrent.destroy({ destroyStore: false }, () => void lease.release())
     } catch {
-      /* ignore */
+      void lease.release()
     }
   }
 }
@@ -283,12 +428,38 @@ export const webtorrentEngine: Engine = {
   async start(magnet: string, opts: StartOptions) {
     const client = await getClient(opts.iceServers)
     if (!streamPromise) streamPromise = setupStreaming(client)
-    const streaming = await streamPromise
-    // 同一 infohash 已存在（例如 StrictMode 重复挂载）时先移除
+    const ih = infoHashFromMagnet(magnet)
+    if (!ih) throw new Error("磁力链接缺少 infohash")
+    const [streaming] = await Promise.all([streamPromise, pieceCache.init(opts.maxCacheBytes)])
+    // 同一 infohash 已存在（例如 StrictMode 重复挂载）时先关闭（保留缓存数据）
     const existing = await client.get(magnet).catch(() => null)
-    if (existing) await new Promise<void>((r) => existing.destroy({ destroyStore: true }, () => r()))
-    const torrent = client.add(magnet, { announce: opts.announce, deselect: true })
-    return new WTSession(client, torrent, streaming, opts.announce, /[?&]xs=https?%3A/i.test(magnet))
+    if (existing) await new Promise<void>((r) => existing.destroy({ destroyStore: false }, () => r()))
+    const lease = await pieceCache.acquire(ih)
+    try {
+      // 已缓存的 piece 直接作为启动 bitfield（WebTorrent 每个文件只抽查一两个 piece，不必重算几 GB 的哈希）
+      const bitfield = lease.temp ? undefined : await pieceCache.resumeBitfield(lease.key)
+      // 有缓存的 .torrent 时直接用它添加：元数据立即可用（不必等节点 / xs= / 服务器）
+      let torrent: WTTorrent | null = null
+      const tf = bitfield ? await pieceCache.loadTorrentFile(lease.key) : null
+      if (tf) {
+        const t = addTorrent(client, tf, opts.announce, lease, bitfield)
+        const ok = await new Promise<boolean>((res) => {
+          t.on("infoHash", () => res(t.infoHash === ih))
+          t.on("error", () => res(false))
+        })
+        if (ok) torrent = t
+        else {
+          await new Promise<void>((r) => (t.destroyed ? r() : t.destroy({ destroyStore: false }, () => r())))
+          await pieceCache.dropTorrentFile(lease.key)
+        }
+      }
+      torrent ??= addTorrent(client, magnet, opts.announce, lease, bitfield)
+      // 磁力里的 x.pe / tr 等仍由 announce 提供；用 .torrent 添加时没有 xs=，元数据已经有了
+      return new WTSession(client, torrent, streaming, opts.announce, !tf && /[?&]xs=https?%3A/i.test(magnet), lease)
+    } catch (e) {
+      void lease.release()
+      throw e
+    }
   },
   streamingReady() {
     return streamPromise ?? Promise.resolve(false)

@@ -21,6 +21,7 @@ declare module "webtorrent/dist/webtorrent.min.js" {
     done: boolean
     _startPiece: number
     _endPiece: number
+    offset: number
     readonly streamURL: string
   }
   export interface WTTorrent {
@@ -42,6 +43,7 @@ declare module "webtorrent/dist/webtorrent.min.js" {
     timeRemaining: number
     done: boolean
     ready: boolean
+    destroyed: boolean
     torrentFileBlob: Blob | null
     select(start: number, end: number, priority?: number): void
     deselect(start: number, end: number): void
@@ -51,6 +53,7 @@ declare module "webtorrent/dist/webtorrent.min.js" {
     on(ev: "metadata" | "ready" | "done" | "infoHash", cb: () => void): void
     on(ev: "error" | "warning", cb: (err: Error | string) => void): void
     on(ev: "wire", cb: (wire: WTWire, addr?: string) => void): void
+    on(ev: "evicted", cb: (index: number) => void): void
     removeAllListeners(): void
   }
   export interface WTClientOptions {
@@ -59,9 +62,30 @@ declare module "webtorrent/dist/webtorrent.min.js" {
   export default class WebTorrent {
     constructor(opts?: WTClientOptions)
     torrents: WTTorrent[]
-    add(id: string | Uint8Array, opts?: { announce?: string[]; deselect?: boolean }, ontorrent?: (t: WTTorrent) => void): WTTorrent
+    add(
+      id: string | Uint8Array,
+      opts?: {
+        announce?: string[]
+        deselect?: boolean
+        /** abstract-chunk-store 构造器：new store(pieceLength, { ...storeOpts, torrent, length, name, … }) */
+        store?: new (chunkLength: number, opts: never) => unknown
+        storeOpts?: Record<string, unknown>
+        storeCacheSlots?: number
+        /** 启动 bitfield（长度 ceil(numPieces/8)） */
+        bitfield?: Uint8Array
+      },
+      ontorrent?: (t: WTTorrent) => void,
+    ): WTTorrent
     get(id: string): Promise<WTTorrent | null>
     createServer(opts: { controller: ServiceWorkerRegistration }): unknown
     on(ev: "error" | "warning", cb: (err: Error | string) => void): void
+  }
+}
+
+declare module "torrent-piece" {
+  export default class Piece {
+    constructor(length: number)
+    length: number
+    missing: number
   }
 }

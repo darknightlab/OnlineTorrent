@@ -42,6 +42,8 @@ export type LogLevel = "info" | "warn" | "error"
 export interface SessionEvents {
   metadata: () => void
   log: (level: LogLevel, msg: string) => void
+  /** 无法继续（如播放器内核不兼容）；会话已停止 */
+  fatal: (msg: string) => void
 }
 
 export interface Session {
@@ -61,6 +63,10 @@ export interface Session {
   loadTorrentFile?(data: Uint8Array): Promise<boolean>
   /** 只下载这个文件（其余文件不下载；null = 都不下载）。元数据就绪前调用会在就绪后生效。 */
   focusFile?(index: number | null): void
+  /** 播放器拿到的媒体时长（秒），用于按码率估算缓存的读前窗口 */
+  setMediaDuration?(seconds: number): void
+  /** 致命错误（会话已停止）；没有为 null */
+  fatalError?(): string | null
   on<K extends keyof SessionEvents>(ev: K, cb: SessionEvents[K]): () => void
   destroy(): void
 }
@@ -68,6 +74,8 @@ export interface Session {
 export interface StartOptions {
   announce: string[]
   iceServers: RTCIceServer[]
+  /** site.max_push_size_bytes：浏览器缓存预算 = min(此值, 存储配额的 25%) */
+  maxCacheBytes?: number
 }
 
 export interface Engine {

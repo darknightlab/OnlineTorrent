@@ -126,6 +126,8 @@ export function Player({
   const [segments, setSegments] = useState<Uint8Array>(() => new Uint8Array(1))
   const [logs, setLogs] = useState<LogLine[]>([])
   const [mediaError, setMediaError] = useState<string | null>(null)
+  /** 会话无法继续（如播放器内核不兼容） */
+  const [fatal, setFatal] = useState<string | null>(null)
   const [noPicture, setNoPicture] = useState(false)
   const [buffering, setBuffering] = useState(false)
   const [needsTap, setNeedsTap] = useState(false)
@@ -177,15 +179,23 @@ export function Player({
     setCurrent(null)
     setLogs([])
     setSeededBy([])
+    setFatal(null)
     log("info", direct ? "服务器不可用，直接通过 P2P 网络连接" : "服务器已接受请求")
     loadEngine()
       .then(async (eng) => {
         if (cancelled) return
         setEngine(eng)
         log("info", "正在连接 tracker，寻找节点…")
-        s = await eng.start(magnet, { announce: site.trackers, iceServers: site.ice_servers as RTCIceServer[] })
+        s = await eng.start(magnet, {
+          announce: site.trackers,
+          iceServers: site.ice_servers as RTCIceServer[],
+          maxCacheBytes: site.max_push_size_bytes,
+        })
         if (cancelled) return s.destroy()
         unsubs.push(s.on("log", log))
+        unsubs.push(s.on("fatal", setFatal))
+        const f0 = s.fatalError?.()
+        if (f0) setFatal(f0)
         setSession(s)
         const ok = await eng.streamingReady()
         if (!cancelled) {
@@ -193,7 +203,12 @@ export function Player({
           if (!ok && eng.kind === "webtorrent") log("warn", "Service Worker 不可用，无法边下边播（需要 HTTPS 且浏览器支持 Service Worker）")
         }
       })
-      .catch((e) => log("error", `播放器启动失败：${String(e?.message ?? e)}`))
+      .catch((e) => {
+        const msg = String(e?.message ?? e)
+        console.error("[player]", e)
+        log("error", `播放器启动失败：${msg}`)
+        if (!cancelled && e?.name === "IncompatibleError") setFatal(msg)
+      })
     return () => {
       cancelled = true
       unsubs.forEach((u) => u())
@@ -464,6 +479,7 @@ export function Player({
                 onLoadedMetadata={(e) => {
                   const v = e.currentTarget
                   if (v.videoWidth === 0 && v.duration > 0) setNoPicture(true)
+                  session?.setMediaDuration?.(v.duration)
                 }}
                 onError={(e) => {
                   const err = e.currentTarget.error
@@ -486,7 +502,13 @@ export function Player({
             {url && file?.kind === "video" && <VideoControls video={videoEl} container={stageRef} segments={segments} suspended={needsTap} />}
 
             {/* 状态浮层 */}
-            {!url && (
+            {fatal ? (
+              <Overlay>
+                <AlertTriangle className="h-8 w-8 text-warning" />
+                <p className="font-medium">无法播放</p>
+                <p className="max-w-sm wrap-anywhere text-xs text-white/70">{fatal}</p>
+              </Overlay>
+            ) : !url && (
               <Overlay>
                 {!snap ? (
                   <>
