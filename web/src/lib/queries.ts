@@ -6,7 +6,8 @@ export const qk = {
   site: ["site"] as const,
   me: ["me"] as const,
   schedule: ["schedule"] as const,
-  anime: (key: string) => ["anime", key] as const,
+  subject: (provider: string, id: string) => ["subject", provider, id] as const,
+  episode: (provider: string, id: string, n: number) => ["subject", provider, id, "episode", n] as const,
   search: (q: string, page: number) => ["torrents", "search", q, page] as const,
 }
 
@@ -51,12 +52,14 @@ export function useUser() {
 /** 常用接口权限键（与后端路由注册的 "METHOD /pattern" 一致） */
 export const PERM = {
   schedule: "GET /api/v1/schedule",
-  anime: "GET /api/v1/anime/{key}",
+  subject: "GET /api/v1/subjects/{provider}/{id}",
+  episode: "GET /api/v1/subjects/{provider}/{id}/episodes/{n}",
   search: "GET /api/v1/torrents/search",
-  play: "POST /api/v1/play",
-  seed: "POST /api/v1/torrents/{ih}/seed",
-  webseed: "POST /api/v1/torrents/{ih}/webseed",
-  report: "POST /api/v1/report",
+  playHash: "POST /api/v1/torrents/hash/{ih}/play",
+  playMoe: "POST /api/v1/torrents/moe/{id}/play",
+  seed: "POST /api/v1/torrents/hash/{ih}/seed",
+  webseed: "POST /api/v1/torrents/hash/{ih}/webseed",
+  report: "POST /api/v1/torrents/hash/{ih}/report",
   password: "POST /api/v1/me/password",
   redeem: "POST /api/v1/me/redeem",
   metaRead: "GET /meta/v1/",
@@ -77,7 +80,11 @@ export function useCan(key: string): boolean {
 
 export function useSetMe() {
   const qc = useQueryClient()
-  return (me: MeResponse) => qc.setQueryData(qk.me, me)
+  return (me: MeResponse) => {
+    qc.setQueryData(qk.me, me)
+    // 身份变化后 access 等用户相关字段需要重新获取
+    void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] !== "me" && q.queryKey[0] !== "site" })
+  }
 }
 
 export function useLogout() {
@@ -95,8 +102,22 @@ export function useSchedule() {
   return useQuery({ queryKey: qk.schedule, queryFn: ({ signal }) => api.schedule(signal), staleTime: 5 * 60_000 })
 }
 
-export function useAnime(key: string) {
-  return useQuery({ queryKey: qk.anime(key), queryFn: ({ signal }) => api.anime(key, signal), enabled: !!key })
+/** 条目详情；provider/id 为空时不请求 */
+export function useSubject(provider: string, id: string) {
+  return useQuery({
+    queryKey: qk.subject(provider, id),
+    queryFn: ({ signal }) => api.subject(provider, id, signal),
+    enabled: !!provider && !!id,
+  })
+}
+
+/** 单集文件列表（含当前用户 access） */
+export function useEpisode(provider: string, id: string, n: number) {
+  return useQuery({
+    queryKey: qk.episode(provider, id, n),
+    queryFn: ({ signal }) => api.episode(provider, id, n, signal),
+    enabled: !!provider && !!id && Number.isInteger(n) && n > 0,
+  })
 }
 
 export function useSearch(q: string, page: number) {

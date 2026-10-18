@@ -19,7 +19,7 @@ import { RoleBadge } from "@/components/badges"
 
 export function Header() {
   // 搜索页自带大搜索框，顶栏不再重复显示（保留占位以免右侧按钮跳动）
-  const onSearch = useLocation().pathname === "/search"
+  const onSearch = /^\/search(\/|$)/.test(useLocation().pathname)
   return (
     <header className="sticky top-0 z-40 border-b bg-header pt-safe backdrop-blur-md supports-[backdrop-filter]:bg-header">
       <Container className="flex h-14 items-center gap-3 lg:gap-5">

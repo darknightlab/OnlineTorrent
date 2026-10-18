@@ -15,7 +15,7 @@ export function ReportDialog({ open, onOpenChange, infohash, title }: { open: bo
   const [reason, setReason] = useState(REASONS[0])
   const [detail, setDetail] = useState("")
   const m = useMutation({
-    mutationFn: () => api.report({ infohash, reason: detail.trim() ? `${reason}：${detail.trim()}` : reason }),
+    mutationFn: () => api.report(infohash, { reason: detail.trim() ? `${reason}：${detail.trim()}` : reason }),
     onSuccess: () => {
       toast.success("举报已提交，感谢反馈")
       setDetail("")

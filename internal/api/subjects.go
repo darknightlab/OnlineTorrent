@@ -40,9 +40,20 @@ func (s *Server) subjectView(r *http.Request, work *meta.Work) subjectOut {
 	if work.Summary == "" && work.External["bgm"] != "" {
 		s.fetchBgmDetail(r.Context(), work)
 	}
-	item, _ := s.Cat.ItemFor(work, time.Now())
+	item := s.Cat.ScheduleItemByKey(work.Key) // includes latest torrent / episode
+	if item == nil {
+		item, _ = s.Cat.ItemFor(work, time.Now())
+	}
 	if item == nil {
 		item = &catalog.ScheduleItem{Key: work.Key, SubjectID: work.ID, Title: work.Title, TitleCN: work.TitleCN, Cover: s.Cat.CoverFor(work)}
+	}
+	if t := item.LatestTorrent; t != nil {
+		lt := *t
+		if d, err := s.Policy.Decide(r.Context(), userOf(r), lt.Subject()); err == nil {
+			a := d.Access()
+			lt.Access = &a
+		}
+		item.LatestTorrent = &lt
 	}
 	return subjectOut{ScheduleItem: item, Summary: work.Summary, Type: work.Type, Official: work.Official, External: work.External, Tags: []string{}}
 }

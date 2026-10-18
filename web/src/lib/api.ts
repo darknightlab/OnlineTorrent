@@ -3,7 +3,6 @@ import type {
   AdminStats,
   AdminUser,
   AdminUserUpdate,
-  AnimeResponse,
   AuditEntry,
   InviteCode,
   InviteCreate,
@@ -16,7 +15,6 @@ import type {
   SeedResponse,
   WebseedResponse,
   PlayRecord,
-  PlayRequest,
   PlayResponse,
   PolicyTestRequest,
   PolicyTestResponse,
@@ -34,6 +32,8 @@ import type {
   SettingsResponse,
   SettingsUpdate,
   Site,
+  SubjectResponse,
+  EpisodeResponse,
   Torrent,
 } from "./types"
 
@@ -119,6 +119,8 @@ export function toList<T>(v: ListLike<T> | null | undefined): { items: T[]; page
   return { items: v.items ?? [], page: v.page ?? 1, page_count: v.page_count ?? 1 }
 }
 
+const seg = encodeURIComponent
+
 const get = <T>(p: string, signal?: AbortSignal) => request<T>("GET", p, undefined, signal)
 const post = <T>(p: string, b?: unknown) => request<T>("POST", p, b ?? {})
 const put = <T>(p: string, b?: unknown) => request<T>("PUT", p, b ?? {})
@@ -134,14 +136,21 @@ export const api = {
   changePassword: (b: { old_password: string; new_password: string }) => post<Record<string, never>>("/me/password", b),
   redeem: (code: string) => post<MeResponse>("/me/redeem", { code }),
   schedule: (s?: AbortSignal) => get<ScheduleResponse>("/schedule", s),
-  anime: (key: string, s?: AbortSignal) => get<AnimeResponse>(`/anime/${encodeURIComponent(key)}`, s),
+  /** 条目详情：provider = id（本站 ID）/ bgm / mal / anidb … */
+  subject: (provider: string, id: string, s?: AbortSignal) => get<SubjectResponse>(`/subjects/${seg(provider)}/${seg(id)}`, s),
+  /** 单集所有已知文件，items[0] 为自动推荐 */
+  episode: (provider: string, id: string, n: number | string, s?: AbortSignal) =>
+    get<EpisodeResponse>(`/subjects/${seg(provider)}/${seg(id)}/episodes/${seg(String(n))}`, s),
   search: (q: string, page = 1, s?: AbortSignal) => get<Paged<Torrent>>(`/torrents/search${qs({ q, page })}`, s),
-  play: (b: PlayRequest) => post<PlayResponse>("/play", b),
-  report: (b: ReportRequest) => post<Record<string, never>>("/report", b),
-  /** 请求服务器下载做种（权限 "POST /api/v1/torrents/{ih}/seed"） */
-  seed: (ih: string) => post<SeedResponse>(`/torrents/${encodeURIComponent(ih)}/seed`),
-  /** 获取 HTTP WebSeed（权限 "POST /api/v1/torrents/{ih}/webseed"） */
-  webseed: (ih: string) => post<WebseedResponse>(`/torrents/${encodeURIComponent(ih)}/webseed`),
+  /** 按 infohash 打开种子（策略判定 + 磁力） */
+  playHash: (ih: string, s?: AbortSignal) => request<PlayResponse>("POST", `/torrents/hash/${seg(ih)}/play`, undefined, s),
+  /** 按 bangumi.moe ID 打开种子（受信元数据） */
+  playMoe: (id: string, s?: AbortSignal) => request<PlayResponse>("POST", `/torrents/moe/${seg(id)}/play`, undefined, s),
+  report: (ih: string, b: ReportRequest) => post<Record<string, never>>(`/torrents/hash/${seg(ih)}/report`, b),
+  /** 请求服务器下载做种（权限 PERM.seed） */
+  seed: (ih: string) => post<SeedResponse>(`/torrents/hash/${seg(ih)}/seed`),
+  /** 获取 HTTP WebSeed（权限 PERM.webseed） */
+  webseed: (ih: string) => post<WebseedResponse>(`/torrents/hash/${seg(ih)}/webseed`),
 
   // 后台
   admin: {
@@ -153,27 +162,27 @@ export const api = {
 
     qbServers: () => get<ListLike<QBServer>>("/admin/qb-servers"),
     createQB: (b: QBServerInput) => post<QBServer>("/admin/qb-servers", b),
-    updateQB: (id: number, b: Partial<QBServerInput>) => put<QBServer>(`/admin/qb-servers/${id}`, b),
-    deleteQB: (id: number) => del<Record<string, never>>(`/admin/qb-servers/${id}`),
-    testQB: (id: number) => post<QBServer>(`/admin/qb-servers/${id}/test`),
+    updateQB: (id: number, b: Partial<QBServerInput>) => put<QBServer>(`/admin/qb-servers/id/${id}`, b),
+    deleteQB: (id: number) => del<Record<string, never>>(`/admin/qb-servers/id/${id}`),
+    testQB: (id: number) => post<QBServer>(`/admin/qb-servers/id/${id}/test`),
 
     users: (q: string, page: number) => get<ListLike<AdminUser>>(`/admin/users${qs({ q, page })}`),
-    updateUser: (id: number, b: AdminUserUpdate) => put<AdminUser>(`/admin/users/${id}`, b),
+    updateUser: (id: number, b: AdminUserUpdate) => put<AdminUser>(`/admin/users/id/${id}`, b),
 
     invites: () => get<ListLike<InviteCode>>("/admin/invites"),
     createInvite: (b: InviteCreate) => post<InviteCode>("/admin/invites", b),
-    updateInvite: (id: number, b: { disabled: boolean }) => put<InviteCode>(`/admin/invites/${id}`, b),
+    updateInvite: (id: number, b: { disabled: boolean }) => put<InviteCode>(`/admin/invites/id/${id}`, b),
     redeemCodes: () => get<ListLike<RedeemCode>>("/admin/redeem-codes"),
     createRedeemCodes: (b: RedeemCreate) => post<ListLike<RedeemCode>>("/admin/redeem-codes", b),
 
     rules: () => get<ListLike<Rule>>("/admin/rules"),
     createRule: (b: RuleInput) => post<Rule>("/admin/rules", b),
-    updateRule: (id: number, b: Partial<RuleInput>) => put<Rule>(`/admin/rules/${id}`, b),
-    deleteRule: (id: number) => del<Record<string, never>>(`/admin/rules/${id}`),
+    updateRule: (id: number, b: Partial<RuleInput>) => put<Rule>(`/admin/rules/id/${id}`, b),
+    deleteRule: (id: number) => del<Record<string, never>>(`/admin/rules/id/${id}`),
     testPolicy: (b: PolicyTestRequest) => post<PolicyTestResponse>("/admin/policy/test", b),
 
     reviews: (status = "pending") => get<ListLike<Review>>(`/admin/reviews${qs({ status })}`),
-    decideReview: (id: number, b: ReviewDecision) => put<Review>(`/admin/reviews/${id}`, b),
+    decideReview: (id: number, b: ReviewDecision) => put<Review>(`/admin/reviews/id/${id}`, b),
 
     plays: (page: number) => get<ListLike<PlayRecord>>(`/admin/plays${qs({ page })}`),
     audit: (page: number) => get<ListLike<AuditEntry>>(`/admin/audit${qs({ page })}`),

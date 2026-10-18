@@ -1,5 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from "react"
-import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom"
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { useMutation } from "@tanstack/react-query"
 import { Eye, EyeOff, Loader2, Lock } from "lucide-react"
 import { Container } from "@/components/layout/Container"
@@ -108,14 +108,29 @@ export function LoginPage() {
   )
 }
 
+/** 旧链接 /register?invite=X → /register/invite/X */
+export function RegisterRoute() {
+  const [sp] = useSearchParams()
+  const invite = sp.get("invite")?.trim()
+  if (invite) {
+    const rest = new URLSearchParams(sp)
+    rest.delete("invite")
+    const q = rest.toString()
+    return <Navigate replace to={`/register/invite/${encodeURIComponent(invite)}${q ? `?${q}` : ""}`} />
+  }
+  return <RegisterPage />
+}
+
+/** /register 与 /register/invite/:code（预填邀请码） */
 export function RegisterPage() {
   useDocumentTitle("注册")
   const site = useSiteOrFallback()
+  const { code: inviteParam = "" } = useParams()
   const [sp] = useSearchParams()
   const next = safeNext(sp.get("next"))
   const navigate = useNavigate()
   const setMe = useSetMe()
-  const [form, setForm] = useState({ username: "", email: "", password: "", confirm: "", invite_code: sp.get("invite") ?? "" })
+  const [form, setForm] = useState({ username: "", email: "", password: "", confirm: "", invite_code: inviteParam })
   const [token, setToken] = useState("")
   const [resetKey, setResetKey] = useState(0)
   const [localError, setLocalError] = useState("")
@@ -182,7 +197,7 @@ export function RegisterPage() {
           <PasswordInput id="confirm" autoComplete="new-password" required value={form.confirm} onChange={set("confirm")} />
         </Field>
         {(needInvite || form.invite_code) && (
-          <Field label={needInvite ? "邀请码" : "邀请码（可选）"} htmlFor="invite" hint={sp.get("invite") ? "已通过邀请链接自动填写" : undefined}>
+          <Field label={needInvite ? "邀请码" : "邀请码（可选）"} htmlFor="invite" hint={inviteParam ? "已通过邀请链接自动填写" : undefined}>
             <Input id="invite" required={needInvite} value={form.invite_code} onChange={set("invite_code")} className="font-mono" />
           </Field>
         )}

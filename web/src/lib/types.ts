@@ -37,7 +37,7 @@ export interface User {
 
 export interface MeResponse {
   user: User | null
-  /** 当前用户（未登录为游客）可调用的接口权限键，如 "POST /api/v1/play"；公开与后台接口不在其中 */
+  /** 当前用户（未登录为游客）可调用的接口权限键，如 "POST /api/v1/torrents/hash/{ih}/play"；公开与后台接口不在其中 */
   permissions: string[]
 }
 
@@ -79,7 +79,10 @@ export interface Torrent {
 }
 
 export interface ScheduleItem {
+  /** 映射库内部键，如 "bgm:123" */
   key: string
+  /** 本站条目 ID → /subject/id/{subject_id} */
+  subject_id: number
   title: string
   title_cn: string
   cover: string | null
@@ -94,6 +97,8 @@ export interface ScheduleItem {
   bgm_id: number | null
   moe_tag_id: string | null
   latest_torrent: Torrent | null
+  /** 最新一集的集数（映射库已知时） */
+  latest_episode?: number | null
 }
 
 export interface ScheduleResponse {
@@ -111,15 +116,39 @@ export interface ExternalIds {
   [k: string]: number | string | null | undefined
 }
 
-export interface AnimeDetail extends ScheduleItem {
+export interface Subject extends ScheduleItem {
   summary: string
+  type?: string
+  official_site?: string
   tags: string[]
   external: ExternalIds
 }
 
-export interface AnimeResponse {
-  anime: AnimeDetail
+/** GET /subjects/{provider}/{id} */
+export interface SubjectResponse {
+  subject: Subject
   torrents: Torrent[]
+}
+
+/** 单集的一个已知文件（种子内某个文件） */
+export interface EpisodeFile {
+  infohash: string
+  file_index: number
+  path: string
+  size_bytes: number
+  torrent_title: string
+  team: string
+  published_at: string
+  source_id: string
+  confidence: number
+  access: Access
+}
+
+/** GET /subjects/{provider}/{id}/episodes/{n}；items[0] 为服务端自动推荐 */
+export interface EpisodeResponse {
+  subject: Subject
+  episode: number
+  items: EpisodeFile[]
 }
 
 export interface Paged<T> {
@@ -128,18 +157,25 @@ export interface Paged<T> {
   items: T[]
 }
 
-export type PlayRequest = { magnet: string } | { infohash: string } | { torrent_id: string }
+export interface PlayMeta {
+  subject_id: number
+  subject_key: string
+  bgm_id?: number | string | null
+  title: string
+  episode: number
+  file_index: number
+}
 
 export interface PlayResponse {
   access: Access
   infohash: string
   name: string
   magnet: string
-  /** 恒为 []：服务器做种改由 POST /torrents/{ih}/seed 单独请求 */
+  /** 恒为 []：服务器做种改由 POST /torrents/hash/{ih}/seed 单独请求 */
   seeded_by: string[]
-  /** 恒为 []：WebSeed 改由 POST /torrents/{ih}/webseed 单独请求 */
+  /** 恒为 []：WebSeed 改由 POST /torrents/hash/{ih}/webseed 单独请求 */
   webseeds: string[]
-  meta: { anime_key: string; episode: number } | null
+  meta: PlayMeta | null
 }
 
 export interface SeedResponse {
@@ -154,7 +190,6 @@ export interface WebseedResponse {
 }
 
 export interface ReportRequest {
-  infohash: string
   reason: string
 }
 

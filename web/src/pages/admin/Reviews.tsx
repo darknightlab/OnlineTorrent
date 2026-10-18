@@ -70,7 +70,7 @@ function ReviewCard({ r }: { r: Review }) {
       <Card className="p-4">
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <a href={watchHref({ ih: r.infohash })} target="_blank" rel="noreferrer" className="wrap-anywhere text-sm font-medium hover:text-primary-text hover:underline">
+            <a href={watchHref(r.infohash)} target="_blank" rel="noreferrer" className="wrap-anywhere text-sm font-medium hover:text-primary-text hover:underline">
               {r.title}
             </a>
             <p className="mt-0.5">

@@ -1,7 +1,7 @@
 // VITE_MOCK=1 时安装：拦截 /api/v1/* 的 fetch，返回 fixtures 数据（只在 dev/mock 构建中被动态 import）。
 // 切换身份：?mock_user=guest|member|vip|admin（保存在 sessionStorage）；默认 admin。
 import * as fx from "./fixtures"
-import type { AdminUser, GrantRole, MeResponse, PermissionItem, PlayResponse, QBServer, Rule, Torrent, User } from "@/lib/types"
+import type { AdminUser, EpisodeFile, GrantRole, MeResponse, PermissionItem, PlayResponse, QBServer, Rule, Subject, Torrent, User } from "@/lib/types"
 
 type Handler = (ctx: { params: Record<string, string>; query: URLSearchParams; body: any }) => unknown
 
@@ -76,8 +76,31 @@ const me = (): MeResponse => {
   return { user: u, permissions }
 }
 
-const anime = fx.buildAnime()
-const torrents: Torrent[] = [...anime.flatMap((a) => (a.latest_torrent ? [a.latest_torrent] : [])), ...fx.buildTorrents()]
+const subjects = fx.buildSubjects()
+
+/** 每个条目往期各集的种子（由最新一集派生） */
+const pastEpisodes = new Map<string, Torrent[]>(
+  subjects.map((a) => {
+    const lt = a.latest_torrent
+    const latestEp = a.latest_episode ?? 0
+    const eps = lt
+      ? Array.from({ length: Math.max(0, latestEp - 1) }, (_, i): Torrent => ({
+          ...lt,
+          id: `${lt.id.slice(0, 20)}${String(i).padStart(4, "0")}`,
+          infohash: lt.infohash.slice(0, 38) + String(i).padStart(2, "0"),
+          title: lt.title.replace(/ - \d+ /, ` - ${String(latestEp - 1 - i).padStart(2, "0")} `),
+          published_at: new Date(new Date(lt.published_at).getTime() - (i + 1) * 7 * 86400_000).toISOString(),
+        }))
+      : []
+    return [a.key, eps]
+  }),
+)
+
+const torrents: Torrent[] = [
+  ...subjects.flatMap((a) => (a.latest_torrent ? [a.latest_torrent] : [])),
+  ...[...pastEpisodes.values()].flat(),
+  ...fx.buildTorrents(),
+]
 torrents.sort((a, b) => b.published_at.localeCompare(a.published_at))
 const plays = fx.buildPlays(torrents)
 const settings = fx.settings.map((s) => ({ ...s }))
@@ -93,10 +116,45 @@ function page<T>(list: T[], p: number, size = PAGE) {
   return { page: p, page_count, items: list.slice((p - 1) * size, p * size) }
 }
 
-function findTorrent(body: { magnet?: string; infohash?: string; torrent_id?: string }): Torrent | undefined {
-  if (body.torrent_id) return torrents.find((t) => t.id === body.torrent_id)
-  const ih = body.infohash ?? body.magnet?.match(/btih:([0-9a-f]{40})/i)?.[1]
-  return ih ? torrents.find((t) => t.infohash === ih.toLowerCase()) : undefined
+function findSubject(provider: string, id: string): Subject {
+  const a = subjects.find((x) => (provider === "bgm" ? String(x.bgm_id) === id : provider === "id" ? String(x.subject_id) === id : false))
+  if (!a) throw new HttpError(404, "not_found", "番剧不存在")
+  return a
+}
+
+const epOf = (title: string) => Number(title.match(/ - (\d+)(?:v\d)? /)?.[1] ?? 0)
+
+/** 条目的全部种子：最新一集 + 往期 + 标题相关 */
+function subjectTorrents(a: Subject): Torrent[] {
+  const name = (a.title_cn || a.title).slice(0, 4)
+  const own = [...(a.latest_torrent ? [a.latest_torrent] : []), ...(pastEpisodes.get(a.key) ?? [])]
+  const related = torrents.filter((t) => t.title.includes(name) && !own.includes(t))
+  return [...own, ...related]
+}
+
+function subjectOfTorrent(t: Torrent): Subject | undefined {
+  return subjects.find((a) => a.latest_torrent?.id === t.id || pastEpisodes.get(a.key)?.includes(t) || t.title.includes((a.title_cn || a.title).slice(0, 4)))
+}
+
+function playOf(t: Torrent | undefined, ih: string): PlayResponse {
+  requirePerm("POST /api/v1/torrents/hash/{ih}/play")
+  const u = currentUser()
+  const action = t?.access.action ?? "allow"
+  if (action === "block") throw new HttpError(451, "blocked", t?.access.reason || "该资源已被屏蔽")
+  if (action === "login" && !u) throw new HttpError(401, "login_required", "该资源需要登录后观看")
+  if (action === "vip" && (!u || (u.role !== "vip" && u.role !== "admin"))) throw new HttpError(402, "vip_required", t?.access.reason || "该资源仅限大会员")
+  const a = t ? subjectOfTorrent(t) : undefined
+  const name = t?.title ?? "Unknown torrent"
+  const ep = t ? epOf(t.title) : 0
+  return {
+    access: { action: "allow", reason: "" },
+    infohash: ih,
+    name,
+    magnet: `magnet:?xt=urn:btih:${ih}&dn=${encodeURIComponent(name)}&tr=${encodeURIComponent("wss://tracker.projectk.org")}`,
+    seeded_by: [],
+    webseeds: [],
+    meta: a ? { subject_id: a.subject_id, subject_key: a.key, bgm_id: a.bgm_id, title: a.title_cn || a.title, episode: ep || a.episodes_aired, file_index: 0 } : null,
+  }
 }
 
 function requireAdmin() {
@@ -134,23 +192,31 @@ const routes: [string, string, Handler][] = [
     sessionStorage.setItem(USER_KEY, "vip")
     return me()
   }],
-  ["GET", "/schedule", () => (requirePerm("GET /api/v1/schedule"), { generated_at: new Date().toISOString(), season: "2026-10", items: anime.map(fx.toScheduleItem) })],
-  ["GET", "/anime/:key", ({ params }) => {
-    requirePerm("GET /api/v1/anime/{key}")
-    const a = anime.find((x) => x.key === params.key)
-    if (!a) throw new HttpError(404, "not_found", "番剧不存在")
-    const name = (a.title_cn || a.title).slice(0, 4)
-    const related = torrents.filter((t) => t.title.includes(name) && t.id !== a.latest_torrent?.id)
-    const eps = a.latest_torrent
-      ? Array.from({ length: Math.max(0, a.episodes_aired - 1) }, (_, i): Torrent => ({
-          ...a.latest_torrent!,
-          id: `${a.latest_torrent!.id}-${i}`,
-          infohash: a.latest_torrent!.infohash.slice(0, 38) + String(i).padStart(2, "0"),
-          title: a.latest_torrent!.title.replace(/ - \d+ /, ` - ${String(a.episodes_aired - 1 - i).padStart(2, "0")} `),
-          published_at: new Date(new Date(a.latest_torrent!.published_at).getTime() - (i + 1) * 7 * 86400_000).toISOString(),
-        }))
-      : []
-    return { anime: a, torrents: [...(a.latest_torrent ? [a.latest_torrent] : []), ...related, ...eps] }
+  ["GET", "/schedule", () => (requirePerm("GET /api/v1/schedule"), { generated_at: new Date().toISOString(), season: "2026-10", items: subjects.map(fx.toScheduleItem) })],
+  ["GET", "/subjects/:provider/:id", ({ params }) => {
+    requirePerm("GET /api/v1/subjects/{provider}/{id}")
+    const a = findSubject(params.provider, params.id)
+    return { subject: a, torrents: subjectTorrents(a) }
+  }],
+  ["GET", "/subjects/:provider/:id/episodes/:n", ({ params }) => {
+    requirePerm("GET /api/v1/subjects/{provider}/{id}/episodes/{n}")
+    const a = findSubject(params.provider, params.id)
+    const n = Number(params.n)
+    const items = subjectTorrents(a)
+      .filter((t) => epOf(t.title) === n)
+      .map((t, i): EpisodeFile => ({
+        infohash: t.infohash,
+        file_index: 0,
+        path: `${t.title}.mkv`,
+        size_bytes: t.size_bytes,
+        torrent_title: t.title,
+        team: t.team?.name ?? "",
+        published_at: t.published_at,
+        source_id: t.source === "bangumi.moe" ? t.id : "",
+        confidence: i === 0 ? 0.95 : 0.8,
+        access: t.access,
+      }))
+    return { subject: a, episode: n, items }
   }],
   ["GET", "/torrents/search", ({ query }) => {
     requirePerm("GET /api/v1/torrents/search")
@@ -158,40 +224,29 @@ const routes: [string, string, Handler][] = [
     const list = torrents.filter((t) => kw.every((k) => t.title.toLowerCase().includes(k) || t.team?.name.toLowerCase().includes(k)))
     return page(list, Number(query.get("page") || 1))
   }],
-  ["POST", "/play", ({ body }) => {
-    requirePerm("POST /api/v1/play")
-    const t = findTorrent(body)
-    const u = currentUser()
-    const action = t?.access.action ?? "allow"
-    if (action === "block") throw new HttpError(451, "blocked", t?.access.reason || "该资源已被屏蔽")
-    if (action === "login" && !u) throw new HttpError(401, "login_required", "该资源需要登录后观看")
-    if (action === "vip" && (!u || (u.role !== "vip" && u.role !== "admin"))) throw new HttpError(402, "vip_required", t?.access.reason || "该资源仅限大会员")
-    const ih = t?.infohash ?? body.infohash ?? body.magnet?.match(/btih:([0-9a-z]+)/i)?.[1] ?? "0".repeat(40)
-    const a = t ? anime.find((x) => x.latest_torrent?.id === t.id || t.title.includes((x.title_cn || x.title).slice(0, 4))) : undefined
-    const name = t?.title ?? (decodeURIComponent(body.magnet?.match(/dn=([^&]+)/)?.[1] ?? "") || "Unknown torrent")
-    const res: PlayResponse = {
-      access: { action: "allow", reason: "" },
-      infohash: ih,
-      name,
-      magnet: body.magnet && !t ? body.magnet : `magnet:?xt=urn:btih:${ih}&dn=${encodeURIComponent(name)}&tr=${encodeURIComponent("wss://tracker.projectk.org")}`,
-      seeded_by: [],
-      webseeds: [],
-      meta: a ? { anime_key: a.key, episode: a.episodes_aired } : null,
-    }
-    return res
+  ["POST", "/torrents/hash/:ih/play", ({ params }) => {
+    const ih = params.ih.toLowerCase()
+    if (!/^[0-9a-f]{40}$/.test(ih)) throw new HttpError(400, "bad_request", "infohash 格式错误")
+    return playOf(torrents.find((t) => t.infohash === ih), ih)
   }],
-  ["POST", "/torrents/:ih/seed", ({ params }) => {
-    requirePerm("POST /api/v1/torrents/{ih}/seed")
+  ["POST", "/torrents/moe/:id/play", ({ params }) => {
+    requirePerm("POST /api/v1/torrents/moe/{id}/play")
+    const t = torrents.find((x) => x.id === params.id)
+    if (!t) throw new HttpError(404, "not_found", "未找到该种子")
+    return playOf(t, t.infohash)
+  }],
+  ["POST", "/torrents/hash/:ih/seed", ({ params }) => {
+    requirePerm("POST /api/v1/torrents/hash/{ih}/seed")
     const t = torrents.find((x) => x.infohash === params.ih.toLowerCase())
     if (t?.access.action === "block") throw new HttpError(451, "blocked", t.access.reason || "该资源已被屏蔽")
     if (t && t.size_bytes > fx.site.max_auto_size_bytes) throw new HttpError(413, "too_large", `该种子过大（超过 ${fx.site.max_auto_size_bytes >> 20} MB），服务器不参与做种`)
     return { seeded_by: ["ams"] }
   }],
-  ["POST", "/torrents/:ih/webseed", ({ params }) => {
-    requirePerm("POST /api/v1/torrents/{ih}/webseed")
+  ["POST", "/torrents/hash/:ih/webseed", ({ params }) => {
+    requirePerm("POST /api/v1/torrents/hash/{ih}/webseed")
     return { webseeds: [`${location.origin}/webseed/ams/${params.ih}/`], delay_sec: 3 }
   }],
-  ["POST", "/report", () => (requirePerm("POST /api/v1/report"), {})],
+  ["POST", "/torrents/hash/:ih/report", () => (requirePerm("POST /api/v1/torrents/hash/{ih}/report"), {})],
 
   // ---- admin ----
   ["GET", "/admin/stats", () => (requireAdmin(), fx.stats())],
@@ -229,7 +284,7 @@ const routes: [string, string, Handler][] = [
     qb.push(s)
     return s
   }],
-  ["PUT", "/admin/qb-servers/:id", ({ params, body }) => {
+  ["PUT", "/admin/qb-servers/id/:id", ({ params, body }) => {
     const i = qb.findIndex((x) => x.id === Number(params.id))
     const { password: _p, api_key: _k, ...rest } = body
     void _p
@@ -237,11 +292,11 @@ const routes: [string, string, Handler][] = [
     qb[i] = { ...qb[i], ...rest }
     return qb[i]
   }],
-  ["DELETE", "/admin/qb-servers/:id", ({ params }) => {
+  ["DELETE", "/admin/qb-servers/id/:id", ({ params }) => {
     qb.splice(qb.findIndex((x) => x.id === Number(params.id)), 1)
     return {}
   }],
-  ["POST", "/admin/qb-servers/:id/test", ({ params }) => {
+  ["POST", "/admin/qb-servers/id/:id/test", ({ params }) => {
     const s = qb.find((x) => x.id === Number(params.id))!
     s.last_check_at = new Date().toISOString()
     if (s.id === 2) throw new HttpError(502, "qb_unreachable", "连接失败：dial tcp 162.105.0.1:8888: i/o timeout")
@@ -253,7 +308,7 @@ const routes: [string, string, Handler][] = [
     const kw = (query.get("q") || "").toLowerCase()
     return page(users.filter((u) => !kw || u.username.includes(kw) || u.email.includes(kw)), Number(query.get("page") || 1), 12)
   }],
-  ["PUT", "/admin/users/:id", ({ params, body }) => {
+  ["PUT", "/admin/users/id/:id", ({ params, body }) => {
     const i = users.findIndex((u) => u.id === Number(params.id))
     users[i] = { ...users[i], ...body } as AdminUser
     return users[i]
@@ -270,7 +325,7 @@ const routes: [string, string, Handler][] = [
     fx.invites.unshift(inv)
     return inv
   }],
-  ["PUT", "/admin/invites/:id", ({ params, body }) => {
+  ["PUT", "/admin/invites/id/:id", ({ params, body }) => {
     const inv = fx.invites.find((i) => i.id === Number(params.id))
     if (!inv) throw new HttpError(404, "not_found", "邀请码不存在")
     inv.disabled = !!body.disabled
@@ -289,12 +344,12 @@ const routes: [string, string, Handler][] = [
     rules.push(r)
     return r
   }],
-  ["PUT", "/admin/rules/:id", ({ params, body }) => {
+  ["PUT", "/admin/rules/id/:id", ({ params, body }) => {
     const i = rules.findIndex((r) => r.id === Number(params.id))
     rules[i] = { ...rules[i], ...body }
     return rules[i]
   }],
-  ["DELETE", "/admin/rules/:id", ({ params }) => {
+  ["DELETE", "/admin/rules/id/:id", ({ params }) => {
     rules.splice(rules.findIndex((r) => r.id === Number(params.id)), 1)
     return {}
   }],
@@ -318,7 +373,7 @@ const routes: [string, string, Handler][] = [
     return { access: { action: settings.find((s) => s.key === "policy.default_action")?.value ?? "allow", reason: "默认动作" }, matched_rule: null }
   }],
   ["GET", "/admin/reviews", ({ query }) => page(fx.reviews.filter((r) => ((query.get("status") || "pending") === "pending") === (r.status === "pending")), 1, 100)],
-  ["PUT", "/admin/reviews/:id", ({ params, body }) => {
+  ["PUT", "/admin/reviews/id/:id", ({ params, body }) => {
     const r = fx.reviews.find((x) => x.id === Number(params.id))!
     Object.assign(r, body, { status: body.action === "dismiss" ? "dismissed" : "done" })
     return r

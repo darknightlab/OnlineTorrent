@@ -37,7 +37,7 @@ function CodeCell({ code }: { code: string }) {
 }
 
 /** 后端未返回 url 时按当前站点拼接 */
-const inviteURL = (c: InviteCode) => c.url || `${location.origin}/register?invite=${encodeURIComponent(c.code)}`
+const inviteURL = (c: InviteCode) => c.url || `${location.origin}/register/invite/${encodeURIComponent(c.code)}`
 
 function inviteStatus(c: InviteCode) {
   if (c.disabled) return <Badge variant="muted">已停用</Badge>

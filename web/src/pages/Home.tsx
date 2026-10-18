@@ -5,7 +5,7 @@ import { WheelGesturesPlugin } from "embla-carousel-wheel-gestures"
 import { Navigate, useLocation } from "react-router-dom"
 import { CalendarDays, Megaphone } from "lucide-react"
 import { Container } from "@/components/layout/Container"
-import { AnimeCard, AnimeCardSkeleton } from "@/components/AnimeCard"
+import { SubjectCard, SubjectCardSkeleton } from "@/components/SubjectCard"
 import { EmptyState, ErrorState, SectionHeader } from "@/components/states"
 import { Markdown } from "@/components/Markdown"
 import { Card } from "@/components/ui/card"
@@ -14,15 +14,17 @@ import { byWeekday } from "@/lib/schedule"
 import type { ScheduleItem } from "@/lib/types"
 import { todayWeekday, WEEKDAYS, weekdayDate } from "@/lib/format"
 import { useDocumentTitle, useNow } from "@/lib/hooks"
-import { cn } from "@/lib/utils"
+import { cn, parseTorrentInput, watchHref } from "@/lib/utils"
 
 const WEEK_ORDER = [1, 2, 3, 4, 5, 6, 0]
 
 export default function Home() {
   const loc = useLocation()
   useDocumentTitle(null)
-  // 兼容旧版分享链接 /?uri=magnet...
-  if (new URLSearchParams(loc.search).has("uri")) return <Navigate replace to={`/watch${loc.search}`} />
+  // 兼容旧版分享链接 /?uri=magnet... → /watch/hash/{ih}
+  const uri = new URLSearchParams(loc.search).get("uri")
+  const ih = uri ? parseTorrentInput(uri) : null
+  if (ih) return <Navigate replace to={watchHref(ih)} />
   return (
     <Container className="space-y-6 py-4 sm:space-y-8 sm:py-6">
       <Announcement />
@@ -192,11 +194,11 @@ const DayPanel = memo(function DayPanel({
     >
       {pending ? (
         <div className="grid grid-cols-2 gap-x-2.5 gap-y-4 sm:grid-cols-3 sm:gap-x-3 lg:grid-cols-4 xl:grid-cols-5">
-          {Array.from({ length: 10 }, (_, i) => <AnimeCardSkeleton key={i} />)}
+          {Array.from({ length: 10 }, (_, i) => <SubjectCardSkeleton key={i} />)}
         </div>
       ) : items.length ? (
         <div className="grid grid-cols-2 gap-x-2.5 gap-y-4 sm:grid-cols-3 sm:gap-x-3 lg:grid-cols-4 xl:grid-cols-5">
-          {items.map((i) => <AnimeCard key={i.key} item={i} now={now} />)}
+          {items.map((i) => <SubjectCard key={i.key} item={i} now={now} />)}
         </div>
       ) : (
         <Card>

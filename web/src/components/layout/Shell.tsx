@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { useEffect, useRef } from "react"
 import { Outlet, useLocation } from "react-router-dom"
 import { Header } from "./Header"
 import { MobileTabBar } from "./MobileTabBar"
@@ -9,9 +9,16 @@ export { Container } from "./Container"
 export function Shell() {
   const { pathname } = useLocation()
   const isAdmin = pathname.startsWith("/admin")
-  const isWatch = pathname.startsWith("/watch")
+  // 播放页 / 单集页不显示页脚
+  const isWatch = pathname.startsWith("/watch") || /^\/subject\/[^/]+\/[^/]+\/episode\//.test(pathname)
+  const prev = useRef(pathname)
 
   useEffect(() => {
+    // 同一种子内切换文件（/watch/hash/{ih}[/file/{i}]）不回到顶部
+    const same = (p: string) => p.match(/^\/watch\/hash\/([^/]+)/)?.[1]
+    const a = same(prev.current)
+    prev.current = pathname
+    if (a && a === same(pathname)) return
     window.scrollTo({ top: 0 })
   }, [pathname])
 

@@ -20,7 +20,7 @@ export function TorrentRow({ t, now }: { t: Torrent; now: number }) {
   return (
     <li>
       <Link
-        to={watchHref({ t: t.id })}
+        to={watchHref(t.infohash)}
         state={{ torrent: t }}
         className={cn(
           "group flex items-start gap-3 px-3 py-2.5 transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none sm:px-4 lg:items-center",

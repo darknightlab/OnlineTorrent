@@ -324,3 +324,19 @@ func (c *Catalog) resolveCovers(ctx context.Context, works []*meta.Work, items [
 	}
 	wg.Wait()
 }
+
+// ScheduleItemByKey returns the cached schedule entry for a work (with latest torrent),
+// or nil if the work is not on the current schedule.
+func (c *Catalog) ScheduleItemByKey(key string) *ScheduleItem {
+	sc := c.Schedule()
+	if sc == nil {
+		return nil
+	}
+	for _, it := range sc.Items {
+		if it.Key == key {
+			cp := *it
+			return &cp
+		}
+	}
+	return nil
+}

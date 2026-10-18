@@ -5,25 +5,21 @@ import { Cover } from "./Cover"
 import type { ScheduleItem } from "@/lib/types"
 import { airStatus, displayTitle, episodeLabel } from "@/lib/schedule"
 import { formatDate } from "@/lib/format"
-import { cn, watchHref } from "@/lib/utils"
-
-export function animeHref(key: string) {
-  return `/anime/${encodeURIComponent(key)}`
-}
+import { cn, episodeHref, subjectHref } from "@/lib/utils"
 
 /** 新番时间表卡片（16:9；竖版封面宽度铺满、偏上裁切，以后换成本集截图 / 横版剧照） */
-export const AnimeCard = memo(function AnimeCard({ item, now }: { item: ScheduleItem; now: number }) {
+export const SubjectCard = memo(function SubjectCard({ item, now }: { item: ScheduleItem; now: number }) {
   const status = airStatus(item, now)
   const title = displayTitle(item)
-  const t = item.latest_torrent
-  const href = t ? watchHref({ t: t.id }) : animeHref(item.key)
+  // 已知最新一集 → 单集页（自动选资源播放）；否则 → 条目页
+  const ep = item.latest_episode && item.latest_episode > 0 ? item.latest_episode : null
+  const href = ep ? episodeHref(item, ep) : subjectHref(item)
   return (
     <div className="group relative">
       <Link
         to={href}
-        state={t ? { torrent: t } : undefined}
         className="block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
-        aria-label={`${title}，${episodeLabel(item)}，${item.air_time} 播出${t ? "，点击播放最新一集" : ""}`}
+        aria-label={`${title}，${episodeLabel(item)}，${item.air_time} 播出${ep ? `，点击播放第 ${ep} 话` : ""}`}
       >
         <div className="relative overflow-hidden rounded-lg shadow-card ring-1 ring-black/5 dark:ring-white/5">
           <Cover src={item.cover} title={title} position="object-[50%_30%]" className="aspect-video w-full transition-transform duration-300 group-hover:scale-[1.03]" />
@@ -44,7 +40,7 @@ export const AnimeCard = memo(function AnimeCard({ item, now }: { item: Schedule
             <span className="text-[12px] font-semibold text-white drop-shadow sm:text-[13px]">
               {item.episodes_aired > 0 ? episodeLabel(item) : `${formatDate(item.begin).slice(5)} 开播`}
             </span>
-            {t && (
+            {ep && (
               <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-primary text-white opacity-90 shadow transition-transform group-hover:scale-110 sm:h-7 sm:w-7">
                 <Play className="ml-px h-3 w-3 fill-current sm:h-3.5 sm:w-3.5" />
               </span>
@@ -62,9 +58,9 @@ export const AnimeCard = memo(function AnimeCard({ item, now }: { item: Schedule
           )}
         </div>
       </Link>
-      {t && (
+      {ep && (
         <Link
-          to={animeHref(item.key)}
+          to={subjectHref(item)}
           aria-label={`${title} 番剧详情`}
           title="番剧详情"
           className={cn(
@@ -78,7 +74,7 @@ export const AnimeCard = memo(function AnimeCard({ item, now }: { item: Schedule
   )
 })
 
-export function AnimeCardSkeleton() {
+export function SubjectCardSkeleton() {
   return (
     <div>
       <div className="aspect-video w-full animate-pulse rounded-lg bg-muted" />

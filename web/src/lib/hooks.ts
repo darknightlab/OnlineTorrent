@@ -10,8 +10,10 @@ export function useNow(intervalMs = 60_000) {
   return now
 }
 
+/** 设置页面标题；null = 站点名，undefined = 不修改 */
 export function useDocumentTitle(title: string | null | undefined) {
   useEffect(() => {
+    if (title === undefined) return
     document.title = title ? `${title} - Project Kawaii` : "Project Kawaii"
   }, [title])
 }

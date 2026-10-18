@@ -83,17 +83,28 @@
     "last_air_at": "2026-10-10T14:00:00Z",
     "next_air_at": "2026-10-17T14:00:00Z",
     "episodes_aired": 2,           // 估算
-    "bgm_id": 123456, "moe_tag_id": "5ff…",
-    "latest_torrent": null          // 或 Torrent（见下），bangumi.moe 该 tag 最新一个
+    "bgm_id": 123456, "moe_tag_id": "5ff…",   // bgm_id 可为 null
+    "latest_torrent": null,         // 或 Torrent（见下），bangumi.moe 该 tag 最新一个
+    "latest_episode": 2             // 映射库已知的最新一集（可为 null）→ 前端卡片直达 /subject/…/episode/{n}
   }]
 }
 ```
 
 ### `GET /subjects/{provider}/{id}`
 ```json
-{ "subject": { ...同 schedule item..., "summary": "简介", "tags": ["..."], "external": {"bgm": 123, "mal": 1, "anidb": 2, "tmdb": null, "imdb": null} },
+{ "subject": { ...同 schedule item..., "summary": "简介", "type": "tv", "official_site": "https://…", "tags": ["..."],
+               "external": {"bgm": "123", "mal": "1", "bangumi_moe": "5ff…"} },   // external 的值目前为字符串
   "torrents": [Torrent, ...] }
 ```
+
+### `GET /subjects/{provider}/{id}/episodes/{n}`
+```json
+{ "subject": { ...同上... }, "episode": 3,
+  "items": [{ "infohash": "...", "file_index": 0, "path": "[Team] Foo - 03 [1080p].mkv", "size_bytes": 0,
+              "torrent_title": "...", "team": "字幕组名", "published_at": "...", "source_id": "bangumi.moe _id 或空",
+              "confidence": 0.85, "access": {"action": "allow", "reason": ""} }] }
+```
+`items[0]` 为服务端自动推荐；无已知文件时 `items` 为空数组。
 
 ### `GET /torrents/search?q=xxx&page=1`
 `page` 上限 50（超出按 50 处理）；`q` 最长 100 字；每 IP 突发 20 次、之后每 3 秒 1 次。
@@ -127,17 +138,17 @@ Torrent：
 - 用户磁力里的 `tr=` 一律丢弃（只用站点配置的 tracker）；`dn=` 只作为未受信标题参与判定（用户磁力最低权限始终生效），不写入种子标题，真实标题以 qB 元数据为准。
 - 用户提交的种子获取元数据后会被复查；此外后台每 10 分钟用 qB 中的真实名称与文件列表复查本站分类下所有种子，命中屏蔽规则或超过大小上限的会被移除。
 
-### `POST /torrents/{ih}/seed` → `{"seeded_by": ["ams"]}`
+### `POST /torrents/hash/{ih}/seed` → `{"seeded_by": ["ams"]}`
 让所有在线 qB 下载并做种（消耗服务器带宽 / 磁盘）。默认仅会员及以上。种子须先经 play 打开过；会对当前用户重新做策略判定。超过 `play.max_push_size_mb` 返回 413 `too_large`。
 
-### `POST /torrents/{ih}/webseed` → `{"webseeds": ["https://www.projectk.org/webseed/{exp}.{sig}/{ih}/"], "delay_sec": 8}`
+### `POST /torrents/hash/{ih}/webseed` → `{"webseeds": ["https://www.projectk.org/webseed/{exp}.{sig}/{ih}/"], "delay_sec": 8}`
 签名的 HTTP WebSeed 地址（6 小时有效，只服务 qB 已完整下载的文件）。默认仅会员及以上；后台关闭 WebSeed 时返回空数组。前端应在 `delay_sec` 秒后再加入，优先 P2P。
 
 ### `POST /torrents/hash/{ih}/report` `{reason}` → `{}`  需登录。举报 → 进入审核队列（标题取自服务端记录，不接受客户端提供；reason 最长 500 字）
 
 ## 后台 `/admin/*`（仅 admin）
 - `GET /admin/permissions` → `{"roles":["guest","member","vip"], "items":[{key, method, path, group, label, access, default_roles, granted:{guest,member,vip}}]}`
-- `PUT /admin/permissions` `{"grants": {"POST /api/v1/torrents/{ih}/seed": ["member"], ...}}` → 同 GET（只能改 configurable / user 类型；user 类型不能授权给 guest）
+- `PUT /admin/permissions` `{"grants": {"POST /api/v1/torrents/hash/{ih}/seed": ["member"], ...}}` → 同 GET（只能改 configurable / user 类型；user 类型不能授权给 guest）
 - `GET/PUT /admin/settings` 全部站点设置（KV 对象，字段见 `GET` 返回）
 - `GET/POST /admin/qb-servers`，`PUT/DELETE /admin/qb-servers/id/{id}`，`POST /admin/qb-servers/id/{id}/test`
   QBServer: `{id,name,url,username,password(写入时),api_key(写入时),category,enabled,seeding_time_limit_min,ratio_limit,max_active,online,version,last_error,last_check_at}`
@@ -156,7 +167,7 @@ Torrent：
 ## 映射服务 `/meta/v1/*`（metad，可独立部署；默认与 otd 同进程挂载）
 映射粒度是**文件级**：`(infohash, file_index)` → 作品 + 集。合集种子每个视频文件一行；字幕/字体/NCOP 等不映射或标记 `kind`。
 
-- `GET /meta/v1/torrents/{infohash}` →
+- `GET /meta/v1/torrents/hash/{infohash}` →
 ```json
 { "infohash": "...", "title": "...",
   "files": [{ "index": 0, "path": "[Team] Foo - 02 [1080p].mkv", "size_bytes": 0,
@@ -164,6 +175,6 @@ Torrent：
               "work": {"key": "bgm:123", "title": "...", "title_cn": "...", "external": {"bgm": 123, "mal": 1}},
               "episode": 2, "confidence": 0.95, "status": "auto|verified|rejected", "method": "moe_tag+name" }] }
 ```
-- `GET /meta/v1/works/{key}`（含 external ids）/ `GET /meta/v1/works?external=mal:123` / `GET /meta/v1/works?q=标题`
-- `GET /meta/v1/works/{key}/episodes/{n}/files` → 该集所有已知文件（infohash + file_index + 种子标题）
-- `PUT /meta/v1/torrents/{infohash}/files/{index}`（admin）`{work_key, episode, kind, status}` 手工纠正（status=verified 后自动匹配不再覆盖）
+- `GET /meta/v1/subjects/{provider}/{id}`（含 external ids）/ `GET /meta/v1/subjects/search?q=标题`
+- `GET /meta/v1/subjects/{provider}/{id}/episodes/{n}/files` → 该集所有已知文件（infohash + file_index + 种子标题）
+- `PUT /meta/v1/torrents/hash/{infohash}/files/{index}`（admin）`{subject_id|work_key, episode, kind, status}` 手工纠正（status=verified 后自动匹配不再覆盖）

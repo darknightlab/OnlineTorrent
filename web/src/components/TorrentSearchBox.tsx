@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react"
 import { useNavigate } from "react-router-dom"
 import { Magnet, Search } from "lucide-react"
-import { cn, parseTorrentInput, watchHref } from "@/lib/utils"
+import { cn, parseTorrentInput, searchHref, watchHref } from "@/lib/utils"
 import { useMediaQuery } from "@/lib/hooks"
 
 /**
@@ -22,17 +22,18 @@ export function TorrentSearchBox({
 }) {
   const [value, setValue] = useState(defaultValue)
   const navigate = useNavigate()
-  const parsed = parseTorrentInput(value)
+  const parsed = parseTorrentInput(value) !== null
 
   function submit(e: FormEvent) {
     e.preventDefault()
     const v = value.trim()
     if (!v) return
-    const p = parseTorrentInput(v)
-    if (p) {
-      navigate("magnet" in p ? watchHref({ uri: p.magnet }) : watchHref({ ih: p.infohash }))
+    // 磁力 / infohash → /watch/hash/{ih}（dn 与 tracker 丢弃，服务端只用站点 tracker）
+    const ih = parseTorrentInput(v)
+    if (ih) {
+      navigate(watchHref(ih))
       if (size === "sm") setValue("")
-    } else navigate(`/search?q=${encodeURIComponent(v)}`)
+    } else navigate(searchHref(v))
   }
 
   const Icon = parsed ? Magnet : Search

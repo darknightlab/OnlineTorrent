@@ -1,4 +1,4 @@
-import { useSearchParams } from "react-router-dom"
+import { Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { SearchX, Search as SearchIcon } from "lucide-react"
 import { Container } from "@/components/layout/Container"
 import { TorrentSearchBox } from "@/components/TorrentSearchBox"
@@ -7,12 +7,24 @@ import { EmptyState, ErrorState, Pager } from "@/components/states"
 import { Card } from "@/components/ui/card"
 import { useSearch } from "@/lib/queries"
 import { useDocumentTitle, useNow } from "@/lib/hooks"
+import { searchHref } from "@/lib/utils"
 
 const SUGGEST = ["葬送的芙莉莲", "1080p 简繁内封", "ANi", "桜都字幕组", "药屋少女的呢喃"]
 
+/** /search?q=x（旧链接）→ /search/x；/search 无关键词显示空状态 */
+export function LegacySearchPage() {
+  const [sp] = useSearchParams()
+  const q = sp.get("q")?.trim()
+  if (q) return <Navigate replace to={searchHref(q, Number(sp.get("page")) || undefined)} />
+  return <SearchPage />
+}
+
+/** /search/:keyword（翻页 ?page=） */
 export default function SearchPage() {
+  const { keyword = "" } = useParams()
   const [sp, setSp] = useSearchParams()
-  const q = sp.get("q")?.trim() ?? ""
+  const navigate = useNavigate()
+  const q = keyword.trim()
   const page = Math.max(1, Number(sp.get("page")) || 1)
   const now = useNow()
   const { data, isPending, error, refetch, isFetching } = useSearch(q, page)
@@ -29,7 +41,7 @@ export default function SearchPage() {
               <button
                 key={s}
                 type="button"
-                onClick={() => setSp({ q: s })}
+                onClick={() => navigate(searchHref(s))}
                 className="inline-flex h-8 items-center rounded-full border bg-card px-3 text-foreground/80 transition-colors hover:border-primary hover:text-primary-text"
               >
                 {s}
@@ -59,7 +71,7 @@ export default function SearchPage() {
               <EmptyState icon={SearchX} title="没有找到相关种子" description="换个关键词试试，或直接粘贴磁力链接播放。" />
             )}
           </Card>
-          {data && <Pager page={data.page} pageCount={data.page_count} onChange={(p) => setSp({ q, page: String(p) })} />}
+          {data && <Pager page={data.page} pageCount={data.page_count} onChange={(p) => setSp(p > 1 ? { page: String(p) } : {})} />}
         </section>
       )}
       {!q && <EmptyState icon={SearchIcon} className="mt-8" title="搜索 bangumi.moe 上的种子" description="支持番剧名、字幕组、分辨率等关键词，多个关键词用空格分隔。" />}

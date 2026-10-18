@@ -27,7 +27,6 @@ import { loadEngine } from "@/player/engine"
 import { isPlayable, likelyUnsupported, type Engine, type FileKind, type FileSnap, type LogLevel, type Session, type TorrentSnap } from "@/player/types"
 import { PieceBar, SEGMENTS } from "./PieceBar"
 import { ReportDialog } from "./ReportDialog"
-import { animeHref } from "@/components/AnimeCard"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -35,10 +34,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
 import { errorMessage } from "@/components/states"
 import { api } from "@/lib/api"
-import { PERM, can, useAnime, useMe, useSiteOrFallback } from "@/lib/queries"
-import type { PlayResponse, Torrent } from "@/lib/types"
+import { PERM, can, useMe, useSiteOrFallback, useSubject } from "@/lib/queries"
+import type { PlayResponse } from "@/lib/types"
+import type { PlayHint } from "./usePlayResolve"
 import { formatBytes, formatDuration, formatPercent, formatSpeed } from "@/lib/format"
-import { cn, copyText } from "@/lib/utils"
+import { cn, copyText, episodeHref, subjectHref, subjectPath } from "@/lib/utils"
 import { useDocumentTitle } from "@/lib/hooks"
 
 interface LogLine {
@@ -62,18 +62,36 @@ function pickInitial(files: FileSnap[]) {
   return (sorted.find((f) => f.kind === "video") ?? sorted.find((f) => f.kind === "audio") ?? sorted.find((f) => f.kind === "image"))?.index ?? null
 }
 
+/**
+ * 播放器（播放页与单集页共用）。换种子时由父组件以 key={magnet} 重新挂载。
+ * - fileIndex：要播放的文件（URL /file/{index} 或单集映射）；无效或为空时自动选择
+ * - onFileChange：用户在文件列表里切换可播放文件时回调（播放页据此更新 URL）
+ */
 export function Player({
   magnet,
   play,
   direct,
   hint,
   shareURL,
+  fileIndex = null,
+  onFileChange,
+  poster: posterProp,
+  showMeta = true,
+  extra,
 }: {
   magnet: string
   play: PlayResponse | null
   direct: boolean
-  hint?: Torrent
-  shareURL: (infohash: string | null) => string
+  hint?: PlayHint
+  shareURL: (infohash: string | null, fileIndex: number | null) => string
+  fileIndex?: number | null
+  onFileChange?: (index: number) => void
+  /** 封面（不传时按 play.meta 查询条目） */
+  poster?: string
+  /** 是否在标题下显示条目 / 集数链接 */
+  showMeta?: boolean
+  /** 左栏底部的附加内容（如单集页的「其他资源」） */
+  extra?: React.ReactNode
 }) {
   const site = useSiteOrFallback()
   const [engine, setEngine] = useState<Engine | null>(null)
@@ -103,8 +121,11 @@ export function Player({
   const canWebseed = can(me.data, PERM.webseed)
   const canReport = can(me.data, PERM.report)
 
-  const anime = useAnime(play?.meta?.anime_key ?? "")
-  const poster = anime.data?.anime.cover ?? undefined
+  const meta = play?.meta ?? null
+  const metaPath = meta ? subjectPath(meta) : null
+  const subject = useSubject(posterProp === undefined ? (metaPath?.provider ?? "") : "", metaPath?.id ?? "")
+  const poster = (posterProp !== undefined ? posterProp : subject.data?.subject.cover) || undefined
+  const wantFile = useRef<number | null>(fileIndex)
 
   const log = useCallback((level: LogLevel, msg: string) => {
     setLogs((l) => [...l.slice(-199), { t: Date.now(), level, msg }])
@@ -195,7 +216,8 @@ export function Player({
       setSnap(sn)
       if (sn && !autoPicked.current) {
         autoPicked.current = true
-        const first = pickInitial(sn.files)
+        const want = wantFile.current
+        const first = want !== null && sn.files[want] && isPlayable(sn.files[want].kind) ? want : pickInitial(sn.files)
         if (first !== null) setCurrent(first)
       }
     }
@@ -211,6 +233,14 @@ export function Player({
     const t = window.setInterval(up, 1000)
     return () => window.clearInterval(t)
   }, [session, current])
+
+  // 外部指定的文件变化（URL 前进/后退、单集页切换同一种子内的文件）
+  useEffect(() => {
+    wantFile.current = fileIndex
+    if (fileIndex === null) return
+    const f = session?.snapshot()?.files[fileIndex]
+    if (f && isPlayable(f.kind)) setCurrent(fileIndex)
+  }, [fileIndex, session])
 
   const file = current !== null ? snap?.files[current] : undefined
   const url = session && current !== null && streaming ? session.fileURL(current) : null
@@ -234,7 +264,7 @@ export function Player({
   const title = snap?.name ?? play?.name ?? hint?.title ?? "正在获取种子信息…"
 
   async function share() {
-    const link = shareURL(infoHash)
+    const link = shareURL(infoHash, current)
     if (navigator.share && window.matchMedia("(pointer: coarse)").matches) {
       try {
         await navigator.share({ title, url: link })
@@ -250,6 +280,7 @@ export function Player({
   const onSelectFile = (f: FileSnap) => {
     if (isPlayable(f.kind)) {
       setCurrent(f.index)
+      onFileChange?.(f.index)
       if (window.matchMedia("(max-width: 1023px)").matches) window.scrollTo({ top: 0, behavior: "smooth" })
     } else {
       const u = session?.fileURL(f.index)
@@ -385,13 +416,19 @@ export function Player({
               {title}
             </h1>
             <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-xs text-muted-foreground">
-              {hint?.team?.name && <Badge variant="accent-soft">{hint.team.name}</Badge>}
-              {play?.meta?.anime_key && (
-                <Link to={animeHref(play.meta.anime_key)} className="inline-flex h-6 items-center gap-1 rounded bg-primary-soft px-1.5 font-medium text-primary-text hover:underline">
-                  <Tv className="h-3 w-3" />
-                  {anime.data ? anime.data.anime.title_cn || anime.data.anime.title : "番剧详情"}
-                  {play.meta.episode ? ` · 第 ${play.meta.episode} 话` : ""}
-                </Link>
+              {hint?.team && <Badge variant="accent-soft">{hint.team}</Badge>}
+              {showMeta && meta && metaPath && (
+                <span className="inline-flex h-6 items-center overflow-hidden rounded bg-primary-soft font-medium text-primary-text">
+                  <Link to={subjectHref(meta)} className="inline-flex h-full items-center gap-1 px-1.5 hover:underline" title="番剧详情">
+                    <Tv className="h-3 w-3" />
+                    {subject.data ? subject.data.subject.title_cn || subject.data.subject.title : meta.title || "番剧详情"}
+                  </Link>
+                  {meta.episode > 0 && (
+                    <Link to={episodeHref(meta, meta.episode)} className="inline-flex h-full items-center border-l border-primary/20 px-1.5 hover:underline" title="本集所有资源">
+                      第 {meta.episode} 话
+                    </Link>
+                  )}
+                </span>
               )}
               {snap && <span className="tabular-nums">{formatBytes(snap.length)}</span>}
               {snap && <span>{snap.files.length} 个文件</span>}
@@ -450,6 +487,7 @@ export function Player({
             sub={snap?.done ? "已完成" : snap ? `剩余 ${formatDuration(snap.timeRemaining)}` : "-"}
           />
         </dl>
+        {extra}
       </section>
 
       {/* 侧栏 / 移动端下方：标签页 */}

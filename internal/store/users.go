@@ -569,7 +569,7 @@ func (s *Store) listInvites(ctx context.Context, db *sql.DB, where string, args 
 			v.ExpiresAt = &exp.String
 		}
 		v.Disabled = dis != 0
-		v.URL = strings.TrimRight(s.Str(KeySiteBaseURL), "/") + "/register?invite=" + v.Code
+		v.URL = strings.TrimRight(s.Str(KeySiteBaseURL), "/") + "/register/invite/" + v.Code
 		out = append(out, v)
 	}
 	return out, rows.Err()

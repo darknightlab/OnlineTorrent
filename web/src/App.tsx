@@ -7,14 +7,18 @@ import { Shell } from "@/components/layout/Shell"
 import { Toaster } from "@/components/ui/toast"
 import { PageLoading } from "@/components/states"
 import Home from "@/pages/Home"
-import AnimePage from "@/pages/Anime"
-import SearchPage from "@/pages/Search"
-import { LoginPage, RegisterPage } from "@/pages/Auth"
+import SubjectPage, { LegacyAnimeRedirect } from "@/pages/Subject"
+import SearchPage, { LegacySearchPage } from "@/pages/Search"
+import { LoginPage, RegisterPage, RegisterRoute } from "@/pages/Auth"
 import MePage from "@/pages/Me"
 import NotFound from "@/pages/NotFound"
 
-// 播放页（webtorrent）与后台按需加载
+// 播放页 / 单集页（webtorrent）与后台按需加载
 const WatchPage = lazy(() => import("@/pages/watch/Watch"))
+const LegacyWatchPage = lazy(() => import("@/pages/watch/Watch").then((m) => ({ default: m.LegacyWatchPage })))
+const EpisodePage = lazy(() => import("@/pages/Episode"))
+
+const playerFallback = <PageLoading label="正在加载播放器…" />
 const AdminApp = lazy(() => import("@/pages/admin/AdminApp"))
 
 const queryClient = new QueryClient({
@@ -34,18 +38,39 @@ export default function App() {
           <Routes>
             <Route element={<Shell />}>
               <Route index element={<Home />} />
-              <Route path="anime/:key" element={<AnimePage />} />
-              <Route path="search" element={<SearchPage />} />
+              <Route path="subject/:provider/:id" element={<SubjectPage />} />
               <Route
-                path="watch"
+                path="subject/:provider/:id/episode/:n"
                 element={
-                  <Suspense fallback={<PageLoading label="正在加载播放器…" />}>
+                  <Suspense fallback={playerFallback}>
+                    <EpisodePage />
+                  </Suspense>
+                }
+              />
+              <Route path="search" element={<LegacySearchPage />} />
+              <Route path="search/:keyword" element={<SearchPage />} />
+              {/* /watch/hash/:ih 与 /watch/hash/:ih/file/:index 共用一个路由，切换文件不重建播放器 */}
+              <Route
+                path="watch/hash/:ih/*"
+                element={
+                  <Suspense fallback={playerFallback}>
                     <WatchPage />
                   </Suspense>
                 }
               />
+              {/* 旧链接：/watch?uri=|ih=|t=，无参数为粘贴磁力页 */}
+              <Route
+                path="watch"
+                element={
+                  <Suspense fallback={playerFallback}>
+                    <LegacyWatchPage />
+                  </Suspense>
+                }
+              />
+              <Route path="anime/:key" element={<LegacyAnimeRedirect />} />
               <Route path="login" element={<LoginPage />} />
-              <Route path="register" element={<RegisterPage />} />
+              <Route path="register" element={<RegisterRoute />} />
+              <Route path="register/invite/:code" element={<RegisterPage />} />
               <Route path="me" element={<MePage />} />
               <Route
                 path="admin/*"

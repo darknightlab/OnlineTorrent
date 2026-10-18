@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react"
-import { Link, useParams } from "react-router-dom"
+import { Link, Navigate, useParams } from "react-router-dom"
 import { CalendarClock, CalendarDays, ExternalLink, Film, ListVideo, Play, Tv } from "lucide-react"
 import { Container } from "@/components/layout/Container"
 import { Cover } from "@/components/Cover"
@@ -9,13 +9,13 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
-import { useAnime } from "@/lib/queries"
+import { useSubject } from "@/lib/queries"
 import { airStatus, displayTitle } from "@/lib/schedule"
 import { formatDate, timeUntil, WEEKDAYS } from "@/lib/format"
 import { useDocumentTitle, useNow } from "@/lib/hooks"
 import { isApiError } from "@/lib/api"
 import type { ExternalIds } from "@/lib/types"
-import { cn, watchHref } from "@/lib/utils"
+import { cn, episodeHref, watchHref } from "@/lib/utils"
 import { StatusPage } from "./NotFound"
 
 const EXTERNAL: { key: keyof ExternalIds; label: string; url: (id: string | number) => string }[] = [
@@ -26,13 +26,21 @@ const EXTERNAL: { key: keyof ExternalIds; label: string; url: (id: string | numb
   { key: "imdb", label: "IMDb", url: (id) => `https://www.imdb.com/title/${id}` },
 ]
 
-export default function AnimePage() {
+/** 旧链接 /anime/{key}：bgm:N → /subject/bgm/N，其他回首页 */
+export function LegacyAnimeRedirect() {
   const { key = "" } = useParams()
-  const { data, isPending, error, refetch } = useAnime(key)
+  const m = key.match(/^bgm:(\d+)$/)
+  return <Navigate replace to={m ? `/subject/bgm/${m[1]}` : "/"} />
+}
+
+/** /subject/:provider/:id */
+export default function SubjectPage() {
+  const { provider = "", id = "" } = useParams()
+  const { data, isPending, error, refetch } = useSubject(provider, id)
   const now = useNow()
   const [team, setTeam] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
-  useDocumentTitle(data ? displayTitle(data.anime) : "番剧详情")
+  useDocumentTitle(data ? displayTitle(data.subject) : "番剧详情")
 
   const teams = useMemo(() => {
     const m = new Map<string, number>()
@@ -41,7 +49,7 @@ export default function AnimePage() {
   }, [data])
   const torrents = useMemo(() => (data?.torrents ?? []).filter((t) => !team || t.team?.name === team), [data, team])
 
-  if (isPending) return <AnimeSkeleton />
+  if (isPending) return <SubjectSkeleton />
   if (error) {
     if (isApiError(error) && error.status === 404) return <StatusPage code="404" title="番剧不存在" description="该番剧可能尚未收录，或链接有误。" />
     return (
@@ -53,10 +61,13 @@ export default function AnimePage() {
     )
   }
 
-  const a = data.anime
+  const a = data.subject
   const title = displayTitle(a)
   const status = airStatus(a, now)
   const latest = a.latest_torrent ?? data.torrents[0]
+  // 已播集数（映射库最新一集 / 时间表估算取较大者）→ 选集
+  const epCount = Math.max(a.latest_episode ?? 0, a.episodes_aired ?? 0)
+  const latestEp = a.latest_episode && a.latest_episode > 0 ? a.latest_episode : epCount > 0 ? epCount : null
   // bgm 简介常带大段空行/行尾空格，压缩成最多一个空行
   const summary = (a.summary ?? "").replace(/\r\n?/g, "\n").replace(/[ \t\u3000]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim()
   const ext = EXTERNAL.filter((e) => a.external?.[e.key] !== null && a.external?.[e.key] !== undefined)
@@ -104,14 +115,21 @@ export default function AnimePage() {
               </div>
             )}
             <div className="mt-auto flex flex-wrap gap-2 pt-4">
-              {latest && (
+              {latestEp ? (
                 <Button asChild>
-                  <Link to={watchHref({ t: latest.id })} state={{ torrent: latest }}>
+                  <Link to={episodeHref(a, latestEp)}>
                     <Play className="fill-current" />
-                    播放最新一集
+                    播放第 {latestEp} 话
                   </Link>
                 </Button>
-              )}
+              ) : latest ? (
+                <Button asChild>
+                  <Link to={watchHref(latest.infohash)} state={{ torrent: latest }}>
+                    <Play className="fill-current" />
+                    播放最新资源
+                  </Link>
+                </Button>
+              ) : null}
               {ext.map((e) => (
                 <Button key={e.key} asChild variant="outline" size="sm" className="hidden sm:inline-flex">
                   <a href={e.url(a.external[e.key]!)} target="_blank" rel="noreferrer noopener">
@@ -154,6 +172,26 @@ export default function AnimePage() {
               </div>
             )}
           </Card>
+        )}
+
+        {epCount > 0 && (
+          <section aria-labelledby="episodes-title">
+            <SectionHeader id="episodes-title" icon={ListVideo} title="选集" extra={<span className="text-xs text-muted-foreground">{epCount} 话</span>} />
+            <div className="grid grid-cols-5 gap-2 sm:grid-cols-8 lg:grid-cols-12">
+              {Array.from({ length: epCount }, (_, i) => i + 1).map((n) => (
+                <Link
+                  key={n}
+                  to={episodeHref(a, n)}
+                  className={cn(
+                    "inline-flex h-10 items-center justify-center rounded-md border bg-card text-[13px] font-medium tabular-nums transition-colors hover:border-primary hover:text-primary-text",
+                    n === latestEp && "border-primary/50 text-primary-text",
+                  )}
+                >
+                  {n}
+                </Link>
+              ))}
+            </div>
+          </section>
         )}
 
         <section aria-labelledby="torrents-title">
@@ -207,7 +245,7 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
   )
 }
 
-function AnimeSkeleton() {
+function SubjectSkeleton() {
   return (
     <Container className="flex gap-4 py-6 sm:gap-6 sm:py-8">
       <Skeleton className="aspect-[3/4] w-28 shrink-0 sm:w-44 lg:w-52" />

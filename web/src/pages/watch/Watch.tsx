@@ -1,195 +1,143 @@
-import { Link, useLocation, useSearchParams } from "react-router-dom"
-import { Ban, Crown, Loader2, Lock, Magnet, RotateCw, WifiOff, Zap, AlertTriangle } from "lucide-react"
+import { useEffect } from "react"
+import { Navigate, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
+import { Magnet } from "lucide-react"
 import { Container } from "@/components/layout/Container"
 import { TorrentSearchBox } from "@/components/TorrentSearchBox"
-import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
-import { useSiteOrFallback, useUser } from "@/lib/queries"
+import { useSiteOrFallback } from "@/lib/queries"
 import type { Torrent } from "@/lib/types"
 import { useDocumentTitle } from "@/lib/hooks"
-import { cn } from "@/lib/utils"
-import { usePlayResolve } from "./usePlayResolve"
+import { normalizeInfohash, parseTorrentInput, watchHref } from "@/lib/utils"
+import { StatusPage } from "@/pages/NotFound"
+import { usePlayAttempt, usePlayResolve, type PlayHint, type PlayPreload, type PlaySource, type ResolveState } from "./usePlayResolve"
+import { PlayGate } from "./PlayGate"
 import { Player } from "./Player"
 
+/** 列表页跳转时附带的 location.state */
+export interface WatchLocationState {
+  torrent?: Torrent
+  preload?: PlayPreload
+}
+
+export function hintOf(t: Torrent | undefined): PlayHint | undefined {
+  return t ? { infohash: t.infohash, title: t.title, team: t.team?.name ?? null } : undefined
+}
+
+/** /watch/hash/:ih 与 /watch/hash/:ih/file/:index（同一路由，切换文件不重新挂载播放器） */
 export default function WatchPage() {
+  const { ih: rawIh = "", "*": rest = "" } = useParams()
+  const loc = useLocation()
+  const navigate = useNavigate()
+  const st = (loc.state as WatchLocationState | null) ?? {}
+  const ih = normalizeInfohash(rawIh)
+  const m = rest.match(/^file\/(\d+)\/?$/)
+  const fileIndex = m ? Number(m[1]) : null
+  const site = useSiteOrFallback()
+  const attempt = usePlayAttempt()
+  const hint = st.torrent?.infohash === ih ? hintOf(st.torrent) : undefined
+  const { state, skipWait, retry } = usePlayResolve(ih ? { kind: "hash", ih } : null, { hint, trackers: site.trackers, attempt, preload: st.preload })
+
+  if (!ih || (rest && !m)) return <StatusPage code="404" title="链接无效" description="播放链接格式有误，请检查 infohash。" />
+  // 统一为小写 hex（base32 / 大写链接）
+  if (rawIh !== ih) return <Navigate replace to={watchHref(ih, fileIndex)} state={loc.state} />
+
+  return (
+    <WatchView
+      state={state}
+      skipWait={skipWait}
+      retry={retry}
+      hint={hint}
+      fileIndex={fileIndex}
+      onFileChange={(i) => {
+        if (i !== fileIndex) navigate(watchHref(ih, i), { replace: true, state: loc.state })
+      }}
+    />
+  )
+}
+
+/** 旧链接 /watch?uri=|ih=|t=；无参数时显示粘贴磁力页 */
+export function LegacyWatchPage() {
   const [sp] = useSearchParams()
   const loc = useLocation()
-  const hint = (loc.state as { torrent?: Torrent } | null)?.torrent
-  const params = { uri: sp.get("uri"), t: sp.get("t"), ih: sp.get("ih") }
-  const site = useSiteOrFallback()
-  const { user, loading } = useUser()
-  const attempt = loading ? "pending" : `${user?.id ?? "guest"}:${user?.role ?? ""}:${user?.vip_until ?? ""}`
-  const { state, skipWait, retry } = usePlayResolve(params, hint, site.trackers, attempt)
-  const here = `${loc.pathname}${loc.search}`
-
-  const shareURL = (ih: string | null) => {
-    const origin = location.origin
-    if (params.t) return `${origin}/watch?t=${encodeURIComponent(params.t)}`
-    if (ih) return `${origin}/watch?uri=${encodeURIComponent(`magnet:?xt=urn:btih:${ih}`)}`
-    return `${origin}${here}`
+  const uri = sp.get("uri")
+  const ih = sp.get("ih")
+  const t = sp.get("t")
+  if (uri || ih) {
+    const h = uri ? parseTorrentInput(uri) : normalizeInfohash(ih)
+    return h ? <Navigate replace to={watchHref(h)} state={loc.state} /> : <StatusPage code="400" title="链接无效" description="无法从链接中解析出 infohash。" />
   }
+  if (t) {
+    if (t.startsWith("ih:")) {
+      const h = normalizeInfohash(t.slice(3))
+      if (h) return <Navigate replace to={watchHref(h)} state={loc.state} />
+    }
+    return <MoeWatch id={t} />
+  }
+  return <IdleWatch />
+}
+
+/** /watch?t={bangumi.moe ID}：按 ID 打开，成功后把 URL 换成 /watch/hash/{ih} 并复用本次结果 */
+function MoeWatch({ id }: { id: string }) {
+  const loc = useLocation()
+  const navigate = useNavigate()
+  const st = (loc.state as WatchLocationState | null) ?? {}
+  const site = useSiteOrFallback()
+  const attempt = usePlayAttempt()
+  const hint = hintOf(st.torrent)
+  const src: PlaySource = { kind: "moe", id }
+  const { state, skipWait, retry } = usePlayResolve(src, { hint, trackers: site.trackers, attempt })
+  const play = state.status === "ready" ? state.play : null
+
+  useEffect(() => {
+    if (!play) return
+    const next: WatchLocationState = { torrent: st.torrent, preload: { play, attempt, at: Date.now() } }
+    navigate(watchHref(play.infohash), { replace: true, state: next })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [play])
+
+  // 拿到结果后马上跳转，不在旧地址上启动播放器；服务器不可用时直连（direct）则就地播放
+  const shown: ResolveState = play ? { status: "loading" } : state
+  return <WatchView state={shown} skipWait={skipWait} retry={retry} hint={hint} fileIndex={null} />
+}
+
+function WatchView({
+  state,
+  skipWait,
+  retry,
+  hint,
+  fileIndex,
+  onFileChange,
+}: {
+  state: ResolveState
+  skipWait: () => void
+  retry: () => void
+  hint?: PlayHint
+  fileIndex: number | null
+  onFileChange?: (index: number) => void
+}) {
+  const loc = useLocation()
+  const here = `${loc.pathname}${loc.search}`
+  const shareURL = (ih: string | null, idx: number | null) => (ih ? `${location.origin}${watchHref(ih, idx)}` : `${location.origin}${here}`)
 
   if (state.status === "idle") return <IdleWatch />
-
   return (
     <Container className="py-0 sm:py-5">
       {state.status === "ready" ? (
-        <Player key={state.magnet} magnet={state.magnet} play={state.play} direct={state.direct} hint={hint} shareURL={shareURL} />
+        <Player
+          key={state.magnet}
+          magnet={state.magnet}
+          play={state.play}
+          direct={state.direct}
+          hint={hint}
+          shareURL={shareURL}
+          fileIndex={fileIndex}
+          onFileChange={onFileChange}
+        />
       ) : (
         <div className="pt-3 sm:pt-0">
-          <GateFrame subject={state.status === "loading" ? undefined : hint?.title}>
-            {state.status === "loading" && (
-              <Gate icon={<Loader2 className="h-7 w-7 animate-spin text-primary" />} title="正在请求播放…" description={hint?.title ?? "服务器正在检查资源"} />
-            )}
-            {state.status === "login" && (
-              <Gate
-                tone="accent"
-                icon={<Lock className="h-7 w-7" />}
-                title="登录后即可观看"
-                description={state.message || "该资源仅限会员观看，登录或注册后继续。"}
-                actions={
-                  <>
-                    <Button asChild>
-                      <Link to={`/login?next=${encodeURIComponent(here)}`}>登录</Link>
-                    </Button>
-                    <Button asChild variant="outline">
-                      <Link to={`/register?next=${encodeURIComponent(here)}`}>注册账号</Link>
-                    </Button>
-                  </>
-                }
-              />
-            )}
-            {state.status === "vip" && (
-              <Gate
-                tone="warning"
-                icon={<Crown className="h-7 w-7" />}
-                title="大会员专享资源"
-                description={state.message || "开通大会员后即可观看。"}
-                actions={
-                  user ? (
-                    <Button asChild>
-                      <Link to="/me">使用兑换码开通</Link>
-                    </Button>
-                  ) : (
-                    <>
-                      <Button asChild>
-                        <Link to={`/login?next=${encodeURIComponent(here)}`}>登录</Link>
-                      </Button>
-                      <Button asChild variant="outline">
-                        <Link to="/me">了解大会员</Link>
-                      </Button>
-                    </>
-                  )
-                }
-              />
-            )}
-            {state.status === "blocked" && (
-              <Gate
-                tone="destructive"
-                icon={<Ban className="h-7 w-7" />}
-                title="该资源已被屏蔽"
-                description={state.message || "根据相关规定，该资源无法在本站播放。"}
-                actions={
-                  <Button asChild variant="outline">
-                    <Link to="/">返回首页</Link>
-                  </Button>
-                }
-              />
-            )}
-            {state.status === "fallback" && (
-              <Gate
-                tone="warning"
-                icon={<WifiOff className="h-7 w-7" />}
-                title={`${state.reason}`}
-                description={
-                  <>
-                    将在 <span className="font-semibold tabular-nums text-foreground">{state.seconds}</span> 秒后直接通过 P2P 网络连接（无服务器做种时速度可能较慢）
-                  </>
-                }
-                actions={
-                  <>
-                    <Button onClick={skipWait}>
-                      <Zap />
-                      立即连接
-                    </Button>
-                    <Button variant="outline" onClick={retry}>
-                      <RotateCw />
-                      重试服务器
-                    </Button>
-                  </>
-                }
-              />
-            )}
-            {state.status === "error" && (
-              <Gate
-                tone="destructive"
-                icon={<AlertTriangle className="h-7 w-7" />}
-                title="无法播放"
-                description={state.message}
-                actions={
-                  <>
-                    <Button onClick={retry}>
-                      <RotateCw />
-                      重试
-                    </Button>
-                    <Button asChild variant="outline">
-                      <Link to="/">返回首页</Link>
-                    </Button>
-                  </>
-                }
-              />
-            )}
-          </GateFrame>
+          <PlayGate state={state} title={hint?.title} here={here} skipWait={skipWait} retry={retry} />
         </div>
       )}
     </Container>
-  )
-}
-
-function GateFrame({ children, subject }: { children: React.ReactNode; subject?: string }) {
-  return (
-    <Card className="relative mx-auto max-w-4xl overflow-hidden">
-      <div aria-hidden className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,var(--primary-soft),transparent_60%)]" />
-      <div className="relative flex min-h-[340px] flex-col items-center justify-center p-6 sm:aspect-video sm:min-h-0">
-        {children}
-        {subject && (
-          <p className="mt-6 line-clamp-2 max-w-lg wrap-anywhere text-center text-xs text-muted-foreground" title={subject}>
-            {subject}
-          </p>
-        )}
-      </div>
-    </Card>
-  )
-}
-
-const toneCls = {
-  primary: "bg-primary-soft text-primary-text",
-  accent: "bg-accent-soft text-accent-text",
-  warning: "bg-warning/15 text-warning-text",
-  destructive: "bg-destructive/12 text-destructive-text",
-}
-
-function Gate({
-  icon,
-  title,
-  description,
-  actions,
-  tone = "primary",
-}: {
-  icon: React.ReactNode
-  title: React.ReactNode
-  description?: React.ReactNode
-  actions?: React.ReactNode
-  tone?: keyof typeof toneCls
-}) {
-  useDocumentTitle(typeof title === "string" ? title : "播放")
-  return (
-    <div className="flex max-w-md flex-col items-center text-center" role="status">
-      <span className={cn("inline-flex h-14 w-14 items-center justify-center rounded-full", toneCls[tone])}>{icon}</span>
-      <h1 className="mt-4 text-lg font-semibold">{title}</h1>
-      {description && <p className="mt-1.5 line-clamp-3 wrap-anywhere text-sm text-muted-foreground">{description}</p>}
-      {actions && <div className="mt-5 flex flex-wrap justify-center gap-2">{actions}</div>}
-    </div>
   )
 }
 
