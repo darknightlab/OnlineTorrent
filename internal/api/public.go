@@ -36,7 +36,9 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.route(mux, "POST", "/api/v1/torrents/hash/{ih}/play", AccessConfigurable, "播放", "打开种子（按 infohash）", []string{store.RoleGuest}, s.playHash)
 	s.route(mux, "POST", "/api/v1/torrents/moe/{id}/play", AccessConfigurable, "播放", "打开种子（按 bangumi.moe ID）", []string{store.RoleGuest}, s.playMoe)
 	s.route(mux, "POST", "/api/v1/torrents/hash/{ih}/seed", AccessConfigurable, "播放", "让服务器下载做种（消耗服务器资源）", []string{store.RoleMember}, s.seed)
-	s.route(mux, "POST", "/api/v1/torrents/hash/{ih}/webseed", AccessConfigurable, "播放", "获取 HTTP WebSeed 加速（消耗服务器流量）", []string{store.RoleMember}, s.webseed)
+	s.route(mux, "GET", "/webseed/hash/{ih}/{path...}", AccessConfigurable, "播放", "WebSeed 文件下载（HTTP 加速，消耗服务器流量）", []string{store.RoleMember}, s.serveWebseed)
+	s.route(mux, "GET", "/api/v1/torrents/hash/{ih}/webseed/events", AccessConfigurable, "播放", "等待 WebSeed 就绪（服务器推送）", []string{store.RoleMember}, s.webseedEvents)
+	s.route(mux, "GET", "/api/v1/torrents/hash/{ih}/webseed/events/file/{idx}", AccessConfigurable, "播放", "等待指定文件的 WebSeed 就绪（服务器推送）", []string{store.RoleMember}, s.webseedEvents)
 	s.route(mux, "POST", "/api/v1/torrents/hash/{ih}/report", AccessUser, "播放", "举报种子", []string{store.RoleMember}, s.report)
 
 	s.adminRoutes(mux)
@@ -51,6 +53,12 @@ type siteResp struct {
 	Trackers         []string         `json:"trackers"`
 	ICEServers       []map[string]any `json:"ice_servers"`
 	MaxAutoSizeBytes int64            `json:"max_auto_size_bytes"`
+	Webseed          siteWebseed      `json:"webseed"`
+}
+
+type siteWebseed struct {
+	Enabled  bool `json:"enabled"`
+	DelaySec int  `json:"delay_sec"` // wait this long after playback starts (prefer P2P), then subscribe to /webseed/events
 }
 
 func (s *Server) getSite(w http.ResponseWriter, r *http.Request) error {
@@ -70,6 +78,7 @@ func (s *Server) getSite(w http.ResponseWriter, r *http.Request) error {
 		Name: s.St.Str(store.KeySiteName), AnnouncementMD: s.St.Str(store.KeyAnnouncement),
 		Registration: reg, InviteRequired: reg == "invite", TurnstileSiteKey: s.St.Str(store.KeyTurnstileSiteKey),
 		Trackers: trackers, ICEServers: ice, MaxAutoSizeBytes: int64(s.St.Num(store.KeyMaxAutoSize)) << 20,
+		Webseed: siteWebseed{Enabled: s.St.Bool(store.KeyWebseedEnabled), DelaySec: int(s.St.Num(store.KeyWebseedDelaySec))},
 	})
 	return nil
 }
@@ -241,6 +250,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) error {
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) error {
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		_ = s.St.DeleteSession(r.Context(), c.Value)
+		s.sessions.Delete(c.Value)
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true})
 	httpx.JSON(w, 200, map[string]any{})

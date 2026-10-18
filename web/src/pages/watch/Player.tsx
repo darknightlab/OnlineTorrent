@@ -27,7 +27,9 @@ import {
 } from "lucide-react"
 import { loadEngine } from "@/player/engine"
 import { isPlayable, likelyUnsupported, type Engine, type FileKind, type FileSnap, type LogLevel, type Session, type TorrentSnap } from "@/player/types"
-import { PieceBar, SEGMENTS } from "./PieceBar"
+import { segmentCount } from "./PieceBar"
+import { VideoControls } from "./VideoControls"
+import { useWebseedEvents } from "./useWebseedEvents"
 import { ReportDialog } from "./ReportDialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -115,7 +117,7 @@ export function Player({
   const [snap, setSnap] = useState<TorrentSnap | null>(null)
   const [streaming, setStreaming] = useState<boolean | null>(null)
   const [current, setCurrent] = useState<number | null>(null)
-  const [segments, setSegments] = useState<Uint8Array>(() => new Uint8Array(SEGMENTS))
+  const [segments, setSegments] = useState<Uint8Array>(() => new Uint8Array(1))
   const [logs, setLogs] = useState<LogLine[]>([])
   const [mediaError, setMediaError] = useState<string | null>(null)
   const [noPicture, setNoPicture] = useState(false)
@@ -125,7 +127,15 @@ export function Player({
   const [tab, setTab] = useState("files")
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [seededBy, setSeededBy] = useState<string[]>([])
-  const videoRef = useRef<HTMLVideoElement>(null)
+  /** 已获取 WebSeed 配置且 delay_sec 已过：可以连接 SSE 等待服务器就绪 */
+  const [webseedArmed, setWebseedArmed] = useState(false)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
+  const setVideo = useCallback((el: HTMLVideoElement | null) => {
+    videoRef.current = el
+    setVideoEl(el)
+  }, [])
   const autoPicked = useRef(false)
   const loc = useLocation()
   const here = `${loc.pathname}${loc.search}`
@@ -192,6 +202,7 @@ export function Player({
     if (!canSeed && !canWebseed) return
     let cancelled = false
     let timer = 0
+    setWebseedArmed(false)
     void (async () => {
       if (canSeed) {
         try {
@@ -204,25 +215,19 @@ export function Player({
           if (!cancelled) log("warn", `服务器做种未启用：${errorMessage(e)}`)
         }
       }
-      if (cancelled || !canWebseed) return
-      try {
-        const r = await api.webseed(ih)
-        if (cancelled || !r.webseeds?.length) return
-        const seeds = r.webseeds
-        const delay = Math.max(0, r.delay_sec ?? 0)
-        if (delay > 0) log("info", `${delay} 秒后启用 HTTP WebSeed 加速（优先使用 P2P）`)
-        timer = window.setTimeout(() => {
-          if (!cancelled) session.addWebSeeds(seeds)
-        }, delay * 1000)
-      } catch (e) {
-        if (!cancelled) log("warn", `WebSeed 加速未启用：${errorMessage(e)}`)
-      }
+      if (cancelled || !canWebseed || !site.webseed?.enabled) return
+      // WebSeed 地址固定（/webseed/hash/{ih}/，Cookie 鉴权）；延迟后通过 SSE 等服务器通知文件就绪再加入
+      const delay = Math.max(0, site.webseed.delay_sec ?? 0)
+      if (delay > 0) log("info", `${delay} 秒后检查 HTTP WebSeed 加速（优先使用 P2P）`)
+      timer = window.setTimeout(() => {
+        if (!cancelled) setWebseedArmed(true)
+      }, delay * 1000)
     })()
     return () => {
       cancelled = true
       window.clearTimeout(timer)
     }
-  }, [session, direct, ih, meReady, canSeed, canWebseed, log])
+  }, [session, direct, ih, meReady, canSeed, canWebseed, site.webseed?.enabled, site.webseed?.delay_sec, log])
 
 
   // 轮询状态
@@ -245,7 +250,11 @@ export function Player({
 
   useEffect(() => {
     if (!session || current === null) return
-    const up = () => setSegments(session.segments(current, SEGMENTS))
+    const up = () => {
+      const sn = session.snapshot()
+      const f = sn?.files[current]
+      setSegments(session.segments(current, f && sn ? segmentCount(f.length, sn.pieceLength) : 1))
+    }
     up()
     const t = window.setInterval(up, 1000)
     return () => window.clearInterval(t)
@@ -261,6 +270,15 @@ export function Player({
 
   const file = current !== null ? snap?.files[current] : undefined
   const url = session && current !== null && streaming ? session.fileURL(current) : null
+  useWebseedEvents({
+    session,
+    ih,
+    armed: webseedArmed,
+    // 元数据就绪后再连接；多文件种子带上正在播放的文件，单文件省略
+    fileIndex: snap ? (snap.files.length > 1 ? current : null) : undefined,
+    done: !!snap?.done,
+    log,
+  })
   const unsupported = file ? likelyUnsupported(file.name) || likelyUnsupported(snap?.name ?? "") : null
   useDocumentTitle(file?.name ?? snap?.name ?? play?.name ?? hint?.title ?? "播放")
 
@@ -365,7 +383,12 @@ export function Player({
       <section className="min-w-0">
         {/* 播放区：移动端吸顶、全宽 */}
         <div className="sticky top-14 z-20 -mx-3 bg-black sm:-mx-4 lg:static lg:mx-0 lg:overflow-hidden lg:rounded-xl lg:shadow-lg">
-          <div className="relative aspect-video w-full overflow-hidden bg-black">
+          <div
+            ref={stageRef}
+            tabIndex={url && file?.kind === "video" ? 0 : undefined}
+            aria-label={url && file?.kind === "video" ? "视频播放器（空格播放/暂停，←/→ 快退/快进，↑/↓ 音量，f 全屏，m 静音）" : undefined}
+            className="relative aspect-video w-full overflow-hidden bg-black outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
+          >
             {/* 未出画面时：竖版封面两侧用模糊背景填满，避免大片纯黑 */}
             {poster && !url && (
               <div
@@ -377,11 +400,10 @@ export function Player({
             {file?.kind === "video" || !file ? (
               <video
                 key={`${current}-${url ?? ""}`}
-                ref={videoRef}
+                ref={setVideo}
                 className="kawaii-video absolute inset-0 h-full w-full"
                 src={url ?? undefined}
                 poster={poster}
-                controls={!!url}
                 playsInline
                 preload="metadata"
                 onWaiting={() => setBuffering(true)}
@@ -411,6 +433,8 @@ export function Player({
             ) : (
               url && <img key={url} src={url} alt={file.name} className="absolute inset-0 h-full w-full object-contain" />
             )}
+
+            {url && file?.kind === "video" && <VideoControls video={videoEl} container={stageRef} segments={segments} suspended={needsTap} />}
 
             {/* 状态浮层 */}
             {!url && (
@@ -449,7 +473,7 @@ export function Player({
                 type="button"
                 aria-label="播放"
                 onClick={() => videoRef.current?.play().then(() => setNeedsTap(false)).catch(() => {})}
-                className="absolute inset-0 flex items-center justify-center bg-black/30"
+                className="absolute inset-0 z-30 flex items-center justify-center bg-black/30 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
               >
                 <span className="inline-flex h-16 w-16 items-center justify-center rounded-full bg-primary text-white shadow-xl transition-transform hover:scale-105">
                   <Play className="ml-1 h-7 w-7 fill-current" />
@@ -457,13 +481,12 @@ export function Player({
               </button>
             )}
             {url && buffering && !needsTap && (
-              <div className="pointer-events-none absolute left-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs text-white">
+              <div className="pointer-events-none absolute left-3 top-3 z-30 inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs text-white">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 缓冲中 · {formatSpeed(snap?.downloadSpeed ?? 0)}
               </div>
             )}
           </div>
-          <PieceBar segments={segments} />
         </div>
 
         {/* 编码提示 */}

@@ -13,7 +13,6 @@ import type {
   PermissionsResponse,
   PermissionsUpdate,
   SeedResponse,
-  WebseedResponse,
   PlayRecord,
   PlayResponse,
   PolicyTestRequest,
@@ -149,8 +148,9 @@ export const api = {
   report: (ih: string, b: ReportRequest) => post<Record<string, never>>(`/torrents/hash/${seg(ih)}/report`, b),
   /** 请求服务器下载做种（权限 PERM.seed） */
   seed: (ih: string) => post<SeedResponse>(`/torrents/hash/${seg(ih)}/seed`),
-  /** 获取 HTTP WebSeed（权限 PERM.webseed） */
-  webseed: (ih: string) => post<WebseedResponse>(`/torrents/hash/${seg(ih)}/webseed`),
+  /** WebSeed 可用性推送（SSE）地址；fileIndex 为正在播放的文件，省略表示任意 / 单文件 */
+  webseedEventsURL: (ih: string, fileIndex?: number | null) =>
+    `${API_BASE}/torrents/hash/${seg(ih)}/webseed/events${fileIndex != null ? `/file/${fileIndex}` : ""}`,
 
   // 后台
   admin: {

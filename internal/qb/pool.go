@@ -347,3 +347,50 @@ func (p *Pool) FindFile(ctx context.Context, ih, reqPath string) (*Server, File,
 	}
 	return nil, File{}, false
 }
+
+var progressCache sync.Map // serverID|hash -> filesEntry (short TTL, shared by webseed watchers)
+
+// FileProgress reports whether file idx (idx < 0: the only file of a single-file torrent,
+// or any file of a multi-file torrent) is fully downloaded on some online server, plus the
+// best progress seen. found is false when no server has the torrent at all.
+func (p *Pool) FileProgress(ctx context.Context, ih string, idx int) (ready bool, progress float64, found bool) {
+	for _, s := range p.Servers() {
+		if !s.Cfg.Enabled || !s.Status().Online {
+			continue
+		}
+		key := fmt.Sprintf("%d|%s", s.Cfg.ID, ih)
+		var files []File
+		if e, ok := progressCache.Load(key); ok && time.Now().Before(e.(filesEntry).exp) {
+			files = e.(filesEntry).files
+		} else {
+			cctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+			fs, err := s.Client.Files(cctx, ih)
+			cancel()
+			if err != nil {
+				continue
+			}
+			files = fs
+			progressCache.Store(key, filesEntry{files, time.Now().Add(4 * time.Second)})
+		}
+		if len(files) == 0 {
+			// torrent present but metadata not fetched yet
+			found = true
+			continue
+		}
+		found = true
+		for _, f := range files {
+			if idx >= 0 && f.Index != idx {
+				continue
+			}
+			if idx < 0 && len(files) > 1 && f.Progress < 1 {
+				progress = max(progress, f.Progress)
+				continue
+			}
+			progress = max(progress, f.Progress)
+			if f.Progress >= 1 {
+				return true, 1, true
+			}
+		}
+	}
+	return false, progress, found
+}

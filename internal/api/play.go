@@ -308,17 +308,3 @@ func (s *Server) seed(w http.ResponseWriter, r *http.Request) error {
 	httpx.JSON(w, 200, map[string]any{"seeded_by": push.SeededBy})
 	return nil
 }
-
-// webseed returns signed HTTP webseed URLs (route permission "POST /api/v1/torrents/{ih}/webseed").
-func (s *Server) webseed(w http.ResponseWriter, r *http.Request) error {
-	rec, _, err := s.recordedSubject(r)
-	if err != nil {
-		return err
-	}
-	urls := s.webseedURLs(r, rec.Infohash)
-	if urls == nil {
-		urls = []string{}
-	}
-	httpx.JSON(w, 200, map[string]any{"webseeds": urls, "delay_sec": int(s.St.Num(store.KeyWebseedDelaySec))})
-	return nil
-}

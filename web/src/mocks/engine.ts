@@ -3,6 +3,8 @@ import { computeSegments } from "@/player/segments"
 import { fileKind, type Engine, type Session, type SessionEvents, type TorrentSnap } from "@/player/types"
 
 const PIECE = 1024 * 1024
+/** ?mock_video=<url>：视频文件使用该地址播放（便于截图自定义控件）；不传时不加载视频 */
+const MOCK_VIDEO = new URLSearchParams(location.search).get("mock_video")
 
 class MockSession implements Session {
   private listeners: { [K in keyof SessionEvents]: Set<SessionEvents[K]> } = { metadata: new Set(), log: new Set() }
@@ -131,19 +133,19 @@ class MockSession implements Session {
     return computeSegments(f.start, f.end, n, (p) => this.done[p] === 1, (p) => this.partial.has(p))
   }
 
-  fileURL() {
-    return null
+  fileURL(fileIndex: number) {
+    const f = this.files[fileIndex]
+    return MOCK_VIDEO && f && fileKind(f.name) === "video" ? MOCK_VIDEO : null
   }
 
   torrentFileURL() {
     return null
   }
 
-  addWebSeeds(urls: string[]) {
-    for (const u of urls) {
-      this.webseeds.push(u)
-      this.emitLog("info", "已启用 HTTP WebSeed 加速")
-    }
+  addWebSeed(url: string) {
+    if (this.webseeds.includes(url)) return false
+    this.webseeds.push(url)
+    return true
   }
   private webseeds: string[] = []
 
@@ -160,7 +162,7 @@ export const mockEngine: Engine = {
     return new MockSession(magnet)
   },
   async streamingReady() {
-    return false
+    return !!MOCK_VIDEO
   },
   async resetServiceWorker() {},
 }

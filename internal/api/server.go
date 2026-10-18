@@ -36,7 +36,13 @@ type Server struct {
 
 	limiter *limiter
 	perms   permState
-	bg      sync.WaitGroup // background goroutines started by handlers
+
+	sessions sync.Map // session token → sessEntry (30s cache; webseed requests are very frequent)
+	wsAllow  sync.Map // webseed policy decisions (role|ih|gen → wsAllowEntry)
+
+	sseMu sync.Mutex
+	sse   map[string]int // concurrent SSE streams per client
+	bg    sync.WaitGroup // background goroutines started by handlers
 
 	postChecks sync.Map      // infohash -> struct{}: post-checks in flight
 	postSem    chan struct{} // caps concurrent post-checks
@@ -87,7 +93,6 @@ func (s *Server) Handler() http.Handler {
 	if err := s.loadPerms(s.BaseCtx); err != nil {
 		s.Log.Error("load route permissions", "err", err)
 	}
-	mux.HandleFunc("/webseed/", s.serveWebseed)
 	mux.Handle("/", s.spa())
 	return s.withUser(mux)
 }
@@ -104,7 +109,7 @@ func (s *Server) withUser(next http.Handler) http.Handler {
 			return
 		}
 		if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
-			if u, err := s.St.SessionUser(r.Context(), c.Value); err == nil {
+			if u := s.sessionUser(r, c.Value); u != nil {
 				r = r.WithContext(context.WithValue(r.Context(), userKey, u))
 			}
 		}
@@ -283,4 +288,27 @@ func (s *Server) canonicalRedirect(r *http.Request) (string, bool) {
 		return "", false
 	}
 	return base.Scheme + "://" + base.Host + r.URL.RequestURI(), true
+}
+
+type sessEntry struct {
+	u   *store.User
+	exp time.Time
+}
+
+// sessionUser resolves a session cookie, caching the result for 30s (a disabled user or
+// changed role takes effect within that window; logout drops the entry immediately).
+func (s *Server) sessionUser(r *http.Request, tok string) *store.User {
+	if v, ok := s.sessions.Load(tok); ok {
+		e := v.(sessEntry)
+		if time.Now().Before(e.exp) {
+			return e.u
+		}
+		s.sessions.Delete(tok)
+	}
+	u, err := s.St.SessionUser(r.Context(), tok)
+	if err != nil {
+		return nil // invalid tokens are not cached (bounded memory)
+	}
+	s.sessions.Store(tok, sessEntry{u, time.Now().Add(30 * time.Second)})
+	return u
 }

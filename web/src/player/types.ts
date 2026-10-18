@@ -52,7 +52,8 @@ export interface Session {
   /** Service Worker 流式 URL；不可用时为 null */
   fileURL(fileIndex: number): string | null
   torrentFileURL(): string | null
-  addWebSeeds(urls: string[]): void
+  /** 加入 HTTP WebSeed；同一 URL 只加一次，返回是否为新加入 */
+  addWebSeed(url: string): boolean
   on<K extends keyof SessionEvents>(ev: K, cb: SessionEvents[K]): () => void
   destroy(): void
 }

@@ -167,14 +167,17 @@ class WTSession implements Session {
     return this.blobURL
   }
 
-  addWebSeeds(urls: string[]) {
-    for (const u of urls) {
-      try {
-        this.torrent.addWebSeed(u)
-        this.log("info", "已启用 HTTP WebSeed 加速")
-      } catch (e) {
-        this.log("warn", `WebSeed 添加失败：${String(e)}`)
-      }
+  private webseeds = new Set<string>()
+
+  addWebSeed(url: string) {
+    if (this.destroyed || this.webseeds.has(url)) return false
+    this.webseeds.add(url)
+    try {
+      this.torrent.addWebSeed(url)
+      return true
+    } catch (e) {
+      this.log("warn", `WebSeed 添加失败：${String(e)}`)
+      return false
     }
   }
 

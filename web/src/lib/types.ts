@@ -24,6 +24,8 @@ export interface Site {
   trackers: string[]
   ice_servers: IceServer[]
   max_auto_size_bytes: number
+  /** HTTP WebSeed：地址固定 /webseed/hash/{ih}/（Cookie 鉴权，权限 PERM.webseed）；delay_sec 秒后订阅就绪推送 */
+  webseed?: { enabled: boolean; delay_sec: number }
 }
 
 export interface User {
@@ -173,7 +175,7 @@ export interface PlayResponse {
   magnet: string
   /** 恒为 []：服务器做种改由 POST /torrents/hash/{ih}/seed 单独请求 */
   seeded_by: string[]
-  /** 恒为 []：WebSeed 改由 POST /torrents/hash/{ih}/webseed 单独请求 */
+  /** 恒为 []：WebSeed 地址固定为 /webseed/hash/{ih}/，就绪后由 SSE 推送 */
   webseeds: string[]
   meta: PlayMeta | null
 }
@@ -182,11 +184,17 @@ export interface SeedResponse {
   seeded_by: string[]
 }
 
-export interface WebseedResponse {
-  /** 管理员关闭 WebSeed 时为 [] */
+
+/** GET /torrents/hash/{ih}/webseed/events[/file/{index}]（SSE）各事件的 data */
+export interface WebseedReadyEvent {
+  /** 新签名的 WebSeed 地址 */
   webseeds: string[]
-  /** 播放开始后多少秒再加入 webseed */
-  delay_sec: number
+}
+export interface WebseedWaitingEvent {
+  progress: number
+}
+export interface WebseedEndEvent {
+  reason?: string
 }
 
 export interface ReportRequest {

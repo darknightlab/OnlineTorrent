@@ -58,7 +58,7 @@ export const PERM = {
   playHash: "POST /api/v1/torrents/hash/{ih}/play",
   playMoe: "POST /api/v1/torrents/moe/{id}/play",
   seed: "POST /api/v1/torrents/hash/{ih}/seed",
-  webseed: "POST /api/v1/torrents/hash/{ih}/webseed",
+  webseed: "GET /webseed/hash/{ih}/{path...}",
   report: "POST /api/v1/torrents/hash/{ih}/report",
   password: "POST /api/v1/me/password",
   redeem: "POST /api/v1/me/redeem",

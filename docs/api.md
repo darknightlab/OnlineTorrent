@@ -37,7 +37,9 @@
 | GET | `/api/v1/torrents/search?q=` | 搜索 |
 | POST | `/api/v1/torrents/hash/{ih}/play` | 打开种子（策略判定 + 磁力） |
 | POST | `/api/v1/torrents/moe/{id}/play` | 按 bangumi.moe ID 打开（受信元数据） |
-| POST | `/api/v1/torrents/hash/{ih}/seed` / `webseed` / `report` | 服务器做种 / WebSeed / 举报 |
+| POST | `/api/v1/torrents/hash/{ih}/seed` / `report` | 服务器做种 / 举报 |
+| GET | `/api/v1/torrents/hash/{ih}/webseed/events[/file/{idx}]` | WebSeed 就绪推送（SSE） |
+| GET | `/webseed/hash/{ih}/[文件路径]` | HTTP WebSeed 文件（Cookie 鉴权） |
 | GET | `/meta/v1/torrents/hash/{ih}` | 文件级映射 |
 | PUT | `/meta/v1/torrents/hash/{ih}/files/{idx}` | 纠正映射（admin），body `{subject_id|work_key, episode, kind, status}` |
 | GET | `/meta/v1/subjects/{provider}/{id}` / `.../episodes/{n}/files` / `/meta/v1/subjects/search?q=` | 映射库条目 |
@@ -141,8 +143,11 @@ Torrent：
 ### `POST /torrents/hash/{ih}/seed` → `{"seeded_by": ["ams"]}`
 让所有在线 qB 下载并做种（消耗服务器带宽 / 磁盘）。默认仅会员及以上。种子须先经 play 打开过；会对当前用户重新做策略判定。超过 `play.max_push_size_mb` 返回 413 `too_large`。
 
-### `POST /torrents/hash/{ih}/webseed` → `{"webseeds": ["https://www.projectk.org/webseed/{exp}.{sig}/{ih}/"], "delay_sec": 8}`
-签名的 HTTP WebSeed 地址（6 小时有效，只服务 qB 已完整下载的文件）。默认仅会员及以上；后台关闭 WebSeed 时返回空数组。前端应在 `delay_sec` 秒后再加入，优先 P2P。
+### HTTP WebSeed（固定地址，Cookie 鉴权）
+- 文件：`GET /webseed/hash/{ih}/`（单文件种子）或 `/webseed/hash/{ih}/{种子内文件路径}`（多文件，webtorrent 自动拼接）。
+  不带签名/过期时间；每次请求用登录 Cookie 校验接口权限 `GET /webseed/hash/{ih}/{path...}`（后台「接口权限」可改，默认会员）+ 当前用户对该种子的策略。只提供 qB 已完整下载的文件，否则 404。`Cache-Control: private, no-store`。
+- 就绪推送（SSE）：`GET /api/v1/torrents/hash/{ih}/webseed/events[/file/{idx}]`（种子须先经 play 打开）。事件：`waiting {progress}`（进度变化时）、`ready {webseeds:[固定地址]}`、`unavailable {reason: disabled|not_seeded}`、`timeout {}`（30 分钟）；每 25 秒一条 `: ping` 心跳；每 IP 最多 6 条并发连接。
+- 前端：`/site.webseed = {enabled, delay_sec}`；播放开始 `delay_sec` 秒后订阅推送，收到 `ready` 才 `addWebSeed`，不做客户端探测。
 
 ### `POST /torrents/hash/{ih}/report` `{reason}` → `{}`  需登录。举报 → 进入审核队列（标题取自服务端记录，不接受客户端提供；reason 最长 500 字）
 

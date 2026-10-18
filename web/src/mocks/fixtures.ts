@@ -162,6 +162,7 @@ export const site: Site = {
   trackers: ["wss://tracker.projectk.org", "wss://tracker.dnlab.net:16443", "wss://tracker.openwebtorrent.com"],
   ice_servers: [{ urls: ["stun:stun.miwifi.com:3478", "stun:stun.l.google.com:19302"] }],
   max_auto_size_bytes: 2 * 1024 ** 3,
+  webseed: { enabled: true, delay_sec: 3 },
 }
 
 export const settings: SettingItem[] = [
@@ -317,7 +318,7 @@ export const permissionSpecs: Spec[] = [
   spec("POST", "/api/v1/torrents/hash/{ih}/play", "configurable", "播放", "打开种子（按 infohash）", ["guest"]),
   spec("POST", "/api/v1/torrents/moe/{id}/play", "configurable", "播放", "打开种子（按 bangumi.moe ID）", ["guest"]),
   spec("POST", "/api/v1/torrents/hash/{ih}/seed", "configurable", "播放", "让服务器下载做种（消耗服务器资源）", ["member"]),
-  spec("POST", "/api/v1/torrents/hash/{ih}/webseed", "configurable", "播放", "获取 HTTP WebSeed 加速（消耗服务器流量）", ["member"]),
+  spec("GET", "/webseed/hash/{ih}/{path...}", "configurable", "播放", "WebSeed 文件下载（HTTP 加速，消耗服务器流量）", ["member"]),
   spec("POST", "/api/v1/torrents/hash/{ih}/report", "user", "播放", "举报种子", ["member"]),
   adm("GET", "/stats", "概览 · 查看"),
   adm("GET", "/settings", "站点设置 · 查看"),

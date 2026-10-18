@@ -242,10 +242,6 @@ const routes: [string, string, Handler][] = [
     if (t && t.size_bytes > fx.site.max_auto_size_bytes) throw new HttpError(413, "too_large", `该种子过大（超过 ${fx.site.max_auto_size_bytes >> 20} MB），服务器不参与做种`)
     return { seeded_by: ["ams"] }
   }],
-  ["POST", "/torrents/hash/:ih/webseed", ({ params }) => {
-    requirePerm("POST /api/v1/torrents/hash/{ih}/webseed")
-    return { webseeds: [`${location.origin}/webseed/ams/${params.ih}/`], delay_sec: 3 }
-  }],
   ["POST", "/torrents/hash/:ih/report", () => (requirePerm("POST /api/v1/torrents/hash/{ih}/report"), {})],
 
   // ---- admin ----
@@ -405,7 +401,79 @@ function match(method: string, path: string) {
 const json = (status: number, data: unknown) =>
   new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json" } })
 
+/**
+ * 模拟 WebSeed 可用性推送（SSE）：/api/v1/torrents/hash/{ih}/webseed/events[/file/{index}]
+ * 默认 ~1.5s 后 waiting、~5s 后 ready；?mock_webseed=timeout|unavailable|error 可演示其它分支。
+ */
+class MockEventSource extends EventTarget {
+  static readonly CONNECTING = 0
+  static readonly OPEN = 1
+  static readonly CLOSED = 2
+  readonly CONNECTING = 0
+  readonly OPEN = 1
+  readonly CLOSED = 2
+  readyState = 0
+  readonly url: string
+  readonly withCredentials: boolean
+  onopen: ((e: Event) => void) | null = null
+  onmessage: ((e: MessageEvent) => void) | null = null
+  onerror: ((e: Event) => void) | null = null
+  private timers: number[] = []
+
+  constructor(url: string, ih: string, init?: EventSourceInit) {
+    super()
+    this.url = url
+    this.withCredentials = !!init?.withCredentials
+    const mode = new URLSearchParams(location.search).get("mock_webseed")
+    console.info(`[mock] SSE ${url}`)
+    const at = (ms: number, fn: () => void) => this.timers.push(window.setTimeout(() => this.readyState !== 2 && fn(), ms))
+    at(200, () => {
+      try {
+        requirePerm("GET /webseed/hash/{ih}/{path...}")
+      } catch {
+        this.readyState = 2
+        return this.fire(new Event("error"))
+      }
+      this.readyState = 1
+      this.fire(new Event("open"))
+      if (mode === "error") {
+        // 模拟连接反复断开（浏览器会自动重连）
+        for (let i = 1; i <= 8; i++) at(i * 600, () => ((this.readyState = 0), this.fire(new Event("error"))))
+        return
+      }
+      at(1300, () => this.emit("waiting", { progress: 0.42 }))
+      at(3000, () => this.emit("waiting", { progress: 0.8 }))
+      if (mode === "timeout") at(4800, () => this.emit("timeout", { reason: "mock timeout" }))
+      else if (mode === "unavailable") at(4800, () => this.emit("unavailable", { reason: "mock: 服务器无此种子" }))
+      else at(4800, () => this.emit("ready", { webseeds: [`${location.origin}/webseed/hash/${ih}/`] }))
+    })
+  }
+
+  private emit(type: string, data: unknown) {
+    this.fire(new MessageEvent(type, { data: JSON.stringify(data) }))
+  }
+
+  private fire(e: Event) {
+    this.dispatchEvent(e)
+    if (e.type === "open") this.onopen?.(e)
+    else if (e.type === "error") this.onerror?.(e)
+    else if (e.type === "message") this.onmessage?.(e as MessageEvent)
+  }
+
+  close() {
+    this.readyState = 2
+    this.timers.forEach((t) => window.clearTimeout(t))
+  }
+}
+
 export function installMock() {
+  const RealEventSource = window.EventSource
+  window.EventSource = function (this: unknown, url: string | URL, init?: EventSourceInit) {
+    const u = new URL(String(url), location.origin)
+    const m = u.origin === location.origin && u.pathname.match(/^\/api\/v1\/torrents\/hash\/([^/]+)\/webseed\/events(?:\/file\/\d+)?$/)
+    if (m) return new MockEventSource(u.href, decodeURIComponent(m[1]), init)
+    return new RealEventSource(url, init)
+  } as unknown as typeof EventSource
   const realFetch = window.fetch.bind(window)
   window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.origin)
