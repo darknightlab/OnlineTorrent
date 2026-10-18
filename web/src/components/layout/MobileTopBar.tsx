@@ -18,7 +18,7 @@ export function MobileTopBar() {
   const title = pathname === "/me" ? "我的" : pathname === "/login" ? "登录" : pathname.startsWith("/register") ? "注册" : null
   if (!isHome && !title) return null
   return (
-    <div className="sticky top-0 z-40 bg-background pt-safe md:hidden">
+    <div className="bg-background pt-safe md:hidden">
       <div className="flex h-12 items-center gap-2.5 px-3">
         {isHome ? (
           <TorrentSearchBox size="sm" className="min-w-0 flex-1" />
