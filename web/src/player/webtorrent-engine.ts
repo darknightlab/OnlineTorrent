@@ -53,29 +53,87 @@ async function setupStreaming(client: WebTorrentT): Promise<boolean> {
 
 class WTSession implements Session {
   private listeners: { [K in keyof SessionEvents]: Set<SessionEvents[K]> } = { metadata: new Set(), log: new Set() }
-  private torrent: WTTorrent
+  private torrent!: WTTorrent
+  private client: WebTorrentT
   private streaming: boolean
+  private announce: string[]
+  /** 磁力带 xs=（服务器提供的 .torrent 地址） */
+  private xs: boolean
   private blobURL: string | null = null
   private destroyed = false
+  private swapping = false
 
-  constructor(torrent: WTTorrent, streaming: boolean) {
-    this.torrent = torrent
+  constructor(client: WebTorrentT, torrent: WTTorrent, streaming: boolean, announce: string[], xs: boolean) {
+    this.client = client
     this.streaming = streaming
+    this.announce = announce
+    this.xs = xs
+    this.attach(torrent)
+    if (torrent.files?.length) queueMicrotask(() => this.listeners.metadata.forEach((cb) => cb()))
+  }
+
+  /** 绑定种子事件；替换种子（loadTorrentFile）后旧种子的事件一律忽略 */
+  private attach(torrent: WTTorrent) {
+    this.torrent = torrent
+    const live = () => this.torrent === torrent && !this.destroyed
     torrent.on("metadata", () => {
+      if (!live()) return
+      // ut_metadata 需要已连接的节点；没有任何连接就拿到元数据，说明来自 xs=（HTTP）
+      if (this.xs && torrent.wires.length === 0) this.log("info", "已通过 HTTP 从服务器获取种子信息")
       this.log("info", `已获取种子信息：${torrent.name}`)
       this.prioritizeEdges()
       this.listeners.metadata.forEach((cb) => cb())
     })
-    torrent.on("ready", () => this.log("info", "种子已就绪，开始下载"))
-    torrent.on("done", () => this.log("info", "全部下载完成"))
-    torrent.on("warning", (e) => this.log("warn", String((e as Error)?.message ?? e)))
-    torrent.on("error", (e) => this.log("error", String((e as Error)?.message ?? e)))
+    torrent.on("ready", () => live() && this.log("info", "种子已就绪，开始下载"))
+    torrent.on("done", () => live() && this.log("info", "全部下载完成"))
+    torrent.on("warning", (e) => {
+      const msg = String((e as Error)?.message ?? e)
+      // 浏览器只能用 ws(s) tracker；.torrent 里的 udp/http tracker 忽略是预期行为，不刷日志
+      if (live() && !msg.startsWith("Unsupported tracker protocol")) this.log("warn", msg)
+    })
+    torrent.on("error", (e) => live() && this.log("error", String((e as Error)?.message ?? e)))
     let peers = 0
     torrent.on("wire", (wire) => {
+      if (!live()) return
       peers++
       if (peers <= 8) this.log("info", `连接到 ${wire.type === "webSeed" ? "WebSeed" : "节点"} ${wire.remoteAddress ?? ""}`.trim())
     })
-    if (torrent.files?.length) queueMicrotask(() => this.listeners.metadata.forEach((cb) => cb()))
+  }
+
+  hasMetadata() {
+    return !!this.torrent?.files?.length
+  }
+
+  /**
+   * 元数据还没拿到时，用服务器提供的 .torrent 替换会话中的种子（webtorrent 不支持给已有种子
+   * 补元数据：移除后用 .torrent 重新添加；尚无元数据，所以没有已下载的数据会丢失）。
+   * 返回是否已替换。
+   */
+  async loadTorrentFile(data: Uint8Array) {
+    if (this.destroyed || this.swapping || this.hasMetadata()) return false
+    this.swapping = true
+    try {
+      const old = this.torrent
+      const ih = old.infoHash
+      await new Promise<void>((r) => old.destroy({ destroyStore: true }, () => r()))
+      if (this.destroyed) return false
+      const t = this.client.add(data, { announce: this.announce })
+      this.xs = false // 元数据来自 .torrent，不再是 xs=
+      this.attach(t)
+      t.on("infoHash", () => {
+        if (ih && t.infoHash !== ih) this.log("error", `服务器返回的种子文件与磁力不符（${t.infoHash}）`)
+      })
+      for (const url of this.webseeds) {
+        try {
+          t.addWebSeed(url)
+        } catch {
+          /* ignore */
+        }
+      }
+      return true
+    } finally {
+      this.swapping = false
+    }
   }
 
   private log(level: LogLevel, msg: string) {
@@ -205,7 +263,7 @@ export const webtorrentEngine: Engine = {
     const existing = await client.get(magnet).catch(() => null)
     if (existing) await new Promise<void>((r) => existing.destroy({ destroyStore: true }, () => r()))
     const torrent = client.add(magnet, { announce: opts.announce })
-    return new WTSession(torrent, streaming)
+    return new WTSession(client, torrent, streaming, opts.announce, /[?&]xs=https?%3A/i.test(magnet))
   },
   streamingReady() {
     return streamPromise ?? Promise.resolve(false)

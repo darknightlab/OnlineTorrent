@@ -2,6 +2,7 @@ package qb
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -261,6 +262,44 @@ func (p *Pool) Metadata(ctx context.Context, ih string) (string, []File, bool) {
 		return ts[0].Name, files, true
 	}
 	return "", nil, false
+}
+
+// Export returns the .torrent of ih from the first online server that has its metadata.
+func (p *Pool) Export(ctx context.Context, ih string) ([]byte, error) {
+	err := ErrNoTorrent
+	for _, s := range p.Servers() {
+		if !s.Cfg.Enabled || !s.Status().Online {
+			continue
+		}
+		b, e := s.Client.Export(ctx, ih)
+		if e == nil {
+			return b, nil
+		}
+		if !errors.Is(e, ErrNoTorrent) {
+			err = e
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return nil, err
+}
+
+// HasMetadata reports whether some online server holds ih with metadata (one torrents/info
+// call per server).
+func (p *Pool) HasMetadata(ctx context.Context, ih string) bool {
+	for _, s := range p.Servers() {
+		if !s.Cfg.Enabled || !s.Status().Online {
+			continue
+		}
+		if ts, err := s.Client.Info(ctx, "", ih); err == nil && len(ts) > 0 && ts[0].HasMetadata {
+			return true
+		}
+		if ctx.Err() != nil {
+			return false
+		}
+	}
+	return false
 }
 
 // staleAfter: torrents in our category still incomplete (or without metadata) after this

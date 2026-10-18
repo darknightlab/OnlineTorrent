@@ -2,6 +2,8 @@ package crawl
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -121,6 +123,13 @@ func TestCrawlRSS(t *testing.T) {
 	if job == nil || job.Status != "pending" || len(job.Trackers) != 1 || !c.JobActive(ctx, job.Infohash) {
 		t.Errorf("job: %+v", job)
 	}
+	// the raw .torrent is kept for HTTP metadata delivery (magnet xs=)
+	if raw, err := c.Meta.GetMetainfo(ctx, mi.Infohash); err != nil || string(raw) != torrent {
+		t.Errorf("stored .torrent: %v", err)
+	}
+	if b, err := c.Metainfo(ctx, mi.Infohash); err != nil || string(b) != torrent {
+		t.Errorf("Metainfo: %v", err)
+	}
 	// the mirror item had the same infohash: downloaded once, not duplicated
 	if n := torrentHits.Load(); n != 2 {
 		t.Errorf("torrent downloads: %d", n)
@@ -138,6 +147,55 @@ func TestCrawlRSS(t *testing.T) {
 	res = c.crawl(ctx, *src)
 	if res.Err != nil || res.New != 0 || torrentHits.Load() != 2 {
 		t.Fatalf("third run: %+v hits=%d", res, torrentHits.Load())
+	}
+}
+
+// bangumi.moe items have no .torrent in the feed: it is downloaded lazily on demand,
+// stored, and failures are cached.
+func TestMoeTorrentLazyFetch(t *testing.T) {
+	ctx := context.Background()
+	c := testCrawler(t)
+	info := map[string]any{"name": "[Moe] Foo - 02.mkv", "piece length": 16384, "pieces": strings.Repeat("z", 20), "length": 999}
+	torrent := benc(map[string]any{"info": info})
+	mi, _ := ParseTorrent([]byte(torrent))
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if r.URL.Path == "/download/torrent/moe123/"+mi.Infohash+".torrent" {
+			io.WriteString(w, torrent)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+	_ = c.St.UpdateSettings(ctx, map[string]json.RawMessage{store.KeyMoeBase: json.RawMessage(`"` + srv.URL + `"`)})
+
+	if _, err := c.Metainfo(ctx, mi.Infohash); !errors.Is(err, ErrNoMetainfo) || c.MetainfoAvailable(ctx, mi.Infohash) {
+		t.Fatalf("unknown torrent: %v", err)
+	}
+	if err := c.Meta.UpsertPending(ctx, meta.TorrentInput{Infohash: mi.Infohash, Title: "Foo - 02", Source: "bangumi.moe", SourceKind: store.SourceKindBangumiMoe, SourceID: "moe123", Trusted: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !c.MetainfoAvailable(ctx, mi.Infohash) {
+		t.Fatal("moe item not available")
+	}
+	b, err := c.Metainfo(ctx, mi.Infohash)
+	if err != nil || string(b) != torrent || !c.Meta.HasMetainfo(ctx, mi.Infohash) {
+		t.Fatalf("moe fetch: %v", err)
+	}
+	if _, _ = c.Metainfo(ctx, mi.Infohash); hits.Load() != 1 {
+		t.Fatalf("not cached: %d hits", hits.Load())
+	}
+
+	// a moe item whose download fails: negative cache (no second request)
+	info["name"] = "other"
+	mi2, _ := ParseTorrent([]byte(benc(map[string]any{"info": info})))
+	_ = c.Meta.UpsertPending(ctx, meta.TorrentInput{Infohash: mi2.Infohash, Title: "x", Source: "bangumi.moe", SourceKind: store.SourceKindBangumiMoe, SourceID: "gone", Trusted: true})
+	if _, err := c.Metainfo(ctx, mi2.Infohash); !errors.Is(err, ErrNoMetainfo) {
+		t.Fatalf("failed fetch: %v", err)
+	}
+	if _, _ = c.Metainfo(ctx, mi2.Infohash); hits.Load() != 2 || c.MetainfoAvailable(ctx, mi2.Infohash) {
+		t.Fatalf("negative cache: %d hits", hits.Load())
 	}
 }
 

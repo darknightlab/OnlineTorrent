@@ -61,6 +61,7 @@ type Crawler struct {
 	wg       sync.WaitGroup
 
 	queue metaQueue
+	mi    metainfoCache
 }
 
 // New creates a crawler.

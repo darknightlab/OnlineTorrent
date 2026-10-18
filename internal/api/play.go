@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -170,6 +171,11 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request, in playReq) error 
 	resp := playResp{
 		Access: d.Access(), Infohash: t.Infohash, Name: t.Title,
 		Magnet: magnet.Build(t.Infohash, t.Title, s.St.List(store.KeyTrackers)), SeededBy: []string{}, Webseeds: []string{},
+	}
+	// metadata over HTTP (BEP 9 xs=): webtorrent fetches it at start (same origin, with the
+	// login cookie), so the file list shows up even when no WebRTC peer is reachable
+	if s.allowed(roleOf(u), torrentFileKey) && s.metainfoObtainable(ctx, t.Infohash) {
+		resp.Magnet += "&xs=" + url.QueryEscape(s.siteBase(r)+"/api/v1/torrents/hash/"+t.Infohash+"/torrent")
 	}
 	if tm, err := s.Meta.GetTorrentMap(ctx, t.Infohash); err == nil {
 		resp.Meta = playMetaOf(tm, in.File)

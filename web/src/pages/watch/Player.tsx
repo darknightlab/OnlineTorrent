@@ -38,7 +38,7 @@ import { Card } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
 import { errorMessage } from "@/components/states"
-import { api } from "@/lib/api"
+import { api, isApiError } from "@/lib/api"
 import { PERM, can, useMe, useSiteOrFallback, useSubject } from "@/lib/queries"
 import type { PlayResponse } from "@/lib/types"
 import type { PlayHint } from "./usePlayResolve"
@@ -153,6 +153,7 @@ export function Player({
   const canSeed = can(me.data, PERM.seed)
   const canWebseed = can(me.data, PERM.webseed)
   const canReport = can(me.data, PERM.report)
+  const canTorrentFile = can(me.data, PERM.torrentFile) && can(me.data, PERM.torrentStatus)
 
   const meta = play?.meta ?? null
   const metaPath = meta ? subjectPath(meta) : null
@@ -237,6 +238,44 @@ export function Player({
     }
   }, [session, direct, ih, meReady, canSeed, canWebseed, site.webseed?.enabled, site.webseed?.delay_sec, log])
 
+  // 元数据兜底：磁力没有 xs=（打开时服务器还没有该种子的信息，如刚粘贴的磁力）或 xs 失败时，
+  // 请求做种后轮询收录状态，ready 后下载 .torrent 交给 WebTorrent（无需 WebRTC 节点提供 ut_metadata）
+  const hasMeta = !!snap
+  useEffect(() => {
+    if (!session?.loadTorrentFile || hasMeta || direct || !ih || !meReady || !canSeed || !canTorrentFile) return
+    const load = session.loadTorrentFile.bind(session)
+    let cancelled = false
+    let timer = 0
+    const ctrl = new AbortController()
+    const started = Date.now()
+    const tick = async () => {
+      if (cancelled || session.snapshot()) return
+      try {
+        const st = await api.torrentStatus(ih, ctrl.signal)
+        if (cancelled) return
+        if (st.status === "ready") {
+          const buf = await api.torrentFile(ih, ctrl.signal)
+          if (cancelled || session.snapshot()) return
+          if (await load(buf)) {
+            log("info", "已从服务器获取种子信息")
+            return
+          }
+        }
+      } catch (e) {
+        if (cancelled) return
+        // 没有权限 / 被策略拦截：不再重试；404（服务器暂无种子文件）与网络错误稍后重试
+        if (isApiError(e) && [401, 402, 403, 451].includes(e.status)) return
+      }
+      if (Date.now() - started < 3 * 60_000) timer = window.setTimeout(tick, 3000)
+    }
+    // 先给 xs= / P2P 一点时间
+    timer = window.setTimeout(tick, 3000)
+    return () => {
+      cancelled = true
+      ctrl.abort()
+      window.clearTimeout(timer)
+    }
+  }, [session, hasMeta, direct, ih, meReady, canSeed, canTorrentFile, log])
 
   // 轮询状态
   useEffect(() => {

@@ -168,6 +168,17 @@ CREATE TABLE subject_relations (
 	PRIMARY KEY (subject_id, related_id, relation_type)
 );
 CREATE INDEX subject_relations_related ON subject_relations(related_id);
+`,
+	// 7: raw .torrent files (bencoded metainfo whose v1 infohash matches), served over HTTP
+	// so browsers get the metadata without a WebRTC peer (magnet xs=). Kept independently of
+	// qB (a torrent deleted there stays playable via webtorrent peers + our metadata).
+	`
+CREATE TABLE torrent_metainfo (
+	infohash   TEXT PRIMARY KEY,
+	data       BLOB NOT NULL,
+	source     TEXT NOT NULL DEFAULT '',   -- crawl (feed .torrent) | qb (torrents/export) | bangumi.moe
+	created_at TEXT NOT NULL
+);
 `}
 
 // Store is the meta database.

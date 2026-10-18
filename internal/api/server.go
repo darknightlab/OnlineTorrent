@@ -11,6 +11,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/darknightlab/onlinetorrent/internal/catalog"
@@ -41,6 +42,8 @@ type Server struct {
 
 	sessions sync.Map // session token → sessEntry (30s cache; webseed requests are very frequent)
 	wsAllow  sync.Map // webseed policy decisions (role|ih|gen → wsAllowEntry)
+	xsCache  sync.Map // infohash → xsEntry: qB has the metadata (magnet xs= in /play)
+	xsCount  atomic.Uint64
 
 	sseMu sync.Mutex
 	sse   map[string]int // concurrent SSE streams per client

@@ -40,6 +40,7 @@
 | POST | `/api/v1/torrents/hash/{ih}/play` | 打开种子（策略判定 + 磁力） |
 | POST | `/api/v1/torrents/moe/{id}/play` | 按 bangumi.moe ID 打开（本地库中由 bangumi.moe 抓取源收录的种子） |
 | POST | `/api/v1/torrents/hash/{ih}/seed` / `report` | 服务器做种 / 举报 |
+| GET | `/api/v1/torrents/hash/{ih}/torrent` | 种子文件（.torrent，HTTP 元数据；磁力 `xs=` 指向这里） |
 | GET | `/api/v1/torrents/hash/{ih}/webseed/events[/file/{idx}]` | WebSeed 就绪推送（SSE） |
 | GET | `/webseed/hash/{ih}/[文件路径]` | HTTP WebSeed 文件（Cookie 鉴权） |
 | GET | `/meta/v1/torrents/hash/{ih}` | 文件级映射 |
@@ -202,12 +203,19 @@ Torrent：
             "file_index": 0 } }   // meta 可空：种子中第一个映射到条目的正片文件，没有正片时取第一个特别篇文件
 ```
 - 401 `{"error":{"code":"login_required"}}`，402 `{"error":{"code":"vip_required"}}`，451 `{"error":{"code":"blocked","message":"原因"}}`。
+- `magnet` 末尾可能带 `&xs=<站点地址>/api/v1/torrents/hash/{ih}/torrent`（URL 编码；站点地址同 WebSeed：设置 `site.base_url`，为空时 `https://{Host}`）：当前用户有 `GET /api/v1/torrents/hash/{ih}/torrent` 权限且元数据可得时才加——本地已存 .torrent、bangumi.moe 抓取源收录的种子，或某台在线 qB 已有该种子的元数据（`torrents/info`，1.5 秒超时；结果缓存：有 5 分钟、无 15 秒）。WebTorrent 启动时会同源请求 xs 地址（带登录 Cookie），校验 infohash 后直接作为元数据，不必等 WebRTC 节点通过 ut_metadata 提供（校园网等无法建立 WebRTC 连接时也能显示文件列表、使用 WebSeed）。
 - 用户磁力里的 `tr=` 一律丢弃（只用站点配置的 tracker）；`dn=` 只作为未受信标题参与判定（用户磁力最低权限始终生效），不写入种子标题，真实标题以 qB 元数据为准。
 - 用户提交的种子获取元数据后会被复查；此外后台每 10 分钟用 qB 中的真实名称与文件列表复查本站分类下所有种子，命中屏蔽规则或超过大小上限的会被移除。
 
 ### `POST /torrents/hash/{ih}/seed` → `{"seeded_by": ["ams"]}`
 让所有在线 qB 下载并做种（消耗服务器带宽 / 磁盘）。默认仅会员及以上。种子须先经 play 打开过；会对当前用户重新做策略判定。超过 `play.max_push_size_mb` 返回 413 `too_large`。
 qB 拿到元数据后，后端把文件列表写入本地库并刮削（每个 infohash 一次）；期间 `GET /torrents/hash/{ih}` 返回 `pending`，完成后 `ready`。若该种子正好在抓取源的元数据队列里（qB 分类 `projectk-meta`），会被转入做种分类并开始下载，不会被队列删除。
+
+### `GET /torrents/hash/{ih}/torrent` → `application/x-bittorrent`
+种子文件（v1 infohash 与 `{ih}` 一致的 bencode 原文，≤ 5 MB），用作浏览器的 HTTP 元数据来源（见 play 的 `xs=`）。接口权限可配置，默认游客可用；另按当前用户对该种子的策略判定（与 WebSeed 相同，按 角色+种子 缓存 1 分钟），不允许时 403 `forbidden`（本地没有记录的种子按用户磁力处理，默认需登录）。每 IP 突发 30 次、之后每 2 秒 1 次。`Cache-Control: private, max-age=3600`。
+- 来源（依次）：映射库表 `torrent_metainfo`（迁移 7）→ 在线 qB `torrents/export`（qB ≥ 4.5）→ bangumi.moe 抓取源收录的种子按需下载 `{bangumi.moe 地址}/download/torrent/{_id}/{ih}.torrent`（与抓取共用同站串行 + 间隔，失败缓存 10 分钟）；后两者成功后写入表中。都没有时 404 `not_found`；infohash 无效 400。
+- 写入时机：抓取源下载 .torrent 时；qB 元数据队列取到元数据后（删除前导出）；会员做种后的检查 / 每 10 分钟复查拿到元数据时。表中的种子文件不随 qB 删除。
+- 前端兜底：磁力没有 `xs=`（例如刚粘贴的未知磁力）且有做种权限时，播放页在会话仍无元数据时每 3 秒轮询 `GET /torrents/hash/{ih}`（最多 3 分钟），`ready` 后下载本接口的种子文件，移除会话中尚无元数据的种子并用种子文件重新添加（日志「已从服务器获取种子信息」）。
 
 ### HTTP WebSeed（固定地址，Cookie 鉴权）
 - 文件：`GET /webseed/hash/{ih}/`（单文件种子）或 `/webseed/hash/{ih}/{种子内文件路径}`（多文件，webtorrent 自动拼接）。
@@ -270,6 +278,7 @@ Source：
 ## 映射服务 `/meta/v1/*`（metad，可独立部署；默认与 otd 同进程挂载）
 映射粒度是**文件级**：`(infohash, file_index)` → 作品 + 集。种子的每个文件一行（含字幕、字体等，`kind=other`）。`episode`（正片）与特别篇 `sp`/`op`(NCOP)/`ed`(NCED)/`pv`/`cm` 映射到作品 + 集，`episode` 列存正片集数或特别篇编号（没有编号的特别篇为 1；如 `NCOP2` → `kind=op, episode=2`）；Menu/Sample/Preview/特典（`extra`）与非视频（`other`）不映射。集的键由 `kind` + `episode` 得出（`op` → `ncop`，`ed` → `nced`）。
 - 迁移 5（2026-10）：`meta_state` 表 + 一次性重新分类：otd / metad 启动时在后台对已存储的文件路径重跑 `ClassifyFile`（只改 `status=auto` 的行；作品沿用该种子已映射的作品，种子原来没有作品且有文件新变为可映射时重新匹配），完成后标记 `reclassify_specials_v1=done`，之后不再执行。
+- 迁移 7（2026-10）：`torrent_metainfo(infohash PK, data BLOB, source crawl|qb|bangumi.moe, created_at)`：种子文件原文（写入前校验 bencode、≤ 5 MB、v1 infohash 一致），见 `GET /api/v1/torrents/hash/{ih}/torrent`。
 
 - `GET /meta/v1/torrents/hash/{infohash}` →
 ```json

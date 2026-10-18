@@ -59,6 +59,7 @@ export const PERM = {
   episode: "GET /api/v1/subjects/{provider}/{id}/episodes/{n}",
   search: "GET /api/v1/search/{keyword}",
   torrentStatus: "GET /api/v1/torrents/hash/{ih}",
+  torrentFile: "GET /api/v1/torrents/hash/{ih}/torrent",
   playHash: "POST /api/v1/torrents/hash/{ih}/play",
   playMoe: "POST /api/v1/torrents/moe/{id}/play",
   seed: "POST /api/v1/torrents/hash/{ih}/seed",

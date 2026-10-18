@@ -47,7 +47,7 @@ declare module "webtorrent/dist/webtorrent.min.js" {
     critical(start: number, end: number): void
     addWebSeed(url: string): void
     destroy(opts?: { destroyStore?: boolean }, cb?: (err?: Error) => void): void
-    on(ev: "metadata" | "ready" | "done", cb: () => void): void
+    on(ev: "metadata" | "ready" | "done" | "infoHash", cb: () => void): void
     on(ev: "error" | "warning", cb: (err: Error | string) => void): void
     on(ev: "wire", cb: (wire: WTWire, addr?: string) => void): void
     removeAllListeners(): void
@@ -58,7 +58,7 @@ declare module "webtorrent/dist/webtorrent.min.js" {
   export default class WebTorrent {
     constructor(opts?: WTClientOptions)
     torrents: WTTorrent[]
-    add(id: string, opts?: { announce?: string[] }, ontorrent?: (t: WTTorrent) => void): WTTorrent
+    add(id: string | Uint8Array, opts?: { announce?: string[] }, ontorrent?: (t: WTTorrent) => void): WTTorrent
     get(id: string): Promise<WTTorrent | null>
     createServer(opts: { controller: ServiceWorkerRegistration }): unknown
     on(ev: "error" | "warning", cb: (err: Error | string) => void): void

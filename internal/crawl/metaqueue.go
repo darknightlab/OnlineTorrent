@@ -203,7 +203,12 @@ func (c *Crawler) fetchMetadata(ctx context.Context, sv *qb.Server, j store.Meta
 		if err == nil && len(ts) > 0 && ts[0].HasMetadata {
 			files, err := sv.Client.Files(ctx, ih)
 			if err == nil && len(files) > 0 {
-				return c.IngestQBMetadata(ctx, ih, ts[0].Name, files)
+				if err := c.IngestQBMetadata(ctx, ih, ts[0].Name, files); err != nil {
+					return err
+				}
+				// keep the .torrent before the job deletes the torrent from qB
+				c.saveExport(ctx, sv.Client, ih)
+				return nil
 			}
 		}
 		select {

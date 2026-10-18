@@ -34,6 +34,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.route(mux, "GET", "/api/v1/subjects/{provider}/{id}/episodes/{n}", AccessConfigurable, "浏览", "单集资源列表", []string{store.RoleGuest}, s.getEpisode)
 	s.route(mux, "GET", "/api/v1/search/{keyword}", AccessConfigurable, "浏览", "搜索（番剧 + 种子，本地库；本地无番剧时按需查询 bgm.tv / TMDB）", []string{store.RoleGuest}, s.getSearch)
 	s.route(mux, "GET", "/api/v1/torrents/hash/{ih}", AccessConfigurable, "浏览", "种子收录状态与文件刮削结果", []string{store.RoleGuest}, s.getTorrentStatus)
+	s.route(mux, "GET", torrentFilePath, AccessConfigurable, "播放", "获取种子文件（HTTP 元数据，无需 P2P 节点即可显示文件列表）", []string{store.RoleGuest}, s.getTorrentFile)
 
 	s.route(mux, "POST", "/api/v1/torrents/hash/{ih}/play", AccessConfigurable, "播放", "打开种子（按 infohash）", []string{store.RoleGuest}, s.playHash)
 	s.route(mux, "POST", "/api/v1/torrents/moe/{id}/play", AccessConfigurable, "播放", "打开种子（按 bangumi.moe ID）", []string{store.RoleGuest}, s.playMoe)

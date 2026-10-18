@@ -156,6 +156,18 @@ export const api = {
     get<SearchResponse>(`/search/${seg(keyword)}${qs({ page: page > 1 ? page : undefined })}`, s),
   /** 种子收录状态与逐文件刮削结果（做种后轮询） */
   torrentStatus: (ih: string, s?: AbortSignal) => get<TorrentStatus>(`/torrents/hash/${seg(ih)}`, s),
+  /** 种子文件（.torrent，HTTP 元数据；权限 PERM.torrentFile）。无可用文件时 404 */
+  torrentFile: async (ih: string, s?: AbortSignal) => {
+    let res: Response
+    try {
+      res = await fetch(`${API_BASE}/torrents/hash/${seg(ih)}/torrent`, { credentials: "include", signal: s })
+    } catch (e) {
+      if ((e as Error)?.name === "AbortError") throw e
+      throw new ApiError(0, "network_error", "无法连接到服务器")
+    }
+    if (!res.ok) throw new ApiError(res.status, `http_${res.status}`, defaultMessage(res.status))
+    return new Uint8Array(await res.arrayBuffer())
+  },
   /** 按 infohash 打开种子（策略判定 + 磁力） */
   /** file：正在播放的文件序号（多番剧合集时 meta 按该文件给出番剧与集数） */
   playHash: (ih: string, s?: AbortSignal, file?: number | null) =>

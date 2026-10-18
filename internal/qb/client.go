@@ -181,6 +181,29 @@ func (c *Client) DownloadFile(ctx context.Context, hash string, index int, range
 	return c.raw(ctx, http.MethodGet, "torrents/downloadFile", url.Values{"hash": {hash}, "file": {strconv.Itoa(index)}}, h, true)
 }
 
+// MaxExportBytes caps torrents/export responses (same cap as crawled .torrent files).
+const MaxExportBytes = 5 << 20
+
+// ErrNoTorrent: the server doesn't have the torrent, or not its metadata yet.
+var ErrNoTorrent = errors.New("qBittorrent: torrent or metadata not available")
+
+// Export returns the .torrent of a torrent with metadata (qB ≥ 4.5, WebAPI 2.8.14:
+// torrents/export; GET and POST both work on 5.3). 404 = unknown hash, 409 = no metadata
+// yet — both are ErrNoTorrent.
+func (c *Client) Export(ctx context.Context, hash string) ([]byte, error) {
+	b, status, err := c.do(ctx, http.MethodGet, "torrents/export", url.Values{"hash": {hash}})
+	if status == http.StatusNotFound || status == http.StatusConflict {
+		return nil, ErrNoTorrent
+	}
+	if err != nil {
+		return nil, err
+	}
+	if len(b) == 0 || len(b) > MaxExportBytes || b[0] != 'd' {
+		return nil, fmt.Errorf("qBittorrent torrents/export: unexpected body (%d bytes)", len(b))
+	}
+	return b, nil
+}
+
 // Version returns the app version, e.g. "v5.3.0beta1".
 func (c *Client) Version(ctx context.Context) (string, error) {
 	b, _, err := c.do(ctx, http.MethodGet, "app/version", nil)

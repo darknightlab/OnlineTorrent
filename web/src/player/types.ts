@@ -54,6 +54,11 @@ export interface Session {
   torrentFileURL(): string | null
   /** 加入 HTTP WebSeed；同一 URL 只加一次，返回是否为新加入 */
   addWebSeed(url: string): boolean
+  /**
+   * 元数据尚未获取时，改用服务器提供的 .torrent（GET /torrents/hash/{ih}/torrent）。
+   * 返回是否已采用；已有元数据时不做任何事。mock 引擎不实现。
+   */
+  loadTorrentFile?(data: Uint8Array): Promise<boolean>
   on<K extends keyof SessionEvents>(ev: K, cb: SessionEvents[K]): () => void
   destroy(): void
 }

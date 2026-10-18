@@ -157,4 +157,8 @@ func (s *Server) checkSeeded(ctx context.Context, gen uint64, ih, name string, f
 	if review && !trusted && s.St.Bool(store.KeyAutoReviewUnknown) {
 		_ = s.St.AddReview(ctx, ih, name, "auto", "用户提交的种子", by)
 	}
+	// keep the .torrent (HTTP metadata for browsers) so it survives qB deletion
+	if s.Crawl != nil {
+		s.Crawl.SaveExport(ctx, ih)
+	}
 }

@@ -88,3 +88,32 @@ func TestErrorBodyTruncated(t *testing.T) {
 		t.Errorf("error not truncated: %d", len(err.Error()))
 	}
 }
+
+func TestExport(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v2/torrents/export" {
+			w.WriteHeader(404)
+			return
+		}
+		switch r.URL.Query().Get("hash") {
+		case "ok":
+			w.Header().Set("Content-Type", "application/x-bittorrent")
+			_, _ = w.Write([]byte("d4:infod4:name1:xee"))
+		case "nometa":
+			w.WriteHeader(409)
+		default:
+			http.Error(w, "Not Found", 404)
+		}
+	}))
+	defer srv.Close()
+	c := NewClient(srv.URL, "", "", "key")
+	ctx := context.Background()
+	if b, err := c.Export(ctx, "ok"); err != nil || string(b) != "d4:infod4:name1:xee" {
+		t.Fatalf("export: %v %q", err, b)
+	}
+	for _, h := range []string{"nometa", "missing"} {
+		if _, err := c.Export(ctx, h); !errors.Is(err, ErrNoTorrent) {
+			t.Errorf("%s: %v", h, err)
+		}
+	}
+}

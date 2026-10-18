@@ -30,15 +30,22 @@ func (s *Server) webseedURLs(r *http.Request, ih string) []string {
 	if !s.St.Bool(store.KeyWebseedEnabled) {
 		return nil
 	}
+	return []string{s.siteBase(r) + "/webseed/hash/" + ih + "/"}
+}
+
+// siteBase is the absolute site origin for URLs handed to webtorrent (webseed, xs=): the
+// configured site URL, else https://{Host}.
+func (s *Server) siteBase(r *http.Request) string {
 	base := strings.TrimRight(s.St.Str(store.KeySiteBaseURL), "/")
 	if base == "" {
 		base = "https://" + r.Host
 	}
-	return []string{base + "/webseed/hash/" + ih + "/"}
+	return base
 }
 
 // webseedAllowed caches policy decisions per (role, infohash) for a minute: webtorrent issues
 // many range requests per second and the decision only changes when admins edit rules.
+// Also used by GET /torrents/hash/{ih}/torrent (same per-torrent policy as playback).
 func (s *Server) webseedAllowed(r *http.Request, ih string) (bool, error) {
 	u := userOf(r)
 	key := roleOf(u) + "|" + ih + "|" + strconv.FormatUint(s.Policy.Generation(), 10)

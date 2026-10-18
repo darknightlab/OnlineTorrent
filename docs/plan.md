@@ -75,6 +75,7 @@
 
 ## 已实现的补充（计划外）
 - **HTTP WebSeed**：实测欧洲 qB → 国内浏览器的 WebRTC 只有 ~50KB/s（高 RTT 下 SCTP 窗口受限）。利用 qB 5.3 的 `torrents/downloadFile`（支持 Range），由 otd 提供签名的 BEP19 webseed（`/webseed/{exp}.{sig}/{ih}/`），经 Cloudflare 实测 ~9MB/s。后台可设：开关、最低用户等级（默认会员，可作为大会员权益）、延迟秒数（先 P2P 再 HTTP）。只服务 qB 已完整下载的文件。
+- **HTTP 元数据（磁力 `xs=`，2026-10）**：浏览器 WebTorrent 必须先从节点（ut_metadata）拿到元数据，WebSeed 和就绪推送也依赖它；校园网等对称 NAT / UDP 受限的用户与 qB 建不起 WebRTC 连接，页面停在「正在获取种子信息…」。现在服务器保存 .torrent 原文（映射库 `torrent_metainfo`，来源：抓取源 .torrent、qB `torrents/export`、bangumi.moe 按需下载），`GET /api/v1/torrents/hash/{ih}/torrent` 提供，play 返回的磁力带 `xs=` 指向它；未知磁力由前端在做种后轮询收录状态、拿到种子文件后重新添加。bangumi.moe：抓取只读 JSON，不预先下载 .torrent（每页 30+ 个，大多没人看），改为第一次被请求时按需下载并缓存。详见 api.md。
 - 时间表自动选种优先 AVC/H.264（浏览器兼容），HEVC/10bit 降权。
 
 ## TODO（低优先级）

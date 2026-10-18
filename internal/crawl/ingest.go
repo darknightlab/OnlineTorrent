@@ -97,13 +97,17 @@ func (c *Crawler) ingestItem(ctx context.Context, src store.Source, it FeedItem)
 		}
 	}
 	if it.TorrentURL != "" && (ih == "" || it.moe == nil) {
-		mi, derr := c.downloadTorrent(ctx, src, it.TorrentURL)
+		mi, raw, derr := c.downloadTorrent(ctx, src, it.TorrentURL)
 		downloaded = true
 		if derr == nil {
 			if ih != "" && mi.Infohash != ih {
 				c.Log.Warn("crawl: feed infohash differs from .torrent", "source", src.Name, "feed", ih, "torrent", mi.Infohash)
 			}
 			ih = mi.Infohash
+			// keep the raw file: browsers fetch it as metadata (magnet xs=)
+			if err := c.Meta.PutMetainfo(ctx, ih, raw, meta.MetainfoCrawl); err != nil {
+				c.Log.Warn("crawl: store .torrent", "source", src.Name, "ih", ih, "err", err)
+			}
 			if status, known := c.Meta.KnownTorrent(ctx, ih); known && status == "ready" {
 				return false, ih, true, nil
 			}
@@ -140,16 +144,17 @@ func (c *Crawler) ingestItem(ctx context.Context, src store.Source, it FeedItem)
 	return true, ih, downloaded, nil
 }
 
-func (c *Crawler) downloadTorrent(ctx context.Context, src store.Source, u string) (*Metainfo, error) {
+// downloadTorrent fetches and parses a .torrent, returning the raw bytes too.
+func (c *Crawler) downloadTorrent(ctx context.Context, src store.Source, u string) (*Metainfo, []byte, error) {
 	resp, err := c.Fetch.Get(ctx, u, GetOptions{MaxBytes: MaxTorrentBytes, ProxyDisabled: src.ProxyDisabled, Accept: "application/x-bittorrent, */*;q=0.5"})
 	if err != nil {
-		return nil, fmt.Errorf("download .torrent: %w", err)
+		return nil, nil, fmt.Errorf("download .torrent: %w", err)
 	}
 	mi, err := ParseTorrent(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("parse .torrent: %w", err)
+		return nil, nil, fmt.Errorf("parse .torrent: %w", err)
 	}
-	return mi, nil
+	return mi, resp.Body, nil
 }
 
 // IngestQBMetadata records the real file list qB reported for a torrent (seed watcher /

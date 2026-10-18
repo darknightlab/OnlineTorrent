@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/darknightlab/onlinetorrent/internal/crawl"
 	"github.com/darknightlab/onlinetorrent/internal/httpx"
 	"github.com/darknightlab/onlinetorrent/internal/magnet"
 	"github.com/darknightlab/onlinetorrent/internal/store"
@@ -82,6 +84,92 @@ func (s *Server) getTorrentStatus(w http.ResponseWriter, r *http.Request) error 
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, 200, out)
 	return nil
+}
+
+// torrentFileKey is the route permission of GET /api/v1/torrents/hash/{ih}/torrent.
+const (
+	torrentFilePath = "/api/v1/torrents/hash/{ih}/torrent"
+	torrentFileKey  = "GET " + torrentFilePath
+)
+
+// GET /api/v1/torrents/hash/{ih}/torrent — the raw .torrent (metadata over HTTP: magnet
+// xs=, so browsers don't need a WebRTC peer for ut_metadata). Stored copy, else a live qB
+// export / bangumi.moe download (then stored). Same per-torrent policy as playback (403).
+func (s *Server) getTorrentFile(w http.ResponseWriter, r *http.Request) error {
+	ih, ok := magnet.NormalizeInfohash(r.PathValue("ih"))
+	if !ok {
+		return httpx.E(400, "bad_request", "infohash 无效")
+	}
+	if !s.limiter.allow("torrentfile:"+ipKey(r), 30, 2*time.Second) {
+		return errRateLimited
+	}
+	allowed, err := s.webseedAllowed(r, ih)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return httpx.E(http.StatusForbidden, "forbidden", "当前账号无权获取该种子")
+	}
+	if s.Crawl == nil {
+		return httpx.E(404, "not_found", "没有该种子的种子文件")
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+	defer cancel()
+	b, err := s.Crawl.Metainfo(ctx, ih)
+	if errors.Is(err, crawl.ErrNoMetainfo) || errors.Is(err, context.DeadlineExceeded) {
+		return httpx.E(404, "not_found", "没有该种子的种子文件")
+	}
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/x-bittorrent")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+ih+`.torrent"`)
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(b)
+	return nil
+}
+
+type xsEntry struct {
+	ok  bool
+	exp time.Time
+}
+
+// metainfoObtainable decides whether /play should add xs= for ih: a stored .torrent (or a
+// bangumi.moe item), else a qB server holding the metadata (checked with a short timeout,
+// cached: positive 5 min, negative 15 s).
+func (s *Server) metainfoObtainable(ctx context.Context, ih string) bool {
+	if s.Crawl == nil {
+		return false
+	}
+	if s.Crawl.MetainfoAvailable(ctx, ih) {
+		return true
+	}
+	if s.Pool == nil {
+		return false
+	}
+	now := time.Now()
+	if v, ok := s.xsCache.Load(ih); ok && now.Before(v.(xsEntry).exp) {
+		return v.(xsEntry).ok
+	}
+	cctx, cancel := context.WithTimeout(ctx, 1500*time.Millisecond)
+	ok := s.Pool.HasMetadata(cctx, ih)
+	cancel()
+	ttl := 15 * time.Second
+	if ok {
+		ttl = 5 * time.Minute
+	}
+	if n := s.xsCount.Add(1); n%256 == 0 {
+		s.xsCache.Range(func(k, v any) bool {
+			if now.After(v.(xsEntry).exp) {
+				s.xsCache.Delete(k)
+			}
+			return true
+		})
+	}
+	s.xsCache.Store(ih, xsEntry{ok, now.Add(ttl)})
+	return ok
 }
 
 // metadataExpected: something is fetching the metadata right now (crawler metadata queue,

@@ -418,6 +418,11 @@ const routes: [string, string, Handler][] = [
     return { subjects: subs, torrents: pg.items, page: pg.page, page_count: Math.min(50, pg.page_count), total: list.length }
   }],
   ["GET", "/torrents/hash/:ih", ({ params }) => (requirePerm("GET /api/v1/torrents/hash/{ih}"), torrentStatus(params.ih.toLowerCase()))],
+  // mock 引擎自带模拟元数据，不需要 .torrent
+  ["GET", "/torrents/hash/:ih/torrent", () => {
+    requirePerm("GET /api/v1/torrents/hash/{ih}/torrent")
+    throw new HttpError(404, "not_found", "没有该种子的种子文件")
+  }],
   ["POST", "/torrents/hash/:ih/play", ({ params }) => {
     const ih = params.ih.toLowerCase()
     if (!/^[0-9a-f]{40}$/.test(ih)) throw new HttpError(400, "bad_request", "infohash 格式错误")

@@ -331,6 +331,7 @@ export const permissionSpecs: Spec[] = [
   spec("GET", "/api/v1/subjects/{provider}/{id}/episodes/{n}", "configurable", "浏览", "单集资源列表", ["guest"]),
   spec("GET", "/api/v1/search/{keyword}", "configurable", "浏览", "搜索（番剧 + 种子，本地库；本地无番剧时按需查询 bgm.tv / TMDB）", ["guest"]),
   spec("GET", "/api/v1/torrents/hash/{ih}", "configurable", "浏览", "种子收录状态与文件刮削结果", ["guest"]),
+  spec("GET", "/api/v1/torrents/hash/{ih}/torrent", "configurable", "播放", "获取种子文件（HTTP 元数据，无需 P2P 节点即可显示文件列表）", ["guest"]),
   spec("POST", "/api/v1/torrents/hash/{ih}/play", "configurable", "播放", "打开种子（按 infohash）", ["guest"]),
   spec("POST", "/api/v1/torrents/moe/{id}/play", "configurable", "播放", "打开种子（按 bangumi.moe ID）", ["guest"]),
   spec("POST", "/api/v1/torrents/hash/{ih}/seed", "configurable", "播放", "让服务器下载做种（消耗服务器资源）", ["member"]),
