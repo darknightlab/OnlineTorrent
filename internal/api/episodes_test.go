@@ -114,11 +114,23 @@ func TestEpisodesEndpoints(t *testing.T) {
 	}
 
 	tm, _ := s.Meta.GetTorrentMap(ctx, ih)
-	if m := playMetaOf(tm); m == nil || m.Key != "2" || m.Label != "第 2 话" || m.Episode == nil || m.FileIndex != 0 {
+	if m := playMetaOf(tm, -1); m == nil || m.Key != "2" || m.Label != "第 2 话" || m.Episode == nil || m.FileIndex != 0 {
 		t.Errorf("play meta: %+v", m)
 	}
+	// the file being played (its own subject and episode)
+	if m := playMetaOf(tm, 3); m == nil || m.Key != "sp1" || m.FileIndex != 3 {
+		t.Errorf("play meta file 3: %+v", m)
+	}
+	// a per-file subject: another work on one file of the torrent
+	tm2 := *tm
+	tm2.Files = append([]meta.FileMap(nil), tm.Files...)
+	other := &meta.WorkRef{ID: 99, Key: "bgm:99", Title: "S2"}
+	tm2.Files[3].Work = other
+	if m := playMetaOf(&tm2, 3); m == nil || m.SubjectID != 99 || m.SubjectKey != "bgm:99" {
+		t.Errorf("play meta per-file subject: %+v", m)
+	}
 	tm.Files = tm.Files[2:] // only specials
-	if m := playMetaOf(tm); m == nil || m.Key != "ncop1" || m.Label != "NCOP1" || m.Episode != nil || m.FileIndex != 2 {
+	if m := playMetaOf(tm, -1); m == nil || m.Key != "ncop1" || m.Label != "NCOP1" || m.Episode != nil || m.FileIndex != 2 {
 		t.Errorf("play meta specials: %+v", m)
 	}
 }

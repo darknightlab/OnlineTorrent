@@ -62,9 +62,12 @@ function sourceKey(src: PlaySource | null) {
  */
 export function usePlayResolve(
   src: PlaySource | null,
-  opts: { hint?: PlayHint; trackers: string[]; attempt: string; preload?: PlayPreload | null; known?: Access | null },
+  opts: { hint?: PlayHint; trackers: string[]; attempt: string; preload?: PlayPreload | null; known?: Access | null; file?: number | null },
 ) {
   const { hint, trackers, attempt, preload, known } = opts
+  // 只用于首次请求（不在依赖里：同一种子内切换文件不重新请求）
+  const fileRef = useRef(opts.file)
+  fileRef.current = opts.file
   const [state, setState] = useState<ResolveState>({ status: src ? "loading" : "idle" })
   const [skip, setSkip] = useState(0)
   const skipRef = useRef<() => void>(() => {})
@@ -129,7 +132,7 @@ export function usePlayResolve(
       timedOut = true
       ctrl.abort()
     }, REQUEST_TIMEOUT_MS)
-    const req = src.kind === "hash" ? api.playHash(src.ih, ctrl.signal) : api.playMoe(src.id, ctrl.signal)
+    const req = src.kind === "hash" ? api.playHash(src.ih, ctrl.signal, fileRef.current) : api.playMoe(src.id, ctrl.signal)
     req
       .then((play) => {
         if (done) return

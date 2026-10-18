@@ -51,6 +51,11 @@ type ParsedName struct {
 	Episode    *float64
 	Kind       string // episode|sp|op|ed|pv|cm|extra|other
 	Confidence float64
+	// Season is the TV season marker of the name (S2, Season 2, 2nd Season, 第二季, 第2期,
+	// S02E05, a Ⅱ/II suffix …); 0 = none. Markers that number a special ("Special S2") and
+	// names holding several different seasons ("S1+S2") do not count. ClassifyFile(s) fall
+	// back to the innermost folder carrying a season.
+	Season float64
 }
 
 // ---------------------------------------------------------------------------------------
@@ -796,6 +801,7 @@ func parseName(name string, allowBare bool) analysis {
 			a.season = t.num
 		}
 	}
+	a.Season = routeSeason(toks)
 
 	// file type from trusted keywords; priority sample > op/ed > extra > pv > cm > sp
 	kinds := map[string]bool{}
@@ -1017,6 +1023,20 @@ func ClassifyFile(p, title string, videos int) ParsedName {
 }
 
 func classifyOne(p, title string, videos int) (ParsedName, fileInfo) {
+	r, info := classifyOneKind(p, title, videos)
+	if IsVideo(p) {
+		r.Season = 0
+		for _, h := range pathHints(p) {
+			if h.Season > 0 {
+				r.Season = h.Season
+				break
+			}
+		}
+	}
+	return r, info
+}
+
+func classifyOneKind(p, title string, videos int) (ParsedName, fileInfo) {
 	if !IsVideo(p) {
 		return ParsedName{Kind: "other"}, fileInfo{}
 	}
@@ -1090,6 +1110,20 @@ func classifyOne(p, title string, videos int) (ParsedName, fileInfo) {
 //     so they are not both mapped as the same episode ("TV S1 05" and "TV S2 05");
 //   - consecutive numbers of one special kind inside one folder raise the confidence.
 func ClassifyFiles(paths []string, title string) []ParsedName {
+	return classifyFilesIn(paths, title, nil)
+}
+
+// classifyFilesIn is ClassifyFiles with every file assigned to a target group (the work
+// it will be mapped to; nil = one group): the cross-checks (clashes, the only unnumbered
+// special of a kind, runs) only compare files of the same group, so "TV S1/05" and
+// "TV S2/05" routed to two different works no longer clash.
+func classifyFilesIn(paths []string, title string, groups []string) []ParsedName {
+	groupOf := func(i int) string {
+		if groups == nil {
+			return ""
+		}
+		return groups[i]
+	}
 	videos := 0
 	for _, p := range paths {
 		if IsVideo(p) {
@@ -1103,30 +1137,33 @@ func ClassifyFiles(paths []string, title string) []ParsedName {
 	}
 
 	type key struct {
-		kind string
-		num  float64
+		group, kind string
+		num         float64
 	}
+	type gk struct{ group, kind string }
 	byKey := map[key][]int{}
-	perKind := map[string][]int{}
+	perKind := map[gk][]int{}
 	for i, r := range out {
 		if !infos[i].video || !MappableKind(r.Kind) {
 			continue
 		}
-		perKind[r.Kind] = append(perKind[r.Kind], i)
+		g := groupOf(i)
+		perKind[gk{g, r.Kind}] = append(perKind[gk{g, r.Kind}], i)
 		if r.Episode != nil {
-			byKey[key{r.Kind, *r.Episode}] = append(byKey[key{r.Kind, *r.Episode}], i)
+			k := key{g, r.Kind, *r.Episode}
+			byKey[k] = append(byKey[k], i)
 		}
 	}
 	// same key, different content → ambiguous. The numbering of every content group taking
 	// part in a clash is unreliable as a whole ("TV S1 01-51" next to "TV S2 01-26": S1 27-51
 	// do not clash but are as season-relative as the rest), so all of them lose their number.
-	type ks struct{ kind, sig string }
+	type ks struct{ group, kind, sig string }
 	clash := map[ks]bool{}
 	for k, idx := range byKey {
 		for _, i := range idx[1:] {
 			if infos[i].sig != infos[idx[0]].sig {
 				for _, j := range idx {
-					clash[ks{k.kind, infos[j].sig}] = true
+					clash[ks{k.group, k.kind, infos[j].sig}] = true
 				}
 				break
 			}
@@ -1134,14 +1171,14 @@ func ClassifyFiles(paths []string, title string) []ParsedName {
 	}
 	if len(clash) > 0 {
 		for i, r := range out {
-			if infos[i].video && r.Episode != nil && clash[ks{r.Kind, infos[i].sig}] {
+			if infos[i].video && r.Episode != nil && clash[ks{groupOf(i), r.Kind, infos[i].sig}] {
 				out[i].Episode, out[i].Confidence = nil, 0.2
 			}
 		}
 	}
 	// the only unnumbered special of its kind → 1
-	for kind, idx := range perKind {
-		if kind == "episode" || len(idx) != 1 {
+	for k, idx := range perKind {
+		if k.kind == "episode" || len(idx) != 1 {
 			continue
 		}
 		if i := idx[0]; out[i].Episode == nil && infos[i].noNum {
@@ -1149,11 +1186,12 @@ func ClassifyFiles(paths []string, title string) []ParsedName {
 		}
 	}
 	// consecutive numbering of a special kind inside one folder supports the numbers
-	type dk struct{ dir, kind string }
+	type dk struct{ group, dir, kind string }
 	runs := map[dk][]int{}
 	for i, r := range out {
 		if infos[i].video && r.Episode != nil && r.Kind != "episode" && MappableKind(r.Kind) {
-			runs[dk{infos[i].dir, r.Kind}] = append(runs[dk{infos[i].dir, r.Kind}], i)
+			k := dk{groupOf(i), infos[i].dir, r.Kind}
+			runs[k] = append(runs[k], i)
 		}
 	}
 	for _, idx := range runs {
@@ -1178,4 +1216,147 @@ func ClassifyFiles(paths []string, title string) []ParsedName {
 		}
 	}
 	return out
+}
+
+// ---------------------------------------------------------------------------------------
+// routing hints (which work of a multi-season / multi-work batch a file belongs to, see
+// route.go)
+
+// routeHint is what one name (file stem or folder) says about the work it belongs to.
+type routeHint struct {
+	Season float64 // TV season marker (see ParsedName.Season), 0 = none
+	Type   string  // movie|ova|tv from keywords (劇場版/Movie/Film, OVA/OAD, TV); "" = none or mixed ("TV+OVA+Film")
+	Years  []int   // 4-digit years written in the name (1994~1995, 1999-04-24, (2001))
+	Norm   string  // normName of the whole name
+}
+
+var reSeasonEp = regexp.MustCompile(`^S(\d{1,2})E\d`)
+var reOVAWord = regexp.MustCompile(`^(?:OVA|OAD|OAV)S?\d{0,3}$`)
+
+// routeSeason is the single TV season written in a name: S2, Season 2, 2nd Season, 第二季,
+// S02E05, a Roman numeral suffix (Ⅱ, "Show II"). Season markers numbering a special
+// ("Special S2", "OVA S1") are skipped; several different seasons ("S1+S2") give 0.
+func routeSeason(toks []token) float64 {
+	var found []float64
+	add := func(v float64) {
+		if v > 0 && v < 100 && !containsF(found, v) {
+			found = append(found, v)
+		}
+	}
+	for i, t := range toks {
+		switch {
+		case t.cat == cSeason && t.hasNum:
+			if i > 0 && toks[i-1].group == t.group {
+				u := strings.ToUpper(toks[i-1].text)
+				if typeWords[u] == "sp" || reOVAWord.MatchString(u) {
+					continue // "Special S1 01": the specials' own numbering
+				}
+			}
+			add(t.num)
+		case t.cat == cEpisode:
+			if m := reSeasonEp.FindStringSubmatch(strings.ToUpper(t.text)); m != nil {
+				v, _ := strconv.ParseFloat(m[1], 64)
+				add(v)
+			}
+		case t.cat == cWord:
+			if v := romanSuffix(toks, i); v > 0 {
+				add(v)
+			}
+		}
+	}
+	if len(found) == 1 {
+		return found[0]
+	}
+	return 0
+}
+
+// romanSuffix: "とある魔術の禁書目録Ⅱ", "Show II" (a title word, then a standalone II/III/IV
+// ending the words of its group) → 2/3/4.
+func romanSuffix(toks []token, i int) float64 {
+	t := toks[i]
+	if r, _ := utf8.DecodeLastRuneInString(t.text); r >= 'Ⅱ' && r <= 'Ⅹ' {
+		if utf8.RuneCountInString(t.text) > 1 || (i > 0 && toks[i-1].group == t.group && toks[i-1].cat == cWord) {
+			return float64(r-'Ⅰ') + 1
+		}
+	}
+	v := map[string]float64{"II": 2, "III": 3, "IV": 4}[t.text]
+	if v == 0 || i == 0 || toks[i-1].group != t.group || toks[i-1].cat != cWord {
+		return 0
+	}
+	if i+1 < len(toks) && toks[i+1].group == t.group && toks[i+1].cat == cWord {
+		return 0 // "Show II Something": part of a title
+	}
+	return v
+}
+
+// nameHint parses one file stem or folder name for routing.
+func nameHint(s string) routeHint {
+	toks := tokenize(s)
+	trustTypes(toks)
+	h := routeHint{Season: routeSeason(toks), Norm: normName(s), Years: yearsIn(s)}
+	types := map[string]bool{}
+	for _, t := range toks {
+		u := strings.ToUpper(t.text)
+		switch {
+		case u == "MOVIE" || u == "MOVIES" || u == "FILM" || u == "FILMS" || u == "GEKIJOUBAN" || strings.Contains(t.text, "剧场版") || strings.Contains(t.text, "劇場版"):
+			types["movie"] = true
+		case reOVAWord.MatchString(u):
+			types["ova"] = true
+		case u == "TV" || strings.HasPrefix(t.text, "TV动画") || strings.HasPrefix(t.text, "TVアニメ"):
+			types["tv"] = true
+		}
+	}
+	if len(types) == 1 {
+		for k := range types {
+			h.Type = k
+		}
+	}
+	return h
+}
+
+// pathHints: the file stem first, then its folders from the innermost outwards.
+func pathHints(p string) []routeHint {
+	parts := strings.Split(strings.ReplaceAll(p, "\\", "/"), "/")
+	out := make([]routeHint, 0, len(parts))
+	out = append(out, nameHint(stem(parts[len(parts)-1])))
+	for i := len(parts) - 2; i >= 0; i-- {
+		if strings.TrimSpace(parts[i]) != "" {
+			out = append(out, nameHint(parts[i]))
+		}
+	}
+	return out
+}
+
+// yearsIn lists the 4-digit runs 1900–2099 of s.
+func yearsIn(s string) []int {
+	var out []int
+	for i := 0; i < len(s); {
+		if s[i] < '0' || s[i] > '9' {
+			i++
+			continue
+		}
+		j := i
+		for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+			j++
+		}
+		if j-i == 4 {
+			if v, _ := strconv.Atoi(s[i:j]); v >= 1900 && v < 2100 {
+				out = append(out, v)
+			}
+		}
+		i = j
+	}
+	return out
+}
+
+// normName folds a title for substring comparison: full-width to ASCII, lower case, only
+// letters and digits ("You`re Under Arrest!" → "youreunderarrest").
+func normName(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(normWidth(s)) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

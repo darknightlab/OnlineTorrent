@@ -92,6 +92,7 @@ export default function PlaybackPage() {
     preload: urlIh ? st.preload : undefined,
     // 自动推荐的资源已知 access（非 allow 时直接提示，不发请求）；URL 指定的以服务端判定为准
     known: auto?.access,
+    file: fileIndex,
   })
 
   // 正在播放的文件（Player 回报，含自动选择）

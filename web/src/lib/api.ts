@@ -157,7 +157,9 @@ export const api = {
   /** 种子收录状态与逐文件刮削结果（做种后轮询） */
   torrentStatus: (ih: string, s?: AbortSignal) => get<TorrentStatus>(`/torrents/hash/${seg(ih)}`, s),
   /** 按 infohash 打开种子（策略判定 + 磁力） */
-  playHash: (ih: string, s?: AbortSignal) => request<PlayResponse>("POST", `/torrents/hash/${seg(ih)}/play`, undefined, s),
+  /** file：正在播放的文件序号（多番剧合集时 meta 按该文件给出番剧与集数） */
+  playHash: (ih: string, s?: AbortSignal, file?: number | null) =>
+    request<PlayResponse>("POST", `/torrents/hash/${seg(ih)}/play${file != null ? `?file=${file}` : ""}`, undefined, s),
   /** 按 bangumi.moe ID 打开种子（本地库中由该抓取源收录的种子） */
   playMoe: (id: string, s?: AbortSignal) => request<PlayResponse>("POST", `/torrents/moe/${seg(id)}/play`, undefined, s),
   report: (ih: string, b: ReportRequest) => post<Record<string, never>>(`/torrents/hash/${seg(ih)}/report`, b),

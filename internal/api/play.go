@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,15 @@ type playReq struct {
 	Magnet    string `json:"magnet"`
 	Infohash  string `json:"infohash"`
 	TorrentID string `json:"torrent_id"`
+	File      int    // ?file=N: the file about to be played (-1 = not given)
+}
+
+// fileParam reads the optional ?file= index (-1 if absent or invalid).
+func fileParam(r *http.Request) int {
+	if n, err := strconv.Atoi(r.URL.Query().Get("file")); err == nil && n >= 0 {
+		return n
+	}
+	return -1
 }
 
 type playMeta struct {
@@ -67,12 +77,12 @@ func (s *Server) maxPushBytes() int64 {
 
 // POST /api/v1/torrents/hash/{ih}/play
 func (s *Server) playHash(w http.ResponseWriter, r *http.Request) error {
-	return s.play(w, r, playReq{Infohash: r.PathValue("ih")})
+	return s.play(w, r, playReq{Infohash: r.PathValue("ih"), File: fileParam(r)})
 }
 
 // POST /api/v1/torrents/moe/{id}/play — bangumi.moe catalogue id (trusted metadata)
 func (s *Server) playMoe(w http.ResponseWriter, r *http.Request) error {
-	return s.play(w, r, playReq{TorrentID: r.PathValue("id")})
+	return s.play(w, r, playReq{TorrentID: r.PathValue("id"), File: fileParam(r)})
 }
 
 func (s *Server) play(w http.ResponseWriter, r *http.Request, in playReq) error {
@@ -162,27 +172,32 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request, in playReq) error 
 		Magnet: magnet.Build(t.Infohash, t.Title, s.St.List(store.KeyTrackers)), SeededBy: []string{}, Webseeds: []string{},
 	}
 	if tm, err := s.Meta.GetTorrentMap(ctx, t.Infohash); err == nil {
-		resp.Meta = playMetaOf(tm)
+		resp.Meta = playMetaOf(tm, in.File)
 	}
 	httpx.JSON(w, 200, resp)
 	return nil
 }
 
-// playMetaOf picks the first mapped main episode of the torrent, else its first mapped
-// special (a torrent of only NCOP/NCED, SP, …).
-func playMetaOf(tm *meta.TorrentMap) *playMeta {
+// playMetaOf describes the mapped file being played: file (when given and mapped), else the
+// first mapped main episode of the torrent, else its first mapped special (a torrent of only
+// NCOP/NCED, SP, …). Subject and episode always come from that file's own mapping — a
+// torrent can hold several subjects (multi-season batches, TV + movie).
+func playMetaOf(tm *meta.TorrentMap, file int) *playMeta {
 	var pick *meta.FileMap
 	for i := range tm.Files {
 		f := &tm.Files[i]
 		if f.Work == nil || f.EpisodeKey == "" {
 			continue
 		}
-		if f.Kind == "episode" {
+		if f.Index == file {
 			pick = f
 			break
 		}
-		if pick == nil {
+		if pick == nil || (pick.Kind != "episode" && f.Kind == "episode") {
 			pick = f
+			if f.Kind == "episode" && file < 0 {
+				break
+			}
 		}
 	}
 	if pick == nil {

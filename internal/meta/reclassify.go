@@ -14,9 +14,10 @@ import (
 //
 //	reclassify_specials_v1  specials keep their number and are mapped (migration 5)
 //	reclassify_parser_v2    token-elimination parser + torrent-level cross-checks (ClassifyFiles)
+//	reclassify_match_v3     per-file work routing (route.go), title-fragment anchor match
 //
 // The flag is inserted as 'pending' from Go (INSERT OR IGNORE), not by a migration.
-const stateReclassify = "reclassify_parser_v2"
+const stateReclassify = "reclassify_match_v3"
 
 // ReclassifyOnce runs Reclassify if it has not completed on this database yet (flag in
 // meta_state). Safe to call in a goroutine at startup.
@@ -57,15 +58,17 @@ func workConf(method string) float64 {
 		return 0.95
 	case strings.HasPrefix(method, "manual"):
 		return 0.9
+	case strings.HasPrefix(method, "title"):
+		return 0.6
 	}
 	return 0.7
 }
 
-// Reclassify re-runs ClassifyFiles over the stored paths of every ready torrent and
-// rewrites automatic rows (status auto) whose kind, episode or work changed. The work is
-// the one already mapped to the torrent's files; torrents without one are only re-matched
-// (resolveWork) when a file became mappable (e.g. an NCOP that used to be unmapped).
-// Returns the number of rows changed.
+// Reclassify re-runs the file mapping (mapFiles: classification + per-file routing) over
+// the stored paths of every ready torrent and rewrites automatic rows (status auto) whose
+// kind, episode or work changed. The anchor is the work the torrent-level match gave
+// before (most files mapped to it without routing); torrents without one are re-matched
+// (resolveWork). Returns the number of rows changed.
 func (s *Store) Reclassify(ctx context.Context) (int, error) {
 	changed := 0
 	var seq int64
@@ -107,7 +110,8 @@ func (s *Store) reclassifyTorrent(ctx context.Context, ih, title string) (int, e
 		return 0, err
 	}
 	var files []storedFile
-	votes := map[string]int{}
+	votes := map[string]int{}       // files mapped to a work
+	anchorVotes := map[string]int{} // … by the torrent-level match (not routed)
 	methodOf := map[string]string{}
 	for rows.Next() {
 		var f storedFile
@@ -118,8 +122,11 @@ func (s *Store) reclassifyTorrent(ctx context.Context, ih, title string) (int, e
 		files = append(files, f)
 		if f.work.Valid && f.status != "rejected" {
 			votes[f.work.String]++
+			if !isRoutedMethod(f.method) {
+				anchorVotes[f.work.String]++
+			}
 			if methodOf[f.work.String] == "" || f.status == "auto" {
-				methodOf[f.work.String] = strings.TrimSuffix(f.method, "+name")
+				methodOf[f.work.String] = baseMethod(f.method)
 			}
 		}
 	}
@@ -134,6 +141,9 @@ func (s *Store) reclassifyTorrent(ctx context.Context, ih, title string) (int, e
 
 	var work *Work
 	method, wconf := "", 0.0
+	if len(anchorVotes) > 0 {
+		votes = anchorVotes
+	}
 	best := ""
 	for k, n := range votes {
 		if n > votes[best] || (n == votes[best] && k < best) {
@@ -144,27 +154,18 @@ func (s *Store) reclassifyTorrent(ctx context.Context, ih, title string) (int, e
 		if w, err := s.GetWork(ctx, best); err == nil {
 			work, method, wconf = w, methodOf[best], workConf(methodOf[best])
 		}
-	} else {
-		// re-match only if a file newly became mappable
-		for i, p := range classifyAll(paths, title, nil) {
-			if f := files[i]; f.status == "auto" && MappableKind(p.Kind) && !MappableKind(f.kind) {
-				if in, ok := s.GetTorrentInput(ctx, ih); ok {
-					work, method, wconf = s.resolveWork(ctx, in)
-				}
-				break
-			}
-		}
+	} else if in, ok := s.GetTorrentInput(ctx, ih); ok {
+		work, method, wconf = s.resolveWork(ctx, in)
 	}
 
 	n := 0
 	now := store.Now()
-	parsed := classifyAll(paths, title, work)
+	res := s.mapFiles(ctx, paths, title, work, method, wconf)
 	for i, f := range files {
 		if f.status != "auto" {
 			continue
 		}
-		kind, p := parsed[i].Kind, parsed[i]
-		wk, ep, conf, m := fileMapping(work, method, wconf, kind, p)
+		kind, wk, ep, conf, m := res[i].kind, res[i].work, res[i].ep, res[i].conf, res[i].method
 		oldWK := ""
 		if f.work.Valid {
 			oldWK = f.work.String

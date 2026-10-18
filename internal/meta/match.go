@@ -56,10 +56,9 @@ func (s *Store) Match(ctx context.Context, t TorrentInput) error {
 	for i, f := range t.Files {
 		paths[i] = f.Path
 	}
-	parsed := classifyAll(paths, t.Title, work)
+	res := s.mapFiles(ctx, paths, t.Title, work, method, wconf)
 	for i, f := range t.Files {
-		kind, p := parsed[i].Kind, parsed[i]
-		wk, ep, conf, m := fileMapping(work, method, wconf, kind, p)
+		kind, wk, ep, conf, m := res[i].kind, res[i].work, res[i].ep, res[i].conf, res[i].method
 		if _, err := s.W.ExecContext(ctx, `INSERT INTO torrent_files(infohash,file_index,path,size_bytes,kind,work_key,episode,confidence,status,method,updated_at) VALUES(?,?,?,?,?,?,?,?, 'auto', ?, ?)
 			ON CONFLICT(infohash,file_index) DO UPDATE SET path=excluded.path, size_bytes=CASE WHEN excluded.size_bytes>0 THEN excluded.size_bytes ELSE size_bytes END,
 			kind=excluded.kind, work_key=excluded.work_key, episode=excluded.episode, confidence=excluded.confidence, method=excluded.method, updated_at=excluded.updated_at
@@ -69,27 +68,6 @@ func (s *Store) Match(ctx context.Context, t TorrentInput) error {
 		}
 	}
 	return s.refreshFTS(ctx, t.Infohash)
-}
-
-// classifyAll is ClassifyFiles (all files of one torrent, cross-checked) plus the
-// single-video movie rule (a movie's only video is episode 1).
-func classifyAll(paths []string, title string, work *Work) []ParsedName {
-	ps := ClassifyFiles(paths, title)
-	videos := 0
-	for _, p := range paths {
-		if IsVideo(p) {
-			videos++
-		}
-	}
-	if videos == 1 && work != nil && strings.EqualFold(work.Type, "movie") {
-		for i, p := range ps {
-			if IsVideo(paths[i]) && (p.Kind == "other" || p.Kind == "episode") && p.Episode == nil {
-				one := 1.0
-				ps[i] = ParsedName{Kind: "episode", Episode: &one, Confidence: 0.7}
-			}
-		}
-	}
-	return ps
 }
 
 // fileMapping: only episodes and specials (sp/op/ed/pv/cm, see MappableKind) are mapped to
@@ -186,8 +164,10 @@ func boolInt(b bool) int {
 	return 0
 }
 
-// resolveWork finds the work: bangumi.moe bangumi tag (via bangumi-data) first,
-// then a conservative alias substring match among recent works.
+// resolveWork finds the torrent-level work (the anchor of the per-file routing, see
+// route.go): bangumi.moe bangumi tag (via bangumi-data) first, then a conservative alias
+// substring match among recent works, then an exact title match of a title fragment
+// against any work (titleWork).
 func (s *Store) resolveWork(ctx context.Context, t TorrentInput) (*Work, string, float64) {
 	for _, id := range t.MoeTagIDs {
 		if w, err := s.WorkByExternal(ctx, "bangumi_moe", id); err == nil {
@@ -208,7 +188,125 @@ func (s *Store) resolveWork(ctx context.Context, t TorrentInput) (*Work, string,
 			return e.work, "alias", 0.7
 		}
 	}
+	if w := s.titleWork(ctx, t.Title); w != nil {
+		return w, "title", 0.6
+	}
 	return nil, "", 0
+}
+
+// titleFragments splits a torrent title into the parts that may be a whole title: bracket
+// contents and the pieces between separators (/ | : + ;, " - ").
+func titleFragments(title string) []string {
+	const seps = "[]【】()「」『』{}〔〕〖〗/|:+;,、"
+	var out []string
+	seen := map[string]bool{}
+	for _, part := range strings.FieldsFunc(normWidth(title), func(r rune) bool { return strings.ContainsRune(seps, r) }) {
+		for _, f := range strings.Split(part, " - ") {
+			f = strings.Trim(f, " \t._-~!?★☆​")
+			n := normName(f)
+			c := utf8.RuneCountInString(n)
+			if seen[n] || c > 80 || c < 3 || (!hasNonASCII(n) && c < 5) {
+				continue
+			}
+			words := false
+			for _, tk := range tokenize(f) {
+				if tk.cat == cWord {
+					words = true
+				}
+			}
+			if !words {
+				continue
+			}
+			seen[n] = true
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// titleWork finds a work (any air date) whose title, Chinese title or an alias equals a
+// fragment of the torrent title (after normName). The work equal to the most fragments
+// wins; ties prefer TV/WEB; a remaining tie gives nil.
+func (s *Store) titleWork(ctx context.Context, title string) *Work {
+	frags := titleFragments(title)
+	if len(frags) == 0 || len(frags) > 20 {
+		return nil
+	}
+	// years in the title ("Ranma 1/2 (2024)", "[2025][41-44]") must fit the work: begun
+	// within a year of one of them, or still running since before it (no remake mix-ups).
+	// Full dates ("整理时间：2026.07.15") are release dates, not title years.
+	var years []int
+	for _, y := range yearsIn(reFileDate.ReplaceAllString(title, " ")) {
+		if y >= 1950 && y <= time.Now().Year()+1 {
+			years = append(years, y)
+		}
+	}
+	yearOK := func(w *Work) bool {
+		if len(years) == 0 {
+			return true
+		}
+		by := (&famWork{w: w}).beginYear()
+		if by == 0 {
+			return true
+		}
+		for _, y := range years {
+			if d := y - by; (d >= -1 && d <= 1) || (w.End == "" && d > 0) {
+				return true
+			}
+		}
+		return false
+	}
+	score := map[string]int{}
+	works := map[string]*Work{}
+	for _, f := range frags {
+		nf := normName(f)
+		rows, err := s.R.QueryContext(ctx, `SELECT `+workCols+` FROM works WHERE id IN (SELECT rowid FROM works_fts WHERE works_fts MATCH ? LIMIT 200)`,
+			`"`+strings.ReplaceAll(f, `"`, `""`)+`"`)
+		if err != nil {
+			continue
+		}
+		for rows.Next() {
+			w, err := scanWork(rows)
+			if err != nil || !yearOK(w) {
+				continue
+			}
+			for _, n := range append([]string{w.Title, w.TitleCN}, w.Aliases...) {
+				if normName(n) == nf {
+					score[w.Key]++
+					works[w.Key] = w
+					break
+				}
+			}
+		}
+		rows.Close()
+	}
+	var best []*Work
+	bestScore := 0
+	for k, n := range score {
+		switch {
+		case n > bestScore:
+			best, bestScore = []*Work{works[k]}, n
+		case n == bestScore:
+			best = append(best, works[k])
+		}
+	}
+	if len(best) > 1 {
+		var tv []*Work
+		for _, w := range best {
+			if t := strings.ToLower(w.Type); t == "tv" || t == "web" {
+				tv = append(tv, w)
+			}
+		}
+		best = tv
+	}
+	if len(best) != 1 {
+		return nil
+	}
+	w, err := s.GetWork(ctx, best[0].Key)
+	if err != nil {
+		return nil
+	}
+	return w
 }
 
 type aliasEntry struct {
