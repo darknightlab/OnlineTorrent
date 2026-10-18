@@ -175,7 +175,7 @@ GitHub release 支持 Range（不支持后缀式 `bytes=-N`，要用绝对区间
 
 ### 导入（写入映射库 meta.db）
 - **条目**：只保留 `type=2`。键 `bgm:{id}`，已有作品（来自 bangumi-data）就合并，否则新建，分配新的本站数字 ID（已有 ID 不变）。
-  - 合并优先级：放送时间、各平台外部 ID 以 bangumi-data 为准；中文名、简介、别名（取并集）、平台类型、NSFW、标签、评分、排名、开播/完结日期以 dump 为准。
+  - 合并优先级：放送时间、各平台外部 ID 以 bangumi-data 为准；中文名、简介、别名（取并集）、平台类型、NSFW（独立列 `nsfw`）、标签、评分、排名、开播/完结日期以 dump 为准。
   - infobox 用 `github.com/bangumi/wiki-parser-go` 解析。
   - 封面：dump 不含图片，沿用现有方式（访问时按需解析 lain.bgm.tv 地址并缓存）。
 - **章节**：新表 `episodes(work_key, bgm_ep_id, type, sort, name, name_cn, airdate, duration)`；不存长简介（省空间）。类型映射到集标识：0→正片 `{sort}`、1→`sp{sort}`、2→`ncop{sort}`、3→`nced{sort}`、4→`pv{sort}`；5 MAD / 6 其他暂不进选集。
@@ -194,7 +194,7 @@ GitHub release 支持 Range（不支持后缀式 `bytes=-N`，要用绝对区间
 - 搜索的番剧结果全部来自本地（bgm.tv 实时搜索只作最后兜底）。
 - 别名大幅增加，刮削（尤其罗马音标题）命中率提高。
 - 条目页显示标签、评分、排名。
-- NSFW：作为策略规则可用的字段（`subject_nsfw`），默认不做处理，由管理员在「策略规则」里决定。
+- NSFW：dump 里是条目的独立布尔字段 `nsfw`，导入时原样存入 works 的独立列 `nsfw`（与标签分开）。默认不做任何处理，后续再决定是否作为策略规则字段使用。
 - 系列页 `/series/{provider}/{id}`。
 
 ### 顺序

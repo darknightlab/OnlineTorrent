@@ -2,7 +2,10 @@ package meta
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -14,10 +17,10 @@ func TestClassifyFile(t *testing.T) {
 		ep     float64 // -1 none
 	}{
 		{"[Team] Show [01-12]/[Team] Show - 03 [1080p].mkv", 12, "episode", 3},
-		{"[Team] Show [01-12]/[Team] Show - NCOP1 [1080p].mkv", 12, "op", -1},
-		{"[Team] Show [01-12]/NCED/[Team] Show NCED [1080p].mkv", 12, "ed", -1},
-		{"[Team] Show [01-12]/SPs/[Team] Show [PV01][1080p].mkv", 12, "extra", -1},
-		{"[Team] Show [01-12]/SPs/[Team] Show [CM02][1080p].mkv", 12, "extra", -1},
+		{"[Team] Show [01-12]/[Team] Show - NCOP1 [1080p].mkv", 12, "op", 1},
+		{"[Team] Show [01-12]/NCED/[Team] Show NCED [1080p].mkv", 12, "ed", 1},
+		{"[Team] Show [01-12]/SPs/[Team] Show [PV01][1080p].mkv", 12, "pv", 1},
+		{"[Team] Show [01-12]/SPs/[Team] Show [CM02][1080p].mkv", 12, "cm", 2},
 		{"[Team] Show [01-12]/SPs/[Team] Show [Menu][1080p].mkv", 12, "extra", -1},
 		{"[Team] Show [01-12]/SPs/[Team] Show - 01 [1080p].mkv", 12, "sp", 1},
 		{"[Team] Show [01-12]/特典映像/Show 01.mkv", 12, "extra", -1},
@@ -26,6 +29,15 @@ func TestClassifyFile(t *testing.T) {
 		{"[Team] Show [01-12]/Fonts/a.ttf", 12, "other", -1},
 		{"[Team] Show - 04 [1080p].ass", 1, "other", -1},
 		{"[Team] Show [1080p].mkv", 1, "episode", 7}, // single video without number: torrent title
+		{"[Team] Show [BD]/SPs/Show - PV01.mkv", 12, "pv", 1},
+		{"[Team] Show [BD]/SPs/Show - OVA [1080p].mkv", 12, "sp", 1},
+		{"[Team] Show [BD]/SPs/Show [Preview01][1080p].mkv", 12, "extra", -1},
+		{"[Team] Show [BD]/PVs/Show 02.mkv", 12, "pv", 2},
+		{"[Team] Show [BD]/CM/CM02.mkv", 12, "cm", 2},
+		{"[Team] Show [BD]/NCOP/Show.mkv", 12, "op", 1},
+		{"[Team] Show [BD]/SPs/Show.mkv", 12, "sp", 1},
+		{"[Team] Show [BD]/Show - 12.5 [1080p].mkv", 12, "episode", 12.5},
+		{"[Team] Show [BD]/Show - 00.mkv", 12, "episode", 0},
 	}
 	for _, c := range cases {
 		p := ClassifyFile(c.path, "[Team] Show - 07 [1080p]", c.videos)
@@ -80,7 +92,7 @@ func TestCatalogAndSearch(t *testing.T) {
 		t.Errorf("catalog row: %+v", ct)
 	}
 	tm, _ := s.GetTorrentMap(ctx, "aa")
-	if tm.Files[0].Kind != "episode" || tm.Files[0].Work == nil || *tm.Files[0].Episode != 28 || tm.Files[1].Kind != "op" || tm.Files[1].Work != nil || tm.Files[2].Kind != "other" {
+	if tm.Files[0].Kind != "episode" || tm.Files[0].Work == nil || *tm.Files[0].Episode != 28 || tm.Files[1].Kind != "op" || tm.Files[1].Work == nil || tm.Files[1].EpisodeKey != "ncop1" || tm.Files[0].EpisodeKey != "28" || tm.Files[2].Kind != "other" {
 		t.Errorf("files: %+v", tm.Files)
 	}
 	if st, _ := s.KnownTorrent(ctx, "bb"); st != "pending" {
@@ -156,3 +168,93 @@ func TestCatalogAndSearch(t *testing.T) {
 		t.Errorf("episode files: %+v", files)
 	}
 }
+
+func TestReclassifyAndEpisodeKeys(t *testing.T) {
+	ctx := context.Background()
+	s := openTest(t)
+	if _, err := s.W.ExecContext(ctx, `INSERT INTO works(id,key,title,title_cn,type,begin_at,updated_at) VALUES (1,'bgm:1','Show','番','tv','2026-01-01T00:00:00Z','x')`); err != nil {
+		t.Fatal(err)
+	}
+	// rows as written before specials kept their number: op/extra unmapped, sp without number
+	if _, err := s.W.ExecContext(ctx, `INSERT INTO torrents(infohash,seq,title,status,updated_at) VALUES ('aa',1,'[Team] Show [BD]','ready','x')`); err != nil {
+		t.Fatal(err)
+	}
+	rows := []struct {
+		idx        int
+		path, kind string
+		work       any
+		ep         any
+		status     string
+	}{
+		{0, "Show/[Team] Show - 01 [1080p].mkv", "episode", "bgm:1", 1.0, "auto"},
+		{1, "Show/[Team] Show - 12.5 [1080p].mkv", "episode", "bgm:1", 12.5, "auto"},
+		{2, "Show/SPs/[Team] Show - NCOP1 [1080p].mkv", "op", nil, nil, "auto"},
+		{3, "Show/SPs/[Team] Show - NCED [1080p].mkv", "ed", nil, nil, "auto"},
+		{4, "Show/SPs/[Team] Show [PV01][1080p].mkv", "extra", nil, nil, "auto"},
+		{5, "Show/SPs/[Team] Show - SP [1080p].mkv", "sp", "bgm:1", nil, "auto"},
+		{6, "Show/SPs/[Team] Show [CM02][1080p].mkv", "extra", nil, nil, "verified"}, // manual rows are kept
+		{7, "Show/SPs/[Team] Show [Menu][1080p].mkv", "extra", nil, nil, "auto"},
+	}
+	for _, r := range rows {
+		if _, err := s.W.ExecContext(ctx, `INSERT INTO torrent_files(infohash,file_index,path,kind,work_key,episode,confidence,status,method,updated_at) VALUES('aa',?,?,?,?,?,0.9,?,'moe_tag+name','x')`,
+			r.idx, r.path, r.kind, r.work, r.ep, r.status); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n, err := s.Reclassify(ctx)
+	if err != nil || n != 4 {
+		t.Fatalf("reclassify: %d %v", n, err)
+	}
+	tm, _ := s.GetTorrentMap(ctx, "aa")
+	want := []string{"1", "12.5", "ncop1", "nced1", "pv1", "sp1", "", ""}
+	for i, f := range tm.Files {
+		if f.EpisodeKey != want[i] || (want[i] != "" && (f.Work == nil || f.Work.Key != "bgm:1")) {
+			t.Errorf("file %d: key %q work %+v kind %s", i, f.EpisodeKey, f.Work, f.Kind)
+		}
+	}
+	if tm.Files[6].Kind != "extra" || tm.Files[6].Status != "verified" {
+		t.Errorf("verified row changed: %+v", tm.Files[6])
+	}
+	// second run is a no-op
+	if n, _ := s.Reclassify(ctx); n != 0 {
+		t.Errorf("second run changed %d", n)
+	}
+
+	keys, err := s.EpisodeKeys(ctx, "bgm:1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, k := range keys {
+		got = append(got, k.Key.String())
+	}
+	if strings.Join(got, ",") != "1,12.5,sp1,ncop1,nced1,pv1" {
+		t.Errorf("keys: %v", got)
+	}
+	if files, _ := s.EpisodeFiles(ctx, "bgm:1", EpisodeKey{Kind: KeyNCOP, Number: 1}); len(files) != 1 || files[0].Index != 2 {
+		t.Errorf("ncop1 files: %+v", files)
+	}
+	// manual correction by episode key
+	if err := s.CorrectFile(ctx, "aa", 6, SetFile{WorkKey: strPtr("bgm:1"), Key: "cm2"}, "t"); err != nil {
+		t.Fatal(err)
+	}
+	if files, _ := s.EpisodeFiles(ctx, "bgm:1", EpisodeKey{Kind: KeyCM, Number: 2}); len(files) != 1 {
+		t.Errorf("cm2 files: %+v", files)
+	}
+	if err := s.CorrectFile(ctx, "aa", 6, SetFile{Kind: "bogus"}, "t"); err == nil {
+		t.Error("invalid kind accepted")
+	}
+	// the one-off job runs once
+	var v string
+	_ = s.R.QueryRowContext(ctx, `SELECT value FROM meta_state WHERE key = ?`, stateReclassify).Scan(&v)
+	if v != "pending" {
+		t.Errorf("state %q", v)
+	}
+	s.ReclassifyOnce(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	_ = s.R.QueryRowContext(ctx, `SELECT value FROM meta_state WHERE key = ?`, stateReclassify).Scan(&v)
+	if v != "done" {
+		t.Errorf("state after %q", v)
+	}
+}
+
+func strPtr(s string) *string { return &s }
