@@ -16,7 +16,7 @@ type Authz func(r *http.Request) (actor string, ok bool)
 // Handler returns the /meta/v1 HTTP API.
 func (s *Store) Handler(authz Authz) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /meta/v1/torrents/{ih}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /meta/v1/torrents/hash/{ih}", func(w http.ResponseWriter, r *http.Request) {
 		tm, err := s.GetTorrentMap(r.Context(), strings.ToLower(r.PathValue("ih")))
 		if errors.Is(err, store.ErrNotFound) {
 			httpx.Fail(w, httpx.E(404, "not_found", "未收录该种子"))
@@ -28,7 +28,7 @@ func (s *Store) Handler(authz Authz) http.Handler {
 		}
 		httpx.JSON(w, 200, tm)
 	})
-	mux.HandleFunc("PUT /meta/v1/torrents/{ih}/files/{idx}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("PUT /meta/v1/torrents/hash/{ih}/files/{idx}", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := authz(r)
 		if !ok {
 			httpx.Fail(w, httpx.E(403, "forbidden", "需要管理员权限"))
@@ -43,6 +43,14 @@ func (s *Store) Handler(authz Authz) http.Handler {
 		if err := httpx.Decode(r, &p); err != nil {
 			httpx.Fail(w, err)
 			return
+		}
+		if p.SubjectID != nil {
+			wk, err := s.GetWorkByID(r.Context(), *p.SubjectID)
+			if err != nil {
+				httpx.Fail(w, httpx.E(400, "bad_request", "条目不存在"))
+				return
+			}
+			p.WorkKey = &wk.Key
 		}
 		if p.WorkKey != nil && *p.WorkKey != "" {
 			if _, err := s.GetWork(r.Context(), *p.WorkKey); err != nil {
@@ -66,54 +74,10 @@ func (s *Store) Handler(authz Authz) http.Handler {
 		}
 		httpx.JSON(w, 200, tm)
 	})
-	mux.HandleFunc("GET /meta/v1/works/{key}", func(w http.ResponseWriter, r *http.Request) {
-		wk, err := s.GetWork(r.Context(), r.PathValue("key"))
-		if errors.Is(err, store.ErrNotFound) {
-			httpx.Fail(w, httpx.E(404, "not_found", "作品不存在"))
-			return
-		}
-		if err != nil {
-			httpx.Fail(w, err)
-			return
-		}
-		httpx.JSON(w, 200, wk)
-	})
-	mux.HandleFunc("GET /meta/v1/works/{key}/episodes/{ep}/files", func(w http.ResponseWriter, r *http.Request) {
-		ep, ok := atof(r.PathValue("ep"))
-		if !ok {
-			httpx.Fail(w, httpx.E(400, "bad_request", "无效集数"))
-			return
-		}
-		files, err := s.EpisodeFiles(r.Context(), r.PathValue("key"), ep)
-		if err != nil {
-			httpx.Fail(w, err)
-			return
-		}
-		httpx.JSON(w, 200, map[string]any{"items": files})
-	})
-	mux.HandleFunc("GET /meta/v1/works", func(w http.ResponseWriter, r *http.Request) {
-		q := r.URL.Query()
-		if ext := q.Get("external"); ext != "" {
-			p, id, ok := parseExternal(ext)
-			if !ok {
-				httpx.Fail(w, httpx.E(400, "bad_request", "external 格式为 provider:id"))
-				return
-			}
-			wk, err := s.WorkByExternal(r.Context(), p, id)
-			if errors.Is(err, store.ErrNotFound) {
-				httpx.JSON(w, 200, map[string]any{"items": []any{}})
-				return
-			}
-			if err != nil {
-				httpx.Fail(w, err)
-				return
-			}
-			httpx.JSON(w, 200, map[string]any{"items": []*Work{wk}})
-			return
-		}
-		qs := strings.TrimSpace(q.Get("q"))
-		if qs == "" {
-			httpx.Fail(w, httpx.E(400, "bad_request", "需要 q 或 external 参数"))
+	mux.HandleFunc("GET /meta/v1/subjects/search", func(w http.ResponseWriter, r *http.Request) {
+		qs := strings.TrimSpace(r.URL.Query().Get("q"))
+		if qs == "" || len([]rune(qs)) > 100 {
+			httpx.Fail(w, httpx.E(400, "bad_request", "需要 q 参数（≤100 字）"))
 			return
 		}
 		ws, err := s.SearchWorks(r.Context(), qs, 50)
@@ -125,6 +89,41 @@ func (s *Store) Handler(authz Authz) http.Handler {
 			ws = []*Work{}
 		}
 		httpx.JSON(w, 200, map[string]any{"items": ws})
+	})
+	subject := func(w http.ResponseWriter, r *http.Request) (*Work, bool) {
+		wk, err := s.ResolveSubject(r.Context(), r.PathValue("provider"), r.PathValue("id"))
+		if errors.Is(err, store.ErrNotFound) {
+			httpx.Fail(w, httpx.E(404, "not_found", "条目不存在"))
+			return nil, false
+		}
+		if err != nil {
+			httpx.Fail(w, err)
+			return nil, false
+		}
+		return wk, true
+	}
+	// /meta/v1/subjects/id/{id} (our id) or /meta/v1/subjects/{bgm|mal|anidb|anilist|tmdb|…}/{id}
+	mux.HandleFunc("GET /meta/v1/subjects/{provider}/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if wk, ok := subject(w, r); ok {
+			httpx.JSON(w, 200, wk)
+		}
+	})
+	mux.HandleFunc("GET /meta/v1/subjects/{provider}/{id}/episodes/{ep}/files", func(w http.ResponseWriter, r *http.Request) {
+		wk, ok := subject(w, r)
+		if !ok {
+			return
+		}
+		ep, okEp := atof(r.PathValue("ep"))
+		if !okEp {
+			httpx.Fail(w, httpx.E(400, "bad_request", "无效集数"))
+			return
+		}
+		files, err := s.EpisodeFiles(r.Context(), wk.Key, ep)
+		if err != nil {
+			httpx.Fail(w, err)
+			return
+		}
+		httpx.JSON(w, 200, map[string]any{"items": files})
 	})
 	return mux
 }

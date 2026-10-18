@@ -83,6 +83,7 @@
 - 映射纠错的后台界面（API `PUT /meta/v1/torrents/{ih}/files/{idx}` 已有）
 - 封面图自建缓存/缩略图（目前直链 lain.bgm.tv / bangumi.moe）
 - **本集截图**：外部站点（AniList streamingEpisodes、Kitsu、TMDB still、TVDB）对当季新番的分集图要么没有、要么滞后，AniDB/bgm.tv 没有分集图。方案：qB 下载完成后，后端用 ffmpeg 经 `torrents/downloadFile`（Range）在 ~40% 处截帧（多帧取亮度正常者），存 WebP，按 (作品, 集) 存入映射库；时间表卡片优先显示本集截图。代价：镜像需加 ffmpeg。
+- **时间表相邻日封面预加载**：7 天面板 DOM 已一次性渲染，但封面是原生懒加载，首次滑到某天时图片才加载。可让当天及相邻两天 eager 加载，其余在空闲时预加载（多约 1–2MB 流量）。
 - **16:9 横图来源**：目前卡片为 16:9，图片用竖版封面宽度铺满、偏上裁切（object-position 50% 30%）。可选补充：TMDB backdrop（16:9，需免费 API key；bangumi-data 本季仅约 1/3 带 tmdb id，可再按标题搜索补全）；AniList bannerImage 为 1900×400（约 4.75:1，本季覆盖约 60%），裁 16:9 效果一般，不建议。
 - Torznab 端点给 Sonarr
 - qBittorrent#24899 观察，如复现再做 reannounce 看门狗

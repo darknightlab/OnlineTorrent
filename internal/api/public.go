@@ -29,13 +29,15 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.route(mux, "POST", "/api/v1/me/redeem", AccessUser, "账号", "使用兑换码", []string{store.RoleMember}, s.redeem)
 
 	s.route(mux, "GET", "/api/v1/schedule", AccessConfigurable, "浏览", "新番时间表", []string{store.RoleGuest}, s.getSchedule)
-	s.route(mux, "GET", "/api/v1/anime/{key}", AccessConfigurable, "浏览", "番剧详情", []string{store.RoleGuest}, s.getAnime)
+	s.route(mux, "GET", "/api/v1/subjects/{provider}/{id}", AccessConfigurable, "浏览", "条目详情（单季）", []string{store.RoleGuest}, s.getSubject)
+	s.route(mux, "GET", "/api/v1/subjects/{provider}/{id}/episodes/{n}", AccessConfigurable, "浏览", "单集资源列表", []string{store.RoleGuest}, s.getEpisode)
 	s.route(mux, "GET", "/api/v1/torrents/search", AccessConfigurable, "浏览", "搜索种子", []string{store.RoleGuest}, s.getSearch)
 
-	s.route(mux, "POST", "/api/v1/play", AccessConfigurable, "播放", "打开种子（策略判定 + 磁力）", []string{store.RoleGuest}, s.play)
-	s.route(mux, "POST", "/api/v1/torrents/{ih}/seed", AccessConfigurable, "播放", "让服务器下载做种（消耗服务器资源）", []string{store.RoleMember}, s.seed)
-	s.route(mux, "POST", "/api/v1/torrents/{ih}/webseed", AccessConfigurable, "播放", "获取 HTTP WebSeed 加速（消耗服务器流量）", []string{store.RoleMember}, s.webseed)
-	s.route(mux, "POST", "/api/v1/report", AccessUser, "播放", "举报种子", []string{store.RoleMember}, s.report)
+	s.route(mux, "POST", "/api/v1/torrents/hash/{ih}/play", AccessConfigurable, "播放", "打开种子（按 infohash）", []string{store.RoleGuest}, s.playHash)
+	s.route(mux, "POST", "/api/v1/torrents/moe/{id}/play", AccessConfigurable, "播放", "打开种子（按 bangumi.moe ID）", []string{store.RoleGuest}, s.playMoe)
+	s.route(mux, "POST", "/api/v1/torrents/hash/{ih}/seed", AccessConfigurable, "播放", "让服务器下载做种（消耗服务器资源）", []string{store.RoleMember}, s.seed)
+	s.route(mux, "POST", "/api/v1/torrents/hash/{ih}/webseed", AccessConfigurable, "播放", "获取 HTTP WebSeed 加速（消耗服务器流量）", []string{store.RoleMember}, s.webseed)
+	s.route(mux, "POST", "/api/v1/torrents/hash/{ih}/report", AccessUser, "播放", "举报种子", []string{store.RoleMember}, s.report)
 
 	s.adminRoutes(mux)
 }
@@ -349,48 +351,6 @@ func (s *Server) getSearch(w http.ResponseWriter, r *http.Request) error {
 		return httpx.E(502, "upstream", "bangumi.moe 暂时无法访问")
 	}
 	httpx.JSON(w, 200, map[string]any{"page": page, "page_count": pc, "items": s.withAccess(r, items)})
-	return nil
-}
-
-func (s *Server) getAnime(w http.ResponseWriter, r *http.Request) error {
-	key := r.PathValue("key")
-	work, err := s.Meta.GetWork(r.Context(), key)
-	if errors.Is(err, store.ErrNotFound) {
-		return httpx.E(404, "not_found", "番剧不存在")
-	}
-	if err != nil {
-		return err
-	}
-	if work.Summary == "" && work.External["bgm"] != "" {
-		s.fetchBgmDetail(r.Context(), work)
-	}
-	item, _ := s.Cat.ItemFor(work, time.Now())
-	type animeOut struct {
-		*catalog.ScheduleItem
-		Summary  string            `json:"summary"`
-		Type     string            `json:"type"`
-		Official string            `json:"official_site"`
-		External map[string]string `json:"external"`
-		Tags     []string          `json:"tags"`
-	}
-	a := animeOut{ScheduleItem: item, Summary: work.Summary, Type: work.Type, Official: work.Official, External: work.External, Tags: []string{}}
-	if item == nil {
-		a.ScheduleItem = &catalog.ScheduleItem{Key: work.Key, Title: work.Title, TitleCN: work.TitleCN, Cover: s.Cat.CoverFor(work)}
-	}
-	var list []*catalog.Torrent
-	if id := work.External["bangumi_moe"]; id != "" {
-		list, _, err = s.Cat.ByTag(r.Context(), id, 1)
-	} else {
-		q := work.TitleCN
-		if q == "" {
-			q = work.Title
-		}
-		list, _, err = s.Cat.Search(r.Context(), q, 1)
-	}
-	if err != nil {
-		list = nil
-	}
-	httpx.JSON(w, 200, map[string]any{"anime": a, "torrents": s.withAccess(r, list)})
 	return nil
 }
 

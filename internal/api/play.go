@@ -23,9 +23,12 @@ type playReq struct {
 }
 
 type playMeta struct {
-	AnimeKey string   `json:"anime_key"`
-	Title    string   `json:"title"`
-	Episode  *float64 `json:"episode"`
+	SubjectID  int64    `json:"subject_id"`
+	SubjectKey string   `json:"subject_key"`
+	BgmID      string   `json:"bgm_id,omitempty"`
+	Title      string   `json:"title"`
+	Episode    *float64 `json:"episode"`
+	FileIndex  int      `json:"file_index"` // the mapped file (watch/hash/{ih}/file/{file_index})
 }
 
 type playResp struct {
@@ -59,15 +62,31 @@ func (s *Server) maxPushBytes() int64 {
 	return int64(s.St.Num(store.KeyMaxPushSize)) << 20
 }
 
-func (s *Server) play(w http.ResponseWriter, r *http.Request) error {
+// POST /api/v1/torrents/hash/{ih}/play
+func (s *Server) playHash(w http.ResponseWriter, r *http.Request) error {
+	return s.play(w, r, playReq{Infohash: r.PathValue("ih")})
+}
+
+// POST /api/v1/torrents/moe/{id}/play — bangumi.moe catalogue id (trusted metadata)
+func (s *Server) playMoe(w http.ResponseWriter, r *http.Request) error {
+	return s.play(w, r, playReq{TorrentID: r.PathValue("id")})
+}
+
+func (s *Server) play(w http.ResponseWriter, r *http.Request, in playReq) error {
 	if !s.limiter.allow("play:"+ipKey(r), 30, 6*time.Second) {
 		return errRateLimited
 	}
-	var in playReq
-	if err := httpx.DecodeSmall(r, &in); err != nil {
-		return err
-	}
 	ctx := r.Context()
+	// a bare infohash we indexed from bangumi.moe: use the trusted catalogue entry
+	if in.TorrentID == "" && in.Infohash != "" {
+		if ih, ok := magnet.NormalizeInfohash(in.Infohash); ok {
+			if rec, _ := s.St.GetTorrent(ctx, ih); rec == nil || rec.Source != "bangumi.moe" {
+				if src, id, ok := s.Meta.TorrentSource(ctx, ih); ok && src == "bangumi.moe" && reTorrentID.MatchString(id) {
+					in.TorrentID = id
+				}
+			}
+		}
+	}
 	u := userOf(r)
 
 	var t *catalog.Torrent
@@ -149,7 +168,7 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request) error {
 				if title == "" {
 					title = f.Work.Title
 				}
-				resp.Meta = &playMeta{AnimeKey: f.Work.Key, Title: title, Episode: f.Episode}
+				resp.Meta = &playMeta{SubjectID: f.Work.ID, SubjectKey: f.Work.Key, BgmID: f.Work.External["bgm"], Title: title, Episode: f.Episode, FileIndex: f.Index}
 				break
 			}
 		}
@@ -202,13 +221,12 @@ func (s *Server) report(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	var in struct {
-		Infohash string `json:"infohash"`
-		Reason   string `json:"reason"`
+		Reason string `json:"reason"`
 	}
 	if err := httpx.DecodeSmall(r, &in); err != nil {
 		return err
 	}
-	ih, ok := magnet.NormalizeInfohash(in.Infohash)
+	ih, ok := magnet.NormalizeInfohash(r.PathValue("ih"))
 	if !ok {
 		return httpx.E(400, "bad_request", "infohash 无效")
 	}

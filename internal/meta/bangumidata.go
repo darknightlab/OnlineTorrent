@@ -79,7 +79,7 @@ func (s *Store) ImportBangumiData(ctx context.Context, hc *http.Client, url stri
 			aliases = append(aliases, it.TitleTranslate[lang]...)
 		}
 		al, _ := json.Marshal(aliases)
-		if _, err := tx.ExecContext(ctx, `INSERT INTO works(key,title,title_cn,aliases,type,begin_at,end_at,broadcast,official,source,updated_at) VALUES(?,?,?,?,?,?,?,?,?, 'bangumi-data', ?)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO works(id,key,title,title_cn,aliases,type,begin_at,end_at,broadcast,official,source,updated_at) VALUES((SELECT COALESCE(MAX(id),0)+1 FROM works),?,?,?,?,?,?,?,?,?, 'bangumi-data', ?)
 			ON CONFLICT(key) DO UPDATE SET title=excluded.title, title_cn=excluded.title_cn, aliases=excluded.aliases, type=excluded.type,
 			begin_at=excluded.begin_at, end_at=excluded.end_at, broadcast=excluded.broadcast, official=excluded.official, updated_at=excluded.updated_at`,
 			key, it.Title, cn, string(al), it.Type, normTime(it.Begin), normTime(it.End), it.Broadcast, it.OfficialSite, now); err != nil {

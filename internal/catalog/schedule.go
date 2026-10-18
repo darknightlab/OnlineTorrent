@@ -18,6 +18,7 @@ import (
 // ScheduleItem is one airing anime (see docs/api.md).
 type ScheduleItem struct {
 	Key           string            `json:"key"`
+	SubjectID     int64             `json:"subject_id"` // /subject/id/{subject_id}
 	Title         string            `json:"title"`
 	TitleCN       string            `json:"title_cn"`
 	Cover         string            `json:"cover"`
@@ -100,7 +101,7 @@ func (c *Catalog) ItemFor(w *meta.Work, now time.Time) (*ScheduleItem, bool) {
 	}
 	local := ref.In(cst)
 	it := &ScheduleItem{
-		Key: w.Key, Title: w.Title, TitleCN: w.TitleCN, Cover: c.CoverFor(w), Begin: w.Begin,
+		Key: w.Key, SubjectID: w.ID, Title: w.Title, TitleCN: w.TitleCN, Cover: c.CoverFor(w), Begin: w.Begin,
 		Weekday: int(local.Weekday()), AirTime: local.Format("15:04"),
 		LastAirAt: ts(a.Last), NextAirAt: ts(a.Next), EpisodesAired: a.Aired, External: w.External,
 	}

@@ -68,6 +68,12 @@ CREATE TABLE torrent_files (
 	PRIMARY KEY (infohash, file_index)
 );
 CREATE INDEX torrent_files_ep ON torrent_files(work_key, episode);
+`,
+	// 2: stable numeric subject id (/subject/id/{id}); existing rows take their rowid
+	`
+ALTER TABLE works ADD COLUMN id INTEGER;
+UPDATE works SET id = rowid;
+CREATE UNIQUE INDEX works_id ON works(id);
 `}
 
 // Store is the meta database.
@@ -92,6 +98,7 @@ func (s *Store) Close() { s.R.Close(); s.W.Close() }
 
 // Work is an anime/series entry.
 type Work struct {
+	ID        int64             `json:"id"` // stable numeric subject id
 	Key       string            `json:"key"`
 	Title     string            `json:"title"`
 	TitleCN   string            `json:"title_cn"`
@@ -106,12 +113,12 @@ type Work struct {
 	External  map[string]string `json:"external"`
 }
 
-const workCols = `key,title,title_cn,aliases,type,begin_at,end_at,broadcast,cover,summary,official`
+const workCols = `COALESCE(id,0),key,title,title_cn,aliases,type,begin_at,end_at,broadcast,cover,summary,official`
 
 func scanWork(sc interface{ Scan(...any) error }) (*Work, error) {
 	var w Work
 	var aliases string
-	if err := sc.Scan(&w.Key, &w.Title, &w.TitleCN, &aliases, &w.Type, &w.Begin, &w.End, &w.Broadcast, &w.Cover, &w.Summary, &w.Official); err != nil {
+	if err := sc.Scan(&w.ID, &w.Key, &w.Title, &w.TitleCN, &aliases, &w.Type, &w.Begin, &w.End, &w.Broadcast, &w.Cover, &w.Summary, &w.Official); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, store.ErrNotFound
 		}
@@ -155,6 +162,34 @@ func (s *Store) GetWork(ctx context.Context, key string) (*Work, error) {
 		return nil, err
 	}
 	return w, s.fillExternal(ctx, []*Work{w})
+}
+
+// GetWorkByID loads a work by its numeric subject id.
+func (s *Store) GetWorkByID(ctx context.Context, id int64) (*Work, error) {
+	w, err := scanWork(s.R.QueryRowContext(ctx, `SELECT `+workCols+` FROM works WHERE id = ?`, id))
+	if err != nil {
+		return nil, err
+	}
+	return w, s.fillExternal(ctx, []*Work{w})
+}
+
+// ResolveSubject finds a work by provider and id: provider "id" is our numeric id,
+// otherwise an external provider (bgm, mal, anidb, anilist, tmdb, bangumi_moe, …).
+func (s *Store) ResolveSubject(ctx context.Context, provider, id string) (*Work, error) {
+	if provider == "id" {
+		n, err := strconv.ParseInt(id, 10, 64)
+		if err != nil {
+			return nil, store.ErrNotFound
+		}
+		return s.GetWorkByID(ctx, n)
+	}
+	return s.WorkByExternal(ctx, provider, id)
+}
+
+// TorrentSource returns where a mapped torrent came from (e.g. "bangumi.moe", moe _id).
+func (s *Store) TorrentSource(ctx context.Context, ih string) (source, sourceID string, ok bool) {
+	err := s.R.QueryRowContext(ctx, `SELECT source, source_id FROM torrents WHERE infohash = ?`, ih).Scan(&source, &sourceID)
+	return source, sourceID, err == nil
 }
 
 // WorkByExternal finds a work by provider id, e.g. ("bangumi_moe", tagID).
@@ -289,6 +324,7 @@ type FileMap struct {
 
 // WorkRef is a compact work reference.
 type WorkRef struct {
+	ID       int64             `json:"id"`
 	Key      string            `json:"key"`
 	Title    string            `json:"title"`
 	TitleCN  string            `json:"title_cn"`
@@ -311,7 +347,7 @@ func (s *Store) GetTorrentMap(ctx context.Context, ih string) (*TorrentMap, erro
 		}
 		return nil, err
 	}
-	rows, err := s.R.QueryContext(ctx, `SELECT f.file_index,f.path,f.size_bytes,f.kind,f.work_key,COALESCE(w.title,''),COALESCE(w.title_cn,''),f.episode,f.confidence,f.status,f.method
+	rows, err := s.R.QueryContext(ctx, `SELECT f.file_index,f.path,f.size_bytes,f.kind,f.work_key,COALESCE(w.id,0),COALESCE(w.title,''),COALESCE(w.title_cn,''),f.episode,f.confidence,f.status,f.method
 		FROM torrent_files f LEFT JOIN works w ON w.key = f.work_key WHERE f.infohash = ? ORDER BY f.file_index`, ih)
 	if err != nil {
 		return nil, err
@@ -322,12 +358,13 @@ func (s *Store) GetTorrentMap(ctx context.Context, ih string) (*TorrentMap, erro
 		var f FileMap
 		var wk sql.NullString
 		var wt, wcn string
+		var wid int64
 		var ep sql.NullFloat64
-		if err := rows.Scan(&f.Index, &f.Path, &f.Size, &f.Kind, &wk, &wt, &wcn, &ep, &f.Confidence, &f.Status, &f.Method); err != nil {
+		if err := rows.Scan(&f.Index, &f.Path, &f.Size, &f.Kind, &wk, &wid, &wt, &wcn, &ep, &f.Confidence, &f.Status, &f.Method); err != nil {
 			return nil, err
 		}
 		if wk.Valid {
-			f.Work = &WorkRef{Key: wk.String, Title: wt, TitleCN: wcn}
+			f.Work = &WorkRef{ID: wid, Key: wk.String, Title: wt, TitleCN: wcn}
 			works = append(works, &Work{Key: wk.String})
 		}
 		if ep.Valid {
@@ -422,10 +459,11 @@ func (s *Store) LatestEpisodes(ctx context.Context) (map[string]float64, error) 
 
 // SetFile is a manual correction.
 type SetFile struct {
-	WorkKey *string  `json:"work_key"`
-	Episode *float64 `json:"episode"`
-	Kind    string   `json:"kind"`
-	Status  string   `json:"status"`
+	SubjectID *int64   `json:"subject_id"` // preferred; resolved to WorkKey
+	WorkKey   *string  `json:"work_key"`
+	Episode   *float64 `json:"episode"`
+	Kind      string   `json:"kind"`
+	Status    string   `json:"status"`
 }
 
 func (s *Store) CorrectFile(ctx context.Context, ih string, idx int, p SetFile, by string) error {
@@ -453,14 +491,6 @@ func (s *Store) CorrectFile(ctx context.Context, ih string, idx int, p SetFile, 
 		return store.ErrNotFound
 	}
 	return nil
-}
-
-func parseExternal(q string) (provider, id string, ok bool) {
-	p, v, found := strings.Cut(q, ":")
-	if !found || p == "" || v == "" {
-		return "", "", false
-	}
-	return p, v, true
 }
 
 func atof(s string) (float64, bool) {

@@ -11,6 +11,38 @@
   授权给某等级即自动包含更高等级；管理员通过所有接口。默认值只在接口第一次出现时写入，之后以后台设置为准。
   无权限：游客 401 `login_required`，已登录 403 `forbidden`。
 
+## 路径约定（同 YotsubaNews）
+资源/维度/值，纯路径；只有自由文本搜索、分页等筛选才用 `?`。
+
+**前端页面**
+| 页面 | 路径 |
+|---|---|
+| 首页（新番时间表） | `/` |
+| 播放（自动选视频文件） | `/watch/hash/{infohash}` |
+| 播放指定文件 | `/watch/hash/{infohash}/file/{index}` |
+| 条目（单季） | `/subject/{provider}/{id}`：`id`（本站数字 ID）、`bgm`、`mal`、`anidb`、`anilist`、`tmdb`… |
+| 单集（自动选资源播放） | `/subject/{provider}/{id}/episode/{n}` |
+| 搜索 | `/search/{keyword}`（翻页 `?page=`） |
+| 登录 / 注册 / 邀请注册 | `/login`（`?next=`）/ `/register` / `/register/invite/{code}` |
+| 个人中心 / 后台 | `/me` / `/admin/...` |
+| 系列（整个系列，TODO） | `/series/{provider}/{id}` |
+旧链接兼容：`/?uri=磁力`、`/watch?uri=|ih=|t=`、`/anime/{key}` 均重定向到新路径。
+
+**API**
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/v1/schedule` | 新番时间表 |
+| GET | `/api/v1/subjects/{provider}/{id}` | 条目详情 + bangumi.moe 种子 |
+| GET | `/api/v1/subjects/{provider}/{id}/episodes/{n}` | 单集所有已知文件（含当前用户 access），`items[0]` 为自动推荐 |
+| GET | `/api/v1/torrents/search?q=` | 搜索 |
+| POST | `/api/v1/torrents/hash/{ih}/play` | 打开种子（策略判定 + 磁力） |
+| POST | `/api/v1/torrents/moe/{id}/play` | 按 bangumi.moe ID 打开（受信元数据） |
+| POST | `/api/v1/torrents/hash/{ih}/seed` / `webseed` / `report` | 服务器做种 / WebSeed / 举报 |
+| GET | `/meta/v1/torrents/hash/{ih}` | 文件级映射 |
+| PUT | `/meta/v1/torrents/hash/{ih}/files/{idx}` | 纠正映射（admin），body `{subject_id|work_key, episode, kind, status}` |
+| GET | `/meta/v1/subjects/{provider}/{id}` / `.../episodes/{n}/files` / `/meta/v1/subjects/search?q=` | 映射库条目 |
+| * | `/api/v1/admin/{resource}/id/{id}` | 后台单项资源 |
+
 ## 公共
 
 ### `GET /site`
@@ -25,7 +57,7 @@
 ### `GET /me` → `{"user": null, "permissions": [...]}` 或
 ```json
 { "user": { "id": 1, "username": "a", "email": "a@x", "role": "member", "effective_role": "member", "vip_until": null, "created_at": "..." },
-  "permissions": ["GET /api/v1/schedule", "POST /api/v1/play", "POST /api/v1/torrents/{ih}/seed", "..."] }
+  "permissions": ["GET /api/v1/schedule", "POST /api/v1/torrents/hash/{ih}/play", "POST /api/v1/torrents/hash/{ih}/seed", "..."] }
 ```
 `permissions` 为当前身份可调用的非公开、非后台接口权限键，前端据此决定是否请求服务器做种 / WebSeed、是否显示举报等。
 
@@ -40,7 +72,8 @@
 ```json
 { "generated_at": "...", "season": "2026-10",
   "items": [{
-    "key": "bgm:123456",          // 稳定标识：优先 bgm:{subjectId}，否则 bd:{bangumi-data 索引名}
+    "key": "bgm:123456",          // 映射库内部键
+    "subject_id": 1034,            // 本站条目 ID → /subject/id/1034
     "title": "葬送のフリーレン",   // 原名
     "title_cn": "葬送的芙莉莲",    // 可能为空
     "cover": "https://.../cover.jpg", // 可能为空，前端要有占位
@@ -56,9 +89,9 @@
 }
 ```
 
-### `GET /anime/{key}`
+### `GET /subjects/{provider}/{id}`
 ```json
-{ "anime": { ...同 schedule item..., "summary": "简介", "tags": ["..."], "external": {"bgm": 123, "mal": 1, "anidb": 2, "tmdb": null, "imdb": null} },
+{ "subject": { ...同 schedule item..., "summary": "简介", "tags": ["..."], "external": {"bgm": 123, "mal": 1, "anidb": 2, "tmdb": null, "imdb": null} },
   "torrents": [Torrent, ...] }
 ```
 
@@ -81,40 +114,40 @@ Torrent：
 }
 ```
 
-### `POST /play` `{ "magnet": "magnet:?..." }` 或 `{ "infohash": "..." }` 或 `{ "torrent_id": "bangumi.moe id" }`
+### `POST /torrents/hash/{ih}/play` / `POST /torrents/moe/{id}/play`（无 body）
 服务端：解析 → 策略判定 → 返回带 wss tracker 的磁力（**不再推送给 qB**，见下方 seed）。默认游客可用。
 - 200：
 ```json
 { "access": {"action":"allow","reason":""},
   "infohash": "...", "name": "...", "magnet": "magnet:?xt=...&tr=wss://...",
   "seeded_by": [], "webseeds": [] ,           // 恒为空，保留字段兼容
-  "meta": { "anime_key": "bgm:123", "episode": 2 } }   // meta 可空
+  "meta": { "subject_id": 1034, "subject_key": "bgm:123", "bgm_id": "123", "title": "…", "episode": 2, "file_index": 0 } }   // meta 可空
 ```
 - 401 `{"error":{"code":"login_required"}}`，402 `{"error":{"code":"vip_required"}}`，451 `{"error":{"code":"blocked","message":"原因"}}`。
 - 用户磁力里的 `tr=` 一律丢弃（只用站点配置的 tracker）；`dn=` 只作为未受信标题参与判定（用户磁力最低权限始终生效），不写入种子标题，真实标题以 qB 元数据为准。
 - 用户提交的种子获取元数据后会被复查；此外后台每 10 分钟用 qB 中的真实名称与文件列表复查本站分类下所有种子，命中屏蔽规则或超过大小上限的会被移除。
 
 ### `POST /torrents/{ih}/seed` → `{"seeded_by": ["ams"]}`
-让所有在线 qB 下载并做种（消耗服务器带宽 / 磁盘）。默认仅会员及以上。种子须先经 `/play` 打开过；会对当前用户重新做策略判定。超过 `play.max_push_size_mb` 返回 413 `too_large`。
+让所有在线 qB 下载并做种（消耗服务器带宽 / 磁盘）。默认仅会员及以上。种子须先经 play 打开过；会对当前用户重新做策略判定。超过 `play.max_push_size_mb` 返回 413 `too_large`。
 
 ### `POST /torrents/{ih}/webseed` → `{"webseeds": ["https://www.projectk.org/webseed/{exp}.{sig}/{ih}/"], "delay_sec": 8}`
 签名的 HTTP WebSeed 地址（6 小时有效，只服务 qB 已完整下载的文件）。默认仅会员及以上；后台关闭 WebSeed 时返回空数组。前端应在 `delay_sec` 秒后再加入，优先 P2P。
 
-### `POST /report` `{infohash, reason}` → `{}`  需登录。举报 → 进入审核队列（标题取自服务端记录，不接受客户端提供；reason 最长 500 字）
+### `POST /torrents/hash/{ih}/report` `{reason}` → `{}`  需登录。举报 → 进入审核队列（标题取自服务端记录，不接受客户端提供；reason 最长 500 字）
 
 ## 后台 `/admin/*`（仅 admin）
 - `GET /admin/permissions` → `{"roles":["guest","member","vip"], "items":[{key, method, path, group, label, access, default_roles, granted:{guest,member,vip}}]}`
 - `PUT /admin/permissions` `{"grants": {"POST /api/v1/torrents/{ih}/seed": ["member"], ...}}` → 同 GET（只能改 configurable / user 类型；user 类型不能授权给 guest）
 - `GET/PUT /admin/settings` 全部站点设置（KV 对象，字段见 `GET` 返回）
-- `GET/POST /admin/qb-servers`，`PUT/DELETE /admin/qb-servers/{id}`，`POST /admin/qb-servers/{id}/test`
+- `GET/POST /admin/qb-servers`，`PUT/DELETE /admin/qb-servers/id/{id}`，`POST /admin/qb-servers/id/{id}/test`
   QBServer: `{id,name,url,username,password(写入时),api_key(写入时),category,enabled,seeding_time_limit_min,ratio_limit,max_active,online,version,last_error,last_check_at}`
-- `GET /admin/users?q=&page=`，`PUT /admin/users/{id}` `{role?, vip_until?, disabled?}`（设 `role: "vip"` 且不传 `vip_until` = 永久大会员，会清空 vip_until）
+- `GET /admin/users?q=&page=`，`PUT /admin/users/id/{id}` `{role?, vip_until?, disabled?}`（设 `role: "vip"` 且不传 `vip_until` = 永久大会员，会清空 vip_until）
 - `GET/POST /admin/invites`、`GET/POST /admin/redeem-codes`
   创建邀请 `{max_uses?, role, vip_days, expires_in_days, note}`：`max_uses` 省略为 1，0 为不限，负数 400；`vip_days` 需 ≥ 0。邀请码大写，使用时不区分大小写。
-- `GET/POST /admin/rules`，`PUT/DELETE /admin/rules/{id}`
+- `GET/POST /admin/rules`，`PUT/DELETE /admin/rules/id/{id}`
   Rule: `{id, name, enabled, priority, match: {"field":"title|file|infohash|team|tag|category","op":"contains|regex|equals","value":"..."}, action:"allow|login|vip|block", label:"political|porn|copyright|other|", note}`
 - `POST /admin/policy/test` `{title, infohash?, files?, tags?, team?}` → `{access, matched_rule}`
-- `GET /admin/reviews?status=pending` / `PUT /admin/reviews/{id}` `{action, label, note}`（写入 infohash 级裁决；action 为 block 或 label 为 political/porn 时同时从 qB 移除。note 仅后台可见，前台理由由 action+label 生成）
+- `GET /admin/reviews?status=pending` / `PUT /admin/reviews/id/{id}` `{action, label, note}`（写入 infohash 级裁决；action 为 block 或 label 为 political/porn 时同时从 qB 移除。note 仅后台可见，前台理由由 action+label 生成）
 - 日志保留：plays / audit 保留 90 天，已处理的 reviews 保留 180 天（每日清理）。
 - `GET /admin/plays?page=`：播放/推送记录
 - `GET /admin/audit?page=`
