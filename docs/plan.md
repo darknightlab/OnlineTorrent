@@ -82,6 +82,8 @@
 - 番剧页按集分组（映射库已有文件级集数，前端目前是种子列表 + 字幕组筛选）
 - 映射纠错的后台界面（API `PUT /meta/v1/torrents/{ih}/files/{idx}` 已有）
 - 封面图自建缓存/缩略图（目前直链 lain.bgm.tv / bangumi.moe）
+- **本集截图**：外部站点（AniList streamingEpisodes、Kitsu、TMDB still、TVDB）对当季新番的分集图要么没有、要么滞后，AniDB/bgm.tv 没有分集图。方案：qB 下载完成后，后端用 ffmpeg 经 `torrents/downloadFile`（Range）在 ~40% 处截帧（多帧取亮度正常者），存 WebP，按 (作品, 集) 存入映射库；时间表卡片优先显示本集截图。代价：镜像需加 ffmpeg。
+- **16:9 横图来源**：目前卡片为 16:9，图片用竖版封面模糊铺底兜底。可选补充：TMDB backdrop（16:9，需免费 API key；bangumi-data 本季仅约 1/3 带 tmdb id，可再按标题搜索补全）；AniList bannerImage 为 1900×400（约 4.75:1，本季覆盖约 60%），裁 16:9 效果一般，不建议。
 - Torznab 端点给 Sonarr
 - qBittorrent#24899 观察，如复现再做 reannounce 看门狗
 - 向 qBittorrent 上游反馈 #24512 过滤 wss 的副作用

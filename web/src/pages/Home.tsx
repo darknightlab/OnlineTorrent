@@ -133,9 +133,9 @@ function ScheduleSection() {
         role="tabpanel"
         onTouchStart={onTouchStart}
         onTouchEnd={onTouchEnd}
-        className="touch-pan-y grid grid-cols-3 gap-x-2.5 gap-y-4 sm:grid-cols-4 sm:gap-x-3 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8"
+        className="touch-pan-y grid grid-cols-2 gap-x-2.5 gap-y-4 sm:grid-cols-3 sm:gap-x-3 lg:grid-cols-4 xl:grid-cols-5"
       >
-        {isPending && Array.from({ length: 7 }, (_, i) => <AnimeCardSkeleton key={i} />)}
+        {isPending && Array.from({ length: 10 }, (_, i) => <AnimeCardSkeleton key={i} />)}
         {!isPending && !error && items.map((i) => <AnimeCard key={i.key} item={i} now={now} />)}
       </div>
       {error && (

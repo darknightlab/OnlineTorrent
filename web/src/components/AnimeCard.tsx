@@ -10,7 +10,7 @@ export function animeHref(key: string) {
   return `/anime/${encodeURIComponent(key)}`
 }
 
-/** 新番时间表卡片（参考巴哈姆特动画疯：竖版封面 + 集数 + 播出时间） */
+/** 新番时间表卡片（16:9；暂用竖版封面模糊铺底，以后换成本集截图 / 横版剧照） */
 export function AnimeCard({ item, now }: { item: ScheduleItem; now: number }) {
   const status = airStatus(item, now)
   const title = displayTitle(item)
@@ -25,7 +25,7 @@ export function AnimeCard({ item, now }: { item: ScheduleItem; now: number }) {
         aria-label={`${title}，${episodeLabel(item)}，${item.air_time} 播出${t ? "，点击播放最新一集" : ""}`}
       >
         <div className="relative overflow-hidden rounded-lg shadow-card ring-1 ring-black/5 dark:ring-white/5">
-          <Cover src={item.cover} title={title} className="aspect-[3/4] w-full transition-transform duration-300 group-hover:scale-[1.03]" />
+          <Cover src={item.cover} title={title} blurFill className="aspect-video w-full transition-transform duration-300 group-hover:scale-[1.03]" />
           {/* 顶部：时间 + 状态 */}
           <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-1 whitespace-nowrap p-1 sm:p-1.5">
             <span className="rounded bg-black/60 px-1 py-px sm:px-1.5 text-[11px] font-semibold tabular-nums leading-[18px] text-white backdrop-blur-sm">
@@ -80,7 +80,7 @@ export function AnimeCard({ item, now }: { item: ScheduleItem; now: number }) {
 export function AnimeCardSkeleton() {
   return (
     <div>
-      <div className="aspect-[3/4] w-full animate-pulse rounded-lg bg-muted" />
+      <div className="aspect-video w-full animate-pulse rounded-lg bg-muted" />
       <div className="mt-2 h-3.5 w-4/5 animate-pulse rounded bg-muted" />
       <div className="mt-1.5 h-3 w-1/2 animate-pulse rounded bg-muted" />
     </div>
