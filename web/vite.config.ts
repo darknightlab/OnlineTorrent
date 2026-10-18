@@ -9,11 +9,15 @@ const root = path.dirname(fileURLToPath(import.meta.url))
 // dev 代理目标：Go 后端（otd）默认 127.0.0.1:8080，可用 VITE_API_TARGET 覆盖。
 const apiTarget = process.env.VITE_API_TARGET || "http://127.0.0.1:8080"
 
-const swSource = path.join(root, "node_modules/webtorrent/dist/sw.min.js")
+// 我们维护的 fork（修复流请求永久挂起），见 src/sw/webtorrent-sw.js
+const swSource =
+  process.env.WEBTORRENT_SW === "upstream" // 仅用于对比测试
+    ? path.join(root, "node_modules/webtorrent/dist/sw.min.js")
+    : path.join(root, "src/sw/webtorrent-sw.js")
 
 /**
  * WebTorrent 的 Service Worker 必须以 scope "/" 提供在 /sw.min.js。
- * dev: 中间件直接返回 node_modules 中的文件；build: 作为静态资源输出到 dist 根目录。
+ * dev: 中间件直接返回 src/sw/webtorrent-sw.js；build: 作为静态资源输出到 dist 根目录。
  * 另外保证 dist/.keep 在清空输出目录后仍然存在（Go embed 需要该目录非空）。
  */
 function webtorrentSW(): Plugin {
