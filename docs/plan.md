@@ -81,6 +81,7 @@
 - **系列（series）**：一个系列包含多个条目（subject，一般一季一个）。可用 bgm.tv `/v0/subjects/{id}/subjects` 的续集/前传关系或 anime-offline-database 聚合；页面 `/series/{provider}/{id}`，条目页显示「同系列其他季」。
 - dandanplay 弹幕（需 AppId/Secret，用户暂无账号）
 - 番剧页按集分组（映射库已有文件级集数，前端目前是种子列表 + 字幕组筛选）
+- ✅ 特别篇（2026-10）：集的键 `12` / `12.5` / `0` / `sp1` / `ncop1` / `nced1` / `pv1` / `cm1`（api.md「集的键」），选集列表 `GET /subjects/{p}/{id}/episodes`，SP/NCOP/NCED/PV/CM 保留编号并映射到作品（迁移 5 + 启动时一次性重新分类）。待改进：SPs 目录里文件名解析不出编号的特别篇都记为 sp1；日文写法（ノンテロップOP/ED、映像特典内的 PV）未识别。
 - 映射纠错的后台界面（API `PUT /meta/v1/torrents/{ih}/files/{idx}` 已有）
 - 封面图自建缓存/缩略图（目前直链 lain.bgm.tv / bangumi.moe）
 - **本集截图**：外部站点（AniList streamingEpisodes、Kitsu、TMDB still、TVDB）对当季新番的分集图要么没有、要么滞后，AniDB/bgm.tv 没有分集图。方案：qB 下载完成后，后端用 ffmpeg 经 `torrents/downloadFile`（Range）在 ~40% 处截帧（多帧取亮度正常者），存 WebP，按 (作品, 集) 存入映射库；时间表卡片优先显示本集截图。代价：镜像需加 ffmpeg。
@@ -103,7 +104,7 @@
 
 ## 抓取与刮削（2026-10 设计，取代对 bangumi.moe 的实时反代）
 
-> 状态（后端）：1–4 已实现（`internal/crawl`、`internal/store/sources.go`、`internal/meta/catalog.go`、`internal/catalog/external.go`；接口见 [api.md](api.md)「搜索」「抓取源」「GET /torrents/hash/{ih}」）。前端已完成：搜索页（番剧卡片 + 种子列表）、单集页指定资源 `/subject/{p}/{id}/episode/{n}/hash/{ih}[/file/{idx}]`、播放页做种后轮询并无缝切到单集页（`web/src/pages/watch/Playback.tsx`：播放页与单集页路由共用同一组件，Player 以 infohash 为 key，不重建会话）、后台「抓取源」页（含元数据队列）。
+> 状态（后端）：1–4 已实现（`internal/crawl`、`internal/store/sources.go`、`internal/meta/catalog.go`、`internal/catalog/external.go`；接口见 [api.md](api.md)「搜索」「抓取源」「GET /torrents/hash/{ih}」）。前端已完成：搜索页（番剧卡片 + 种子列表）、单集页指定资源 `/subject/{p}/{id}/episode/{key}/hash/{ih}[/file/{idx}]`、播放页做种后轮询并无缝切到单集页（`web/src/pages/watch/Playback.tsx`：播放页与单集页路由共用同一组件，Player 以 infohash 为 key，不重建会话）、后台「抓取源」页（含元数据队列）。
 
 原则：不再在用户请求路径上实时请求 bangumi.moe（搜索 / 条目种子 / 时间表最新一集全部读本地库）。种子来自后台抓取源与用户提交的磁力。暂不做历史统一补抓。
 
@@ -136,10 +137,10 @@ RSS 信息（标题、发布时间、字幕组、来源条目 ID）作补充；�
 - 游客：只在浏览器 WebTorrent 播放（现状）。
 - 会员（有做种权限）：播放同时 `POST …/seed` 让 qB 下载；后端发现 qB 拿到元数据即入库 + 刮削。
   前端轮询 `GET /api/v1/torrents/hash/{ih}`（`{status: pending|ready, files: [{index,path,size,kind,subject?,episode?}]}`），
-  若播放中的文件被刮削到某番某集 → 切到 `/subject/{p}/{id}/episode/{n}/hash/{ih}/file/{idx}`（单集页指定资源，播放器不重启、保留进度）；否则留在 /watch。
+  若播放中的文件被刮削到某番某集 → 切到 `/subject/{p}/{id}/episode/{key}/hash/{ih}/file/{idx}`（单集页指定资源，播放器不重启、保留进度）；否则留在 /watch。
 
 ### 5. 页面
-- 单集页支持指定资源：`/subject/{p}/{id}/episode/{n}/hash/{ih}[/file/{idx}]`。
+- 单集页支持指定资源：`/subject/{p}/{id}/episode/{key}/hash/{ih}[/file/{idx}]`。
 - 搜索页：「番剧」卡片区 + 「种子」列表区。
 - 后台新增「抓取源」页。
 

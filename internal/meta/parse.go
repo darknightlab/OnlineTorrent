@@ -24,6 +24,7 @@ var (
 	reRange     = regexp.MustCompile(`^(\d{1,4})\s?[-~～]\s?(\d{1,4})`)
 	// NCOP/NCED are unambiguous anywhere; the short tokens only count inside brackets or
 	// after the last " - " (otherwise "Mob Psycho 100 Special" / "ED" in a title would match).
+	reNCJa     = regexp.MustCompile(`(?i)(?:ノンテロップ|ノンクレジット|ノンクレ)\s?(OP|ED)\s?(\d{0,3})`)
 	reNC       = regexp.MustCompile(`(?i)\b(NCOP|NCED)\s?(\d{0,3})\b`)
 	reSpecial  = regexp.MustCompile(`(?i)\b(NCOP|NCED|OP|ED|PV|CM|Preview|Menu|SP|OVA|OAD|Special|Trailer|Teaser)\s?(\d{0,3})\b`)
 	reLastDash = regexp.MustCompile(`\s[-–—]\s`)
@@ -100,6 +101,12 @@ func parse(name string, allowTrailing bool) ParsedName {
 	if p, ok := special(reNC.FindStringSubmatch(clean)); ok {
 		return p
 	}
+	// Japanese: ノンテロップOP / ノンクレジットED (textless opening/ending)
+	if m := reNCJa.FindStringSubmatch(clean); m != nil {
+		if p, ok := special([]string{m[0], "NC" + strings.ToUpper(m[1]), m[2]}); ok {
+			return p
+		}
+	}
 	for _, m := range brackets {
 		if p, ok := special(reSpecial.FindStringSubmatch(m[1])); ok {
 			return p
@@ -166,12 +173,12 @@ func special(m []string) (ParsedName, bool) {
 
 var (
 	// directories that hold specials/extras in batch releases ("SPs", "CDs", "Scans", "特典映像", …)
-	reSPDir    = regexp.MustCompile(`(?i)^(SPs?|Specials?|OVAs?|OADs?)$`)
+	reSPDir = regexp.MustCompile(`(?i)^(SPs?|Specials?|OVAs?|OADs?)$`)
 	// directories of one special kind (the file name may only carry a number: "PVs/Show 01.mkv")
-	rePVDir   = regexp.MustCompile(`(?i)^(PVs?|Trailers?|Teasers?)$`)
-	reCMDir   = regexp.MustCompile(`(?i)^CMs?$`)
-	reNCOPDir = regexp.MustCompile(`(?i)^NCOPs?$`)
-	reNCEDDir = regexp.MustCompile(`(?i)^NCEDs?$`)
+	rePVDir    = regexp.MustCompile(`(?i)^(PVs?|Trailers?|Teasers?)$`)
+	reCMDir    = regexp.MustCompile(`(?i)^CMs?$`)
+	reNCOPDir  = regexp.MustCompile(`(?i)^NCOPs?$`)
+	reNCEDDir  = regexp.MustCompile(`(?i)^NCEDs?$`)
 	reExtraDir = regexp.MustCompile(`(?i)^(Extras?|Bonus|Menus?|CMs?|PVs?|Previews?|Trailers?|Samples?|Scans|NC|NCOP|NCED|NCOPED|NC[\s._-]?OP[\s._-]?ED|Others?|Making|Interview)s?$|特典|映像特典|予告|番宣|无字|NCOP|NCED`)
 	// anywhere in the file name: samples and bonus material
 	reExtraName = regexp.MustCompile(`(?i)\bsample\b|特典|映像特典|予告|番宣|\bmaking\b`)

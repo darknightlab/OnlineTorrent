@@ -1,7 +1,8 @@
 // VITE_MOCK=1 时安装：拦截 /api/v1/* 的 fetch，返回 fixtures 数据（只在 dev/mock 构建中被动态 import）。
 // 切换身份：?mock_user=guest|member|vip|admin（保存在 sessionStorage）；默认 admin。
 import * as fx from "./fixtures"
-import type { AdminUser, EpisodeFile, GrantRole, MeResponse, PermissionItem, PlayResponse, QBServer, Rule, Source, Subject, Torrent, TorrentStatus, User } from "@/lib/types"
+import { canonicalEpisodeKey, compareEpisodeKeys, episodeLabel, parseEpisodeKey, type EpisodeKey } from "@/lib/episode"
+import type { AdminUser, EpisodeFile, EpisodeListItem, GrantRole, MeResponse, PermissionItem, PlayResponse, QBServer, Rule, Source, Subject, Torrent, TorrentStatus, User } from "@/lib/types"
 
 type Handler = (ctx: { params: Record<string, string>; query: URLSearchParams; body: any }) => unknown
 
@@ -104,6 +105,24 @@ const pastEpisodes = new Map<string, Torrent[]>(
   }),
 )
 
+/**
+ * 特别篇演示：第一个有资源的条目额外带 12.5（总集篇）、SP1、NCOP1、NCED1 的种子（另有空的 PV1 —— 不出现在列表里）。
+ * 这些种子合并到 pastEpisodes，选集 / 单集 / 收录状态都由标题里的「 - 键 」派生。
+ */
+const specialSubject = subjects.find((a) => a.latest_torrent)
+if (specialSubject) {
+  const lt = specialSubject.latest_torrent!
+  const extra = ["12.5", "SP01", "NCOP1", "NCED1"].map((k, i): Torrent => ({
+    ...lt,
+    id: `${lt.id.slice(0, 20)}sp${String(i).padStart(2, "0")}`,
+    infohash: lt.infohash.slice(0, 36) + "5" + String(i).padStart(3, "0"),
+    title: lt.title.replace(/ - \d+ /, ` - ${k} `),
+    size_bytes: k.startsWith("NC") ? 48 * 1024 ** 2 : lt.size_bytes,
+    published_at: new Date(new Date(lt.published_at).getTime() - (i + 1) * 3 * 86400_000).toISOString(),
+  }))
+  pastEpisodes.get(specialSubject.key)?.push(...extra)
+}
+
 const torrents: Torrent[] = [
   ...subjects.flatMap((a) => (a.latest_torrent ? [a.latest_torrent] : [])),
   ...[...pastEpisodes.values()].flat(),
@@ -130,7 +149,34 @@ function findSubject(provider: string, id: string): Subject {
   return a
 }
 
-const epOf = (title: string) => Number(title.match(/ - (\d+)(?:v\d)? /)?.[1] ?? 0)
+/** 标题中「 - 12 」「 - 12.5 」「 - SP01 」「 - NCOP1 」→ 集的键（规范写法）；没有时 null */
+const keyOf = (title: string) => canonicalEpisodeKey(title.match(/ - (\d+(?:\.\d+)?|(?:SP|NCOP|NCED|PV|CM)\d*)(?:v\d)? /i)?.[1])
+
+/** 选集：1..max(已播, 已知最大整数集) ∪ 有资源的键（同后端 episodeList） */
+function episodeList(a: Subject): EpisodeListItem[] {
+  const counts = new Map<string, number>()
+  for (const t of subjectTorrents(a)) {
+    const k = keyOf(t.title)
+    if (k) counts.set(k, (counts.get(k) ?? 0) + 1)
+  }
+  const keys = new Map<string, EpisodeKey>()
+  let top = a.episodes_aired
+  for (const k of counts.keys()) {
+    const p = parseEpisodeKey(k)!
+    keys.set(k, p)
+    if (p.kind === "main" && Number.isInteger(p.number)) top = Math.max(top, p.number)
+  }
+  for (let n = 1; n <= top; n++) keys.set(String(n), { kind: "main", number: n })
+  return [...keys.entries()]
+    .sort((x, y) => compareEpisodeKeys(x[1], y[1]))
+    .map(([key, k]) => ({
+      key,
+      ...k,
+      label: episodeLabel(k),
+      sources: counts.get(key) ?? 0,
+      ...(k.kind === "main" ? { aired: k.number >= 1 && k.number <= a.episodes_aired } : {}),
+    }))
+}
 
 /** 条目的全部种子：最新一集 + 往期 + 标题相关 */
 function subjectTorrents(a: Subject): Torrent[] {
@@ -153,7 +199,8 @@ function playOf(t: Torrent | undefined, ih: string): PlayResponse {
   if (action === "vip" && (!u || (u.role !== "vip" && u.role !== "admin"))) throw new HttpError(402, "vip_required", t?.access.reason || "该资源仅限大会员")
   const a = t ? subjectOfTorrent(t) : undefined
   const name = t?.title ?? "Unknown torrent"
-  const ep = t ? epOf(t.title) : 0
+  const key = (t ? keyOf(t.title) : null) ?? (a ? String(a.episodes_aired) : null)
+  const k = parseEpisodeKey(key)
   return {
     access: { action: "allow", reason: "" },
     infohash: ih,
@@ -161,7 +208,19 @@ function playOf(t: Torrent | undefined, ih: string): PlayResponse {
     magnet: `magnet:?xt=urn:btih:${ih}&dn=${encodeURIComponent(name)}&tr=${encodeURIComponent("wss://tracker.projectk.org")}`,
     seeded_by: [],
     webseeds: [],
-    meta: a ? { subject_id: a.subject_id, subject_key: a.key, bgm_id: a.bgm_id, title: a.title_cn || a.title, episode: ep || a.episodes_aired, file_index: 0 } : null,
+    meta:
+      a && k
+        ? {
+            subject_id: a.subject_id,
+            subject_key: a.key,
+            bgm_id: a.bgm_id,
+            title: a.title_cn || a.title,
+            episode: k.kind === "main" ? k.number : null,
+            episode_key: key!,
+            episode_label: episodeLabel(k),
+            file_index: 0,
+          }
+        : null,
   }
 }
 
@@ -197,17 +256,29 @@ function torrentStatus(ih: string): TorrentStatus {
       status: "ready",
       title: name,
       files: mockFiles(name).map((f) =>
-        f.index === 0 && a ? { ...f, subject: { subject_id: a.subject_id, bgm_id: a.bgm_id, title: a.title, title_cn: a.title_cn }, episode: a.latest_episode ?? 1 } : f,
+        f.index === 0 && a
+          ? { ...f, subject: { subject_id: a.subject_id, bgm_id: a.bgm_id, title: a.title, title_cn: a.title_cn }, episode: a.latest_episode ?? 1, episode_key: String(a.latest_episode ?? 1) }
+          : f,
       ),
     }
   }
   const a = subjectOfTorrent(t)
-  const ep = epOf(t.title)
+  const key = keyOf(t.title)
+  const k = parseEpisodeKey(key)
+  const kind = !k ? "episode" : ({ main: "episode", sp: "sp", ncop: "op", nced: "ed", pv: "pv", cm: "cm" } as const)[k.kind]
   return {
     status: "ready",
     title: t.title,
     files: mockFiles(t.title).map((f) =>
-      f.index === 0 && a && ep > 0 ? { ...f, subject: { subject_id: a.subject_id, bgm_id: a.bgm_id, title: a.title, title_cn: a.title_cn }, episode: ep } : f,
+      f.index === 0 && a && k
+        ? {
+            ...f,
+            kind,
+            subject: { subject_id: a.subject_id, bgm_id: a.bgm_id, title: a.title, title_cn: a.title_cn },
+            ...(k.kind === "main" ? { episode: k.number } : {}),
+            episode_key: key!,
+          }
+        : f,
     ),
   }
 }
@@ -278,12 +349,18 @@ const routes: [string, string, Handler][] = [
     const a = findSubject(params.provider, params.id)
     return { subject: a, torrents: subjectTorrents(a) }
   }],
+  ["GET", "/subjects/:provider/:id/episodes", ({ params }) => {
+    requirePerm("GET /api/v1/subjects/{provider}/{id}/episodes")
+    return { items: episodeList(findSubject(params.provider, params.id)) }
+  }],
   ["GET", "/subjects/:provider/:id/episodes/:n", ({ params }) => {
     requirePerm("GET /api/v1/subjects/{provider}/{id}/episodes/{n}")
     const a = findSubject(params.provider, params.id)
-    const n = Number(params.n)
+    const k = parseEpisodeKey(params.n)
+    if (!k) throw new HttpError(400, "bad_request", "无效集数")
+    const key = canonicalEpisodeKey(params.n)
     const items = subjectTorrents(a)
-      .filter((t) => epOf(t.title) === n)
+      .filter((t) => keyOf(t.title) === key)
       .map((t, i): EpisodeFile => ({
         infohash: t.infohash,
         file_index: 0,
@@ -297,7 +374,7 @@ const routes: [string, string, Handler][] = [
         confidence: i === 0 ? 0.95 : 0.8,
         access: t.access,
       }))
-    return { subject: a, episode: n, items }
+    return { subject: a, key, kind: k.kind, number: k.number, label: episodeLabel(k), ...(k.kind === "main" ? { episode: k.number } : {}), items }
   }],
   ["GET", "/search/:keyword", ({ params, query }) => {
     requirePerm("GET /api/v1/search/{keyword}")

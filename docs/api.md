@@ -21,11 +21,12 @@
 | 播放（自动选视频文件） | `/watch/hash/{infohash}` |
 | 播放指定文件 | `/watch/hash/{infohash}/file/{index}` |
 | 条目（单季） | `/subject/{provider}/{id}`：`id`（本站数字 ID）、`bgm`、`mal`、`anidb`、`anilist`、`tmdb`… |
-| 单集（自动选资源播放） | `/subject/{provider}/{id}/episode/{n}` |
+| 单集（自动选资源播放） | `/subject/{provider}/{id}/episode/{key}`（`key` 见下方「集的键」；指定资源 `…/episode/{key}/hash/{ih}[/file/{index}]`） |
 | 搜索 | `/search/{keyword}`（翻页 `?page=`） |
 | 登录 / 注册 / 邀请注册 | `/login`（`?next=`）/ `/register` / `/register/invite/{code}` |
 | 个人中心 / 后台 | `/me` / `/admin/...` |
 | 系列（整个系列，TODO） | `/series/{provider}/{id}` |
+非规范写法的集的键（`SP01`、`ncop`、`012`）前端重定向到规范写法；无效键显示 404。
 旧链接兼容：`/?uri=磁力`、`/watch?uri=|ih=|t=`、`/anime/{key}` 均重定向到新路径。
 
 **API**
@@ -33,7 +34,8 @@
 |---|---|---|
 | GET | `/api/v1/schedule` | 新番时间表 |
 | GET | `/api/v1/subjects/{provider}/{id}` | 条目详情 + 本地种子（映射到该条目的） |
-| GET | `/api/v1/subjects/{provider}/{id}/episodes/{n}` | 单集所有已知文件（含当前用户 access），`items[0]` 为自动推荐 |
+| GET | `/api/v1/subjects/{provider}/{id}/episodes` | 选集列表：正片 + 特别篇（SP / NCOP / NCED / PV / CM） |
+| GET | `/api/v1/subjects/{provider}/{id}/episodes/{n}` | 单集所有已知文件（含当前用户 access），`items[0]` 为自动推荐；`{n}` 为集的键 |
 | GET | `/api/v1/search/{keyword}` | 搜索：番剧 + 种子（本地库；翻页 `?page=`） |
 | GET | `/api/v1/torrents/hash/{ih}` | 种子收录状态与文件刮削结果（做种后轮询） |
 | POST | `/api/v1/torrents/hash/{ih}/play` | 打开种子（策略判定 + 磁力） |
@@ -42,13 +44,27 @@
 | GET | `/api/v1/torrents/hash/{ih}/webseed/events[/file/{idx}]` | WebSeed 就绪推送（SSE） |
 | GET | `/webseed/hash/{ih}/[文件路径]` | HTTP WebSeed 文件（Cookie 鉴权） |
 | GET | `/meta/v1/torrents/hash/{ih}` | 文件级映射 |
-| PUT | `/meta/v1/torrents/hash/{ih}/files/{idx}` | 纠正映射（admin），body `{subject_id|work_key, episode, kind, status}` |
-| GET | `/meta/v1/subjects/{provider}/{id}` / `.../episodes/{n}/files` / `/meta/v1/subjects/search?q=` | 映射库条目 |
+| PUT | `/meta/v1/torrents/hash/{ih}/files/{idx}` | 纠正映射（admin），body `{subject_id|work_key, episode_key | (episode, kind), status}` |
+| GET | `/meta/v1/subjects/{provider}/{id}` / `.../episodes` / `.../episodes/{key}/files` / `/meta/v1/subjects/search?q=` | 映射库条目 / 有文件的集 / 单集文件 |
 | * | `/api/v1/admin/{resource}/id/{id}` | 后台单项资源 |
 | GET/POST | `/api/v1/admin/sources`，`/admin/sources/schema`，`/admin/sources/probe` | 抓取源列表 / 新建 / 类型说明 / 测试 |
 | PUT/DELETE | `/api/v1/admin/sources/id/{id}`，POST `…/id/{id}/run` | 抓取源修改 / 删除 / 立即抓取 |
 
 > 已移除：`GET /api/v1/torrents/search?q=`（改为 `GET /api/v1/search/{keyword}`）。用户请求路径上不再实时请求 bangumi.moe：搜索、条目种子列表、时间表最新一集全部读本地库（由后台抓取源填充，见下方「抓取源」）。
+
+## 集的键（episode key）
+URL 与 API 中用来指代某一集（Go：`meta.ParseEpisodeKey`，`internal/meta/episode.go`；TS：`parseEpisodeKey`，`web/src/lib/episode.ts`）。
+| 类型 `kind` | 键 | 显示名 `label` / 按钮 | 映射库 `torrent_files.kind` |
+|---|---|---|---|
+| `main` 正片 | 数字原样：`12`、`12.5`（总集篇）、`0` | `第 12 话` / `12` | `episode` |
+| `sp` 特别篇（SP / OVA / OAD / Special） | `sp1` | `SP1` | `sp` |
+| `ncop` 无字幕片头 | `ncop1` | `NCOP1` | `op` |
+| `nced` 无字幕片尾 | `nced1` | `NCED1` | `ed` |
+| `pv` 宣传片（PV / Trailer / Teaser） | `pv1` | `PV1` | `pv` |
+| `cm` 广告 | `cm1` | `CM1` | `cm` |
+- 编号 ≥ 0，可为小数（最多 3 位）；正片 ≤ 5000，特别篇 ≤ 999。没有编号的特别篇记为 1（`ncop` 是 `ncop1` 的别名）。
+- 解析不区分大小写、忽略前导零（`SP01` → `sp1`，`012` → `12`）；接口返回的 `key` 一律为规范写法（小写、无前导零）。其他写法（`op1`、`-1`、`12.`）400 / 页面 404。
+- 排序：正片按编号，然后 sp、ncop、nced、pv、cm 各自按编号。
 
 ## 公共
 
@@ -92,7 +108,7 @@
     "episodes_aired": 2,           // 估算
     "bgm_id": 123456, "moe_tag_id": "5ff…",   // bgm_id 可为 null
     "latest_torrent": null,         // 或 Torrent（见下）：本地库中映射到该番的最新一集里自动推荐的种子（受信来源、AVC、1080p、大小合适优先）
-    "latest_episode": 2             // 映射库已知的最新一集（可为 null）→ 前端卡片直达 /subject/…/episode/{n}
+    "latest_episode": 2             // 映射库已知的最新一集（正片，可为 null）→ 前端卡片直达 /subject/…/episode/{latest_episode}
   }]
 }
 ```
@@ -104,15 +120,30 @@
   "torrents": [Torrent, ...] }     // 本地库中至少有一个文件映射到该条目的种子，按发布时间倒序，最多 100 个
 ```
 
-### `GET /subjects/{provider}/{id}/episodes/{n}`
+### `GET /subjects/{provider}/{id}/episodes`
+选集列表。接口权限可配置，默认游客可用。
 ```json
-{ "subject": { ...同上... }, "episode": 3,
+{ "items": [
+  { "key": "1",     "kind": "main", "number": 1,    "label": "第 1 话",    "sources": 0, "aired": true },
+  { "key": "12.5",  "kind": "main", "number": 12.5, "label": "第 12.5 话", "sources": 2, "aired": false },
+  { "key": "sp1",   "kind": "sp",   "number": 1,    "label": "SP1",        "sources": 1 },
+  { "key": "ncop1", "kind": "ncop", "number": 1,    "label": "NCOP1",      "sources": 3 } ] }
+```
+- 内容：正片 `1..max(episodes_aired, 已映射的最大整数正片)`（最多 2000）∪ 所有有映射文件的集（小数集、第 0 集、特别篇）。排序见「集的键」。
+- `sources`：映射到该集的文件数（不含 rejected）；0 = 暂无资源（前端弱化显示）。`aired`：仅正片，是否在时间表估算的已播集数之内。
+
+### `GET /subjects/{provider}/{id}/episodes/{n}`
+`{n}` 为集的键（`12`、`12.5`、`0`、`sp1`、`ncop1`…；权限键仍是 `GET /api/v1/subjects/{provider}/{id}/episodes/{n}`）。无效键 400 `bad_request`。
+```json
+{ "subject": { ...同上... }, "key": "ncop1", "kind": "ncop", "number": 1, "label": "NCOP1",
+  "episode": 3,                       // 仅正片（kind=main）给出，等于 number
+
   "items": [{ "infohash": "...", "file_index": 0, "path": "[Team] Foo - 03 [1080p].mkv", "size_bytes": 0,
               "torrent_title": "...", "team": "字幕组名", "published_at": "...", "source_id": "来源条目 ID（bangumi.moe _id / RSS guid），可空",
               "source": "抓取源名称（bangumi.moe、Nyaa…）或 user",
               "confidence": 0.85, "access": {"action": "allow", "reason": ""} }] }
 ```
-`items[0]` 为服务端自动推荐；无已知文件时 `items` 为空数组。
+`items[0]` 为服务端自动推荐；无已知文件时 `items` 为空数组。特别篇的文件来自 `torrent_files` 中对应的 kind（见「集的键」）。
 
 ### `GET /search/{keyword}?page=1`
 关键词放在路径里（需 URL 编码，最长 100 字）；`page` 上限 50。每 IP 突发 20 次、之后每 3 秒 1 次。全部读本地库（SQLite FTS5 trigram，中日文可搜；关键词中任一词少于 3 个字时改用 LIKE 子串匹配）。
@@ -147,12 +178,13 @@ Torrent：
 { "status": "unknown|pending|ready",
   "title": "种子标题（本地库 / qB 元数据名称；未知时为空串）",
   "files": [{ "index": 0, "path": "目录/文件名.mkv", "size_bytes": 0,
-              "kind": "episode|sp|op|ed|extra|other",
+              "kind": "episode|sp|op|ed|pv|cm|extra|other",
               "subject": { "subject_id": 1034, "bgm_id": 123456, "title": "原名", "title_cn": "中文名" },   // 可省略：未刮削到条目；bgm_id 可省略
-              "episode": 2 }] }                                                                         // 可省略：仅在有 subject 时给出；可为小数（12.5）
+              "episode": 2,                // 可省略：仅正片（kind=episode）且有 subject 时给出；可为小数（12.5）
+              "episode_key": "2" }] }      // 可省略：有 subject 时给出集的键（"12.5"、"sp1"、"ncop1"…）
 ```
 - `ready`：文件列表已知（`files` 为全部文件，包含字幕、字体等 `other`）。`pending`：正在获取元数据（抓取源的磁力在 qB 元数据队列中、刚请求过服务器做种 30 分钟内、或做种后的检查进行中），`files` 为 `[]`。`unknown`：本地没有该种子，或获取失败（`title` 可能仍有值）。
-- 前端：若当前播放文件刮削到 `subject` + `episode`，可切到 `/subject/id/{subject_id}/episode/{episode}/hash/{ih}/file/{index}`。
+- 前端：若当前播放文件刮削到 `subject` + `episode_key`（任意类型），切到 `/subject/{bgm|id}/{…}/episode/{episode_key}/hash/{ih}/file/{index}`。
 
 ### `POST /torrents/hash/{ih}/play` / `POST /torrents/moe/{id}/play`（无 body）
 服务端：解析 → 策略判定 → 返回带 wss tracker 的磁力（**不再推送给 qB**，见下方 seed）。默认游客可用。本地库已收录的种子（抓取源）使用库中的标题、文件列表与受信标记；`moe/{id}` 只查本地库（bangumi.moe 抓取源收录过的），找不到返回 404。
@@ -161,7 +193,10 @@ Torrent：
 { "access": {"action":"allow","reason":""},
   "infohash": "...", "name": "...", "magnet": "magnet:?xt=...&tr=wss://...",
   "seeded_by": [], "webseeds": [] ,           // 恒为空，保留字段兼容
-  "meta": { "subject_id": 1034, "subject_key": "bgm:123", "bgm_id": "123", "title": "…", "episode": 2, "file_index": 0 } }   // meta 可空
+  "meta": { "subject_id": 1034, "subject_key": "bgm:123", "bgm_id": "123", "title": "…",
+            "episode": 2,                      // 仅正片，特别篇为 null
+            "episode_key": "2", "episode_label": "第 2 话",   // 特别篇如 "ncop1" / "NCOP1"
+            "file_index": 0 } }   // meta 可空：种子中第一个映射到条目的正片文件，没有正片时取第一个特别篇文件
 ```
 - 401 `{"error":{"code":"login_required"}}`，402 `{"error":{"code":"vip_required"}}`，451 `{"error":{"code":"blocked","message":"原因"}}`。
 - 用户磁力里的 `tr=` 一律丢弃（只用站点配置的 tracker）；`dn=` 只作为未受信标题参与判定（用户磁力最低权限始终生效），不写入种子标题，真实标题以 qB 元数据为准。
@@ -199,7 +234,7 @@ qB 拿到元数据后，后端把文件列表写入本地库并刮削（每个 i
 
 ### 抓取源 `/admin/sources`（仅 admin）
 后台定时抓取的种子来源（只抓第 1 页；条件 GET：ETag / If-Modified-Since；同一站点串行、请求间隔 ≥1.5 秒；UA `onlinetorrent/2 (+站点地址)`；Feed ≤10MB、.torrent ≤5MB）。默认内置：bangumi.moe（受信，启用）、蜜柑计划 RSS（启用）、Nyaa 1_3（启用）、动漫花园、ACG.RIP（关闭）。全局开关见设置 `crawl.enabled`。
-入库流水线（每个 infohash 只做一次）：有 .torrent → 下载并本地解析（v1 infohash + 文件列表）；只有磁力 → qB 元数据队列（分类 `<qB 分类>-meta`、`stopCondition=MetadataReceived`，并发 3、单个 2 分钟超时、最多 3 次、状态存库可续跑，取到文件后删除本站添加的该种子）；然后文件分类（`kind`，NCOP/NCED/PV/CM/Menu/Sample/特典不映射到集）+ 刮削（bangumi.moe 标签强匹配，标题/别名匹配）。
+入库流水线（每个 infohash 只做一次）：有 .torrent → 下载并本地解析（v1 infohash + 文件列表）；只有磁力 → qB 元数据队列（分类 `<qB 分类>-meta`、`stopCondition=MetadataReceived`，并发 3、单个 2 分钟超时、最多 3 次、状态存库可续跑，取到文件后删除本站添加的该种子）；然后文件分类（`kind`：正片 episode，特别篇 sp/op(NCOP)/ed(NCED)/pv/cm 保留编号并映射到集，Menu/Sample/Preview/特典为 extra 不映射）+ 刮削（bangumi.moe 标签强匹配，标题/别名匹配）。
 
 Source：
 ```json
@@ -229,16 +264,20 @@ Source：
 相关设置（`GET/PUT /admin/settings`）：`crawl.enabled`（bool，默认 true）、`crawl.workers`（同时抓取的源数，默认 2）、`upstream.tmdb_api_key`（secret，默认空；TMDB v3 key 或 v4 读取令牌）、`upstream.proxy`（抓取与 bgm.tv/TMDB 请求共用；为空时使用环境变量 `HTTPS_PROXY` 等）。
 
 ## 映射服务 `/meta/v1/*`（metad，可独立部署；默认与 otd 同进程挂载）
-映射粒度是**文件级**：`(infohash, file_index)` → 作品 + 集。种子的每个文件一行（含字幕、字体等，`kind=other`）；只有 `episode`/`sp` 会映射到作品+集，NCOP/NCED（`op`/`ed`）、PV/CM/Menu/Sample/特典（`extra`）不映射。
+映射粒度是**文件级**：`(infohash, file_index)` → 作品 + 集。种子的每个文件一行（含字幕、字体等，`kind=other`）。`episode`（正片）与特别篇 `sp`/`op`(NCOP)/`ed`(NCED)/`pv`/`cm` 映射到作品 + 集，`episode` 列存正片集数或特别篇编号（没有编号的特别篇为 1；如 `NCOP2` → `kind=op, episode=2`）；Menu/Sample/Preview/特典（`extra`）与非视频（`other`）不映射。集的键由 `kind` + `episode` 得出（`op` → `ncop`，`ed` → `nced`）。
+- 迁移 5（2026-10）：`meta_state` 表 + 一次性重新分类：otd / metad 启动时在后台对已存储的文件路径重跑 `ClassifyFile`（只改 `status=auto` 的行；作品沿用该种子已映射的作品，种子原来没有作品且有文件新变为可映射时重新匹配），完成后标记 `reclassify_specials_v1=done`，之后不再执行。
 
 - `GET /meta/v1/torrents/hash/{infohash}` →
 ```json
 { "infohash": "...", "title": "...", "status": "ready|pending",
   "files": [{ "index": 0, "path": "[Team] Foo - 02 [1080p].mkv", "size_bytes": 0,
-              "kind": "episode|sp|op|ed|extra|other",
+              "kind": "episode|sp|op|ed|pv|cm|extra|other",
               "work": {"key": "bgm:123", "title": "...", "title_cn": "...", "external": {"bgm": 123, "mal": 1}},
-              "episode": 2, "confidence": 0.95, "status": "auto|verified|rejected", "method": "moe_tag+name" }] }
+              "episode": 2,               // 正片集数或特别篇编号
+              "episode_key": "2",         // 可省略：可映射的 kind 且有编号时（"12.5"、"sp1"、"ncop1"…）
+              "confidence": 0.95, "status": "auto|verified|rejected", "method": "moe_tag+name" }] }
 ```
 - `GET /meta/v1/subjects/{provider}/{id}`（含 external ids）/ `GET /meta/v1/subjects/search?q=标题`
-- `GET /meta/v1/subjects/{provider}/{id}/episodes/{n}/files` → 该集所有已知文件（infohash + file_index + 种子标题）
-- `PUT /meta/v1/torrents/hash/{infohash}/files/{index}`（admin）`{subject_id|work_key, episode, kind, status}` 手工纠正（status=verified 后自动匹配不再覆盖）
+- `GET /meta/v1/subjects/{provider}/{id}/episodes` → `{"items":[{key, kind, number, label, files}]}`：有映射文件的集（不含没有文件的已播正片）
+- `GET /meta/v1/subjects/{provider}/{id}/episodes/{key}/files` → `{"key": "ncop1", "items": [...]}`：该集所有已知文件（infohash + file_index + 种子标题）；`{key}` 为集的键，无效 400
+- `PUT /meta/v1/torrents/hash/{infohash}/files/{index}`（admin）`{subject_id|work_key, episode_key?, episode?, kind?, status?}` 手工纠正：给出 `episode_key`（如 `"ncop1"`）时由它决定 `kind` + `episode`；否则 `kind` 默认 `episode`，须为 `episode|sp|op|ed|pv|cm|extra|other`（无效 400）；`status` 默认 `verified`（verified 后自动匹配不再覆盖）

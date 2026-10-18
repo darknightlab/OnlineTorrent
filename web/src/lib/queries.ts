@@ -7,7 +7,8 @@ export const qk = {
   me: ["me"] as const,
   schedule: ["schedule"] as const,
   subject: (provider: string, id: string) => ["subject", provider, id] as const,
-  episode: (provider: string, id: string, n: number) => ["subject", provider, id, "episode", n] as const,
+  episodes: (provider: string, id: string) => ["subject", provider, id, "episodes"] as const,
+  episode: (provider: string, id: string, key: string) => ["subject", provider, id, "episode", key] as const,
   search: (q: string, page: number) => ["search", q, page] as const,
   torrentStatus: (ih: string) => ["torrents", "hash", ih, "status"] as const,
 }
@@ -54,6 +55,7 @@ export function useUser() {
 export const PERM = {
   schedule: "GET /api/v1/schedule",
   subject: "GET /api/v1/subjects/{provider}/{id}",
+  episodes: "GET /api/v1/subjects/{provider}/{id}/episodes",
   episode: "GET /api/v1/subjects/{provider}/{id}/episodes/{n}",
   search: "GET /api/v1/search/{keyword}",
   torrentStatus: "GET /api/v1/torrents/hash/{ih}",
@@ -113,12 +115,22 @@ export function useSubject(provider: string, id: string) {
   })
 }
 
-/** 单集文件列表（含当前用户 access） */
-export function useEpisode(provider: string, id: string, n: number) {
+/** 选集列表（正片 + SP / NCOP / NCED / PV / CM）；provider/id 为空时不请求 */
+export function useEpisodes(provider: string, id: string) {
   return useQuery({
-    queryKey: qk.episode(provider, id, n),
-    queryFn: ({ signal }) => api.episode(provider, id, n, signal),
-    enabled: !!provider && !!id && Number.isFinite(n) && n >= 0,
+    queryKey: qk.episodes(provider, id),
+    queryFn: ({ signal }) => api.episodes(provider, id, signal),
+    enabled: !!provider && !!id,
+    staleTime: 60_000,
+  })
+}
+
+/** 单集文件列表（含当前用户 access）；key 为规范写法的集的键，为空时不请求 */
+export function useEpisode(provider: string, id: string, key: string | null) {
+  return useQuery({
+    queryKey: qk.episode(provider, id, key ?? ""),
+    queryFn: ({ signal }) => api.episode(provider, id, key!, signal),
+    enabled: !!provider && !!id && !!key,
   })
 }
 

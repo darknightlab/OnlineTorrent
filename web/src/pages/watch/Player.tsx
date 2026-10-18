@@ -43,6 +43,7 @@ import type { PlayResponse } from "@/lib/types"
 import type { PlayHint } from "./usePlayResolve"
 import { formatBytes, formatDuration, formatPercent, formatSpeed } from "@/lib/format"
 import { cn, copyText, episodeHref, subjectHref, subjectPath } from "@/lib/utils"
+import { canonicalEpisodeKey, episodeLabel, parseEpisodeKey } from "@/lib/episode"
 import { useDocumentTitle } from "@/lib/hooks"
 
 /** renderInfo 可复用的部件 */
@@ -154,6 +155,8 @@ export function Player({
 
   const meta = play?.meta ?? null
   const metaPath = meta ? subjectPath(meta) : null
+  // 集的键（旧接口只有 episode 数字时退回该数字）
+  const metaKey = meta ? (canonicalEpisodeKey(meta.episode_key) ?? (meta.episode !== null && meta.episode >= 0 ? String(meta.episode) : null)) : null
   const subject = useSubject(posterProp === undefined ? (metaPath?.provider ?? "") : "", metaPath?.id ?? "")
   const poster = (posterProp !== undefined ? posterProp : subject.data?.subject.cover) || undefined
   const wantFile = useRef<number | null>(fileIndex)
@@ -522,9 +525,9 @@ export function Player({
                         <Tv className="h-3 w-3" />
                         {subject.data ? subject.data.subject.title_cn || subject.data.subject.title : meta.title || "番剧详情"}
                       </Link>
-                      {meta.episode > 0 && (
-                        <Link to={episodeHref(meta, meta.episode)} className="inline-flex h-full items-center border-l border-primary/20 px-1.5 hover:underline" title="本集所有资源">
-                          第 {meta.episode} 话
+                      {metaKey && (
+                        <Link to={episodeHref(meta, metaKey)} className="inline-flex h-full items-center border-l border-primary/20 px-1.5 hover:underline" title="本集所有资源">
+                          {meta.episode_label || episodeLabel(parseEpisodeKey(metaKey)!)}
                         </Link>
                       )}
                     </span>

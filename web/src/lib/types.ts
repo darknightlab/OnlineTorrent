@@ -1,5 +1,8 @@
 // 与 docs/api.md（API 契约 v1）一一对应的类型定义。
 
+import type { EpisodeKind } from "./episode"
+export type { EpisodeKind }
+
 export type Role = "guest" | "member" | "vip" | "admin"
 export type AccessAction = "allow" | "login" | "vip" | "block"
 export type RegistrationMode = "open" | "invite" | "closed"
@@ -150,11 +153,35 @@ export interface EpisodeFile {
   access: Access
 }
 
-/** GET /subjects/{provider}/{id}/episodes/{n}；items[0] 为服务端自动推荐 */
+/** GET /subjects/{provider}/{id}/episodes/{key}；items[0] 为服务端自动推荐 */
 export interface EpisodeResponse {
   subject: Subject
-  episode: number
+  /** 规范写法的集的键："12"、"12.5"、"sp1"、"ncop1"… */
+  key: string
+  kind: EpisodeKind
+  number: number
+  /** "第 12 话"、"SP1"、"NCOP1"… */
+  label: string
+  /** 仅正片 */
+  episode?: number
   items: EpisodeFile[]
+}
+
+/** 选集的一项 */
+export interface EpisodeListItem {
+  key: string
+  kind: EpisodeKind
+  number: number
+  label: string
+  /** 已映射到该集的文件数（0 = 暂无资源） */
+  sources: number
+  /** 仅正片：是否在时间表估算的已播集数之内 */
+  aired?: boolean
+}
+
+/** GET /subjects/{provider}/{id}/episodes：正片按编号，然后 SP、NCOP、NCED、PV、CM */
+export interface EpisodesResponse {
+  items: EpisodeListItem[]
 }
 
 export interface Paged<T> {
@@ -174,7 +201,7 @@ export interface SearchResponse {
   total: number
 }
 
-export type TorrentFileKind = "episode" | "sp" | "op" | "ed" | "extra" | "other"
+export type TorrentFileKind = "episode" | "sp" | "op" | "ed" | "pv" | "cm" | "extra" | "other"
 
 /** GET /torrents/hash/{ih} 的单个文件 */
 export interface TorrentStatusFile {
@@ -184,8 +211,10 @@ export interface TorrentStatusFile {
   kind: TorrentFileKind
   /** 未刮削到条目时省略 */
   subject?: { subject_id: number; bgm_id?: number | null; title: string; title_cn: string }
-  /** 仅在有 subject 时给出；可为小数（12.5） */
+  /** 仅正片且有 subject 时给出；可为小数（12.5） */
   episode?: number
+  /** 有 subject 时给出：集的键（"12"、"sp1"、"ncop1"…） */
+  episode_key?: string
 }
 
 /** GET /torrents/hash/{ih}：收录状态与逐文件刮削结果 */
@@ -200,7 +229,12 @@ export interface PlayMeta {
   subject_key: string
   bgm_id?: number | string | null
   title: string
-  episode: number
+  /** 仅正片（特别篇为 null） */
+  episode: number | null
+  /** 集的键（"12"、"sp1"、"ncop1"…） */
+  episode_key: string
+  /** "第 12 话"、"SP1"、"NCOP1"… */
+  episode_label: string
   file_index: number
 }
 

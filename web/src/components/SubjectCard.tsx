@@ -13,7 +13,7 @@ export const SubjectCard = memo(function SubjectCard({ item, now }: { item: Sche
   const title = displayTitle(item)
   // 已知最新一集 → 单集页（自动选资源播放）；否则 → 条目页
   const ep = item.latest_episode && item.latest_episode > 0 ? item.latest_episode : null
-  const href = ep ? episodeHref(item, ep) : subjectHref(item)
+  const href = ep ? episodeHref(item, String(ep)) : subjectHref(item)
   return (
     <div className="group relative">
       <Link

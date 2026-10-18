@@ -323,6 +323,7 @@ export const permissionSpecs: Spec[] = [
   spec("POST", "/api/v1/me/redeem", "user", "账号", "使用兑换码", ["member"]),
   spec("GET", "/api/v1/schedule", "configurable", "浏览", "新番时间表", ["guest"]),
   spec("GET", "/api/v1/subjects/{provider}/{id}", "configurable", "浏览", "番剧详情", ["guest"]),
+  spec("GET", "/api/v1/subjects/{provider}/{id}/episodes", "configurable", "浏览", "选集列表（正片 + SP / NCOP / NCED / PV / CM）", ["guest"]),
   spec("GET", "/api/v1/subjects/{provider}/{id}/episodes/{n}", "configurable", "浏览", "单集资源列表", ["guest"]),
   spec("GET", "/api/v1/search/{keyword}", "configurable", "浏览", "搜索（番剧 + 种子，本地库；本地无番剧时按需查询 bgm.tv / TMDB）", ["guest"]),
   spec("GET", "/api/v1/torrents/hash/{ih}", "configurable", "浏览", "种子收录状态与文件刮削结果", ["guest"]),

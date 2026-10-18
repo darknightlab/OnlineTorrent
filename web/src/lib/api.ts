@@ -40,6 +40,7 @@ import type {
   Site,
   SubjectResponse,
   EpisodeResponse,
+  EpisodesResponse,
 } from "./types"
 
 export const API_BASE = "/api/v1"
@@ -144,8 +145,11 @@ export const api = {
   /** 条目详情：provider = id（本站 ID）/ bgm / mal / anidb … */
   subject: (provider: string, id: string, s?: AbortSignal) => get<SubjectResponse>(`/subjects/${seg(provider)}/${seg(id)}`, s),
   /** 单集所有已知文件，items[0] 为自动推荐 */
-  episode: (provider: string, id: string, n: number | string, s?: AbortSignal) =>
-    get<EpisodeResponse>(`/subjects/${seg(provider)}/${seg(id)}/episodes/${seg(String(n))}`, s),
+  /** 选集列表（正片 + 特别篇） */
+  episodes: (provider: string, id: string, s?: AbortSignal) => get<EpisodesResponse>(`/subjects/${seg(provider)}/${seg(id)}/episodes`, s),
+  /** key：集的键（"12"、"12.5"、"sp1"、"ncop1"…） */
+  episode: (provider: string, id: string, key: string, s?: AbortSignal) =>
+    get<EpisodeResponse>(`/subjects/${seg(provider)}/${seg(id)}/episodes/${seg(key)}`, s),
   /** 搜索：番剧（仅第 1 页）+ 种子 */
   search: (keyword: string, page = 1, s?: AbortSignal) =>
     get<SearchResponse>(`/search/${seg(keyword)}${qs({ page: page > 1 ? page : undefined })}`, s),

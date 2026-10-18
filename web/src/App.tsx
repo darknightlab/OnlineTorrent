@@ -28,9 +28,9 @@ const playback = (
   </Suspense>
 )
 const PLAYBACK_PATHS = [
-  "subject/:provider/:id/episode/:n",
-  "subject/:provider/:id/episode/:n/hash/:ih",
-  "subject/:provider/:id/episode/:n/hash/:ih/file/:index",
+  "subject/:provider/:id/episode/:key",
+  "subject/:provider/:id/episode/:key/hash/:ih",
+  "subject/:provider/:id/episode/:key/hash/:ih/file/:index",
   "watch/hash/:ih",
   "watch/hash/:ih/file/:index",
 ]

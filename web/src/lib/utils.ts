@@ -73,21 +73,21 @@ export function subjectHref(s: SubjectRef) {
   return p ? `/subject/${p.provider}/${encodeURIComponent(p.id)}` : "/"
 }
 
-/** 单集页 /subject/{provider}/{id}/episode/{n} */
-export function episodeHref(s: SubjectRef, n: number) {
+/** 单集页 /subject/{provider}/{id}/episode/{key}；key 为集的键（"12"、"12.5"、"sp1"、"ncop1"…，见 lib/episode.ts） */
+export function episodeHref(s: SubjectRef, key: string) {
   const p = subjectPath(s)
-  return p ? `/subject/${p.provider}/${encodeURIComponent(p.id)}/episode/${n}` : "/"
+  return p ? `/subject/${p.provider}/${encodeURIComponent(p.id)}/episode/${encodeURIComponent(key)}` : "/"
 }
 
-/** 单集页指定资源：/subject/{provider}/{id}/episode/{n}/hash/{ih}[/file/{index}] */
-export function episodeSourceHref(s: SubjectRef, n: number, infohash: string, fileIndex?: number | null) {
-  const base = episodeHref(s, n)
+/** 单集页指定资源：/subject/{provider}/{id}/episode/{key}/hash/{ih}[/file/{index}] */
+export function episodeSourceHref(s: SubjectRef, key: string, infohash: string, fileIndex?: number | null) {
+  const base = episodeHref(s, key)
   if (base === "/") return watchHref(infohash, fileIndex)
   const ih = `${base}/hash/${encodeURIComponent(infohash.toLowerCase())}`
   return fileIndex === undefined || fileIndex === null ? ih : `${ih}/file/${fileIndex}`
 }
 
-/** 从播放类路径（/watch/hash/{ih}… 或 …/episode/{n}/hash/{ih}…）中取 infohash */
+/** 从播放类路径（/watch/hash/{ih}… 或 …/episode/{key}/hash/{ih}…）中取 infohash */
 export function infohashOfPath(pathname: string): string | null {
   return pathname.match(/^\/(?:watch|subject\/[^/]+\/[^/]+\/episode\/[^/]+)\/hash\/([^/]+)/)?.[1]?.toLowerCase() ?? null
 }

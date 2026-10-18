@@ -1,6 +1,6 @@
 // 播放页与单集页共用的路由组件：
 //   /watch/hash/:ih[/file/:index]
-//   /subject/:provider/:id/episode/:n[/hash/:ih[/file/:index]]
+//   /subject/:provider/:id/episode/:key[/hash/:ih[/file/:index]]（key：集的键，见 lib/episode.ts）
 // 这几条路由在 App.tsx 中渲染同一个元素（同一 lazy 组件、同一层级），React Router 不给路由元素加 key，
 // 因此在它们之间导航时本组件不会重新挂载。播放器始终渲染在 <Container><Player key={infohash} /></Container>
 // 这一固定位置，所以「播放页 → 单集页（同一 infohash）」或「单集页切换同一种子内的文件」时 Player 实例、
@@ -16,6 +16,7 @@ import { PERM, can, qk, useEpisode, useMe, useSiteOrFallback } from "@/lib/queri
 import { displayTitle } from "@/lib/schedule"
 import type { EpisodeFile, EpisodeResponse, TorrentStatus } from "@/lib/types"
 import { useDocumentTitle } from "@/lib/hooks"
+import { canonicalEpisodeKey, episodeLabel, formatEpisodeKey, parseEpisodeKey, type EpisodeKey } from "@/lib/episode"
 import { cn, episodeSourceHref, normalizeInfohash, watchHref } from "@/lib/utils"
 import { StatusPage } from "@/pages/NotFound"
 import {
@@ -50,24 +51,26 @@ export default function PlaybackPage() {
   const attempt = usePlayAttempt()
 
   // ---- 解析路由 ----
-  const isEpisode = params.n !== undefined
+  const isEpisode = params.key !== undefined
   const provider = params.provider ?? ""
   const subjectId = params.id ?? ""
-  // 集数可以是小数（如 12.5 总集篇）或 0（前传/序章）
-  const ep = isEpisode && /^\d+(\.\d+)?$/.test(params.n!) ? Number(params.n) : NaN
+  // 集的键：正片 "12" / "12.5" / "0"，特别篇 "sp1" / "ncop1" / "nced1" / "pv1" / "cm1"
+  const rawKey = params.key
+  const ep = useMemo(() => (rawKey !== undefined ? parseEpisodeKey(rawKey) : null), [rawKey])
+  const epKey = ep ? formatEpisodeKey(ep) : null
   const rawIh = params.ih
   const urlIh = rawIh !== undefined ? normalizeInfohash(rawIh) : null
   const badIndex = params.index !== undefined && !/^\d+$/.test(params.index)
   const urlIndex = params.index !== undefined && !badIndex ? Number(params.index) : null
   /** 单集页路径前缀（保持 URL 中的 provider/id 写法） */
-  const epBase = isEpisode ? `/subject/${seg(provider)}/${seg(subjectId)}/episode/${params.n}` : ""
+  const epBase = isEpisode ? `/subject/${seg(provider)}/${seg(subjectId)}/episode/${seg(epKey ?? rawKey ?? "")}` : ""
   const sourceHref = useCallback(
     (ih: string, idx: number | null) => (isEpisode ? `${epBase}/hash/${seg(ih)}${idx !== null ? `/file/${idx}` : ""}` : watchHref(ih, idx)),
     [isEpisode, epBase],
   )
 
   // ---- 单集数据 ----
-  const epQ = useEpisode(isEpisode ? provider : "", subjectId, ep)
+  const epQ = useEpisode(isEpisode ? provider : "", subjectId, epKey)
   const epData = epQ.data
   const items = useMemo(() => epData?.items ?? [], [epData])
 
@@ -101,11 +104,14 @@ export default function PlaybackPage() {
     onMapped: (href) => navigate(href, { replace: true, state: loc.state }),
   })
 
-  useDocumentTitle(isEpisode && epData ? `${displayTitle(epData.subject)} 第 ${epData.episode} 话` : isEpisode ? "单集" : undefined)
+  useDocumentTitle(isEpisode && epData && ep ? `${displayTitle(epData.subject)} ${episodeLabel(ep)}` : isEpisode ? "单集" : undefined)
 
   // ---- 校验 / 规范化 ----
   if (rawIh !== undefined && (!urlIh || badIndex)) return <StatusPage code="404" title="链接无效" description="播放链接格式有误，请检查 infohash。" />
-  if (isEpisode && !(ep >= 0)) return <StatusPage code="404" title="集数无效" description="链接中的集数格式有误。" />
+  if (isEpisode && !ep) return <StatusPage code="404" title="集数无效" description="链接中的集数格式有误。" />
+  // 集的键统一为规范写法（"SP01" → "sp1"、"ncop" → "ncop1"、"012" → "12"）
+  if (isEpisode && rawKey !== epKey)
+    return <Navigate replace to={`${epBase}${urlIh ? `/hash/${seg(urlIh)}${urlIndex !== null ? `/file/${urlIndex}` : ""}` : ""}${loc.search}`} state={loc.state} />
   // 统一为小写 hex（base32 / 大写链接）
   if (urlIh && rawIh !== urlIh) return <Navigate replace to={sourceHref(urlIh, urlIndex)} state={loc.state} />
 
@@ -149,7 +155,7 @@ export default function PlaybackPage() {
     if (items.length === 0)
       return (
         <Container className="pb-6 lg:py-5">
-          <EmptyEpisode data={epData!} />
+          <EmptyEpisode data={epData!} ep={ep!} />
         </Container>
       )
   }
@@ -161,7 +167,7 @@ export default function PlaybackPage() {
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
   const side = epData ? (
-    <EpisodeSide data={epData} ih={ih} fileIndex={fileIndex ?? playing} listed={!!listed} playName={ready ? state.play?.name : undefined} hint={hint} selected={selected} onSelect={select} />
+    <EpisodeSide data={epData} ep={ep!} ih={ih} fileIndex={fileIndex ?? playing} listed={!!listed} playName={ready ? state.play?.name : undefined} hint={hint} selected={selected} onSelect={select} />
   ) : epQ.error ? (
     <Card>
       <ErrorState error={epQ.error} onRetry={() => epQ.refetch()} />
@@ -170,7 +176,7 @@ export default function PlaybackPage() {
     <EpisodeSideSkeleton />
   )
   const info = (parts?: Parameters<typeof EpisodeInfo>[0]["parts"]) =>
-    epData ? <EpisodeInfo subject={epData.subject} episode={epData.episode} parts={parts} /> : <EpisodeInfoSkeleton />
+    epData ? <EpisodeInfo subject={epData.subject} ep={ep!} parts={parts} /> : <EpisodeInfoSkeleton />
   const shareURL = (h: string | null, idx: number | null) => `${location.origin}${h ? sourceHref(h, idx) : here}`
 
   return (
@@ -228,6 +234,7 @@ function EpisodeError({ error, retry }: { error: unknown; retry: () => void }) {
 /** 单集页右栏：选集 + 资源（URL 指定但未收录到本集的资源置顶） */
 function EpisodeSide({
   data,
+  ep,
   ih,
   fileIndex,
   listed,
@@ -237,6 +244,7 @@ function EpisodeSide({
   onSelect,
 }: {
   data: EpisodeResponse
+  ep: EpisodeKey
   ih: string | null
   fileIndex: number | null
   listed: boolean
@@ -267,7 +275,7 @@ function EpisodeSide({
   }, [ih, listed, fileIndex, status, playName, hint?.title, hint?.team])
   return (
     <>
-      <EpisodeList subject={data.subject} episode={data.episode} hasItems={data.items.length > 0 || !!ih} />
+      <EpisodeList subject={data.subject} ep={ep} hasItems={data.items.length > 0 || !!ih} />
       <SourceList items={data.items} extra={extra} selected={extra ? sourceKey(extra) : selected} onSelect={onSelect} />
     </>
   )
@@ -306,10 +314,11 @@ function useAutoEpisodeSwitch({ ih, playing, onMapped }: { ih: string | null; pl
     if (q.error && !(isApiError(q.error) && q.error.unavailable)) return setStopped(ih)
     if (data && playing !== null) {
       const f = data.files.find((x) => x.index === playing)
-      const n = f?.episode
-      if (f?.subject && n !== undefined && n >= 0) {
+      // 任意类型的集（正片 / SP / NCOP …）都切换
+      const key = canonicalEpisodeKey(f?.episode_key)
+      if (f?.subject && key) {
         setStopped(ih)
-        onMappedRef.current(episodeSourceHref(f.subject, n, ih, playing))
+        onMappedRef.current(episodeSourceHref(f.subject, key, ih, playing))
         return
       }
       // 收录完成但当前文件没有映射：留在播放页

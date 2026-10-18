@@ -3,6 +3,7 @@ import { Link, Navigate, useParams } from "react-router-dom"
 import { CalendarClock, CalendarDays, ExternalLink, Film, ListVideo, Play, Tv } from "lucide-react"
 import { Container } from "@/components/layout/Container"
 import { Cover } from "@/components/Cover"
+import { airedCount, EpisodeGrid, episodeSummary, useEpisodeChips } from "@/components/EpisodeGrid"
 import { TorrentList, TorrentTableHead } from "@/components/TorrentList"
 import { EmptyState, ErrorState, SectionHeader } from "@/components/states"
 import { Badge } from "@/components/ui/badge"
@@ -14,7 +15,7 @@ import { airStatus, displayTitle } from "@/lib/schedule"
 import { formatDate, timeUntil, WEEKDAYS } from "@/lib/format"
 import { useDocumentTitle, useNow } from "@/lib/hooks"
 import { isApiError } from "@/lib/api"
-import type { ExternalIds } from "@/lib/types"
+import type { ExternalIds, Subject } from "@/lib/types"
 import { cn, episodeHref, watchHref } from "@/lib/utils"
 import { StatusPage } from "./NotFound"
 
@@ -65,8 +66,8 @@ export default function SubjectPage() {
   const title = displayTitle(a)
   const status = airStatus(a, now)
   const latest = a.latest_torrent ?? data.torrents[0]
-  // 已播集数（映射库最新一集 / 时间表估算取较大者）→ 选集
-  const epCount = Math.max(a.latest_episode ?? 0, a.episodes_aired ?? 0)
+  // 已播集数（映射库最新一集 / 时间表估算取较大者）
+  const epCount = airedCount(a)
   const latestEp = a.latest_episode && a.latest_episode > 0 ? a.latest_episode : epCount > 0 ? epCount : null
   // bgm 简介常带大段空行/行尾空格，压缩成最多一个空行
   const summary = (a.summary ?? "").replace(/\r\n?/g, "\n").replace(/[ \t\u3000]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim()
@@ -117,7 +118,7 @@ export default function SubjectPage() {
             <div className="mt-auto flex flex-wrap gap-2 pt-4">
               {latestEp ? (
                 <Button asChild>
-                  <Link to={episodeHref(a, latestEp)}>
+                  <Link to={episodeHref(a, String(latestEp))}>
                     <Play className="fill-current" />
                     播放第 {latestEp} 话
                   </Link>
@@ -174,25 +175,7 @@ export default function SubjectPage() {
           </Card>
         )}
 
-        {epCount > 0 && (
-          <section aria-labelledby="episodes-title">
-            <SectionHeader id="episodes-title" icon={ListVideo} title="选集" extra={<span className="text-xs text-muted-foreground">{epCount} 话</span>} />
-            <div className="grid grid-cols-5 gap-2 sm:grid-cols-8 lg:grid-cols-12">
-              {Array.from({ length: epCount }, (_, i) => i + 1).map((n) => (
-                <Link
-                  key={n}
-                  to={episodeHref(a, n)}
-                  className={cn(
-                    "inline-flex h-10 items-center justify-center rounded-md border bg-card text-[13px] font-medium tabular-nums transition-colors hover:border-primary hover:text-primary-text",
-                    n === latestEp && "border-primary/50 text-primary-text",
-                  )}
-                >
-                  {n}
-                </Link>
-              ))}
-            </div>
-          </section>
-        )}
+        <SubjectEpisodes subject={a} latest={latestEp !== null ? String(latestEp) : null} />
 
         <section aria-labelledby="torrents-title">
           <SectionHeader id="torrents-title" icon={Film} title="种子资源" extra={<span className="text-xs text-muted-foreground">{torrents.length} 个</span>} />
@@ -216,6 +199,18 @@ export default function SubjectPage() {
         </section>
       </Container>
     </div>
+  )
+}
+
+/** 选集：正片 + 特别篇分组（无任何集时不显示） */
+function SubjectEpisodes({ subject, latest }: { subject: Subject; latest: string | null }) {
+  const { chips } = useEpisodeChips(subject)
+  if (chips.length === 0) return null
+  return (
+    <section aria-labelledby="episodes-title">
+      <SectionHeader id="episodes-title" icon={ListVideo} title="选集" extra={<span className="text-xs text-muted-foreground">{episodeSummary(chips)}</span>} />
+      <EpisodeGrid subject={subject} chips={chips} highlight={latest} variant="page" />
+    </section>
   )
 }
 

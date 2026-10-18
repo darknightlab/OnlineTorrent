@@ -116,3 +116,17 @@ func TestEpisodeKey(t *testing.T) {
 }
 
 func ptr(v float64) *float64 { return &v }
+
+func TestJapaneseTextless(t *testing.T) {
+	for in, want := range map[string]string{
+		"[BD] Show ノンテロップOP.mkv":     "ncop1",
+		"[BD] Show ノンクレジットED2.mkv":   "nced2",
+		"[BD] Show ノンテロップ ED 01.mkv": "nced1",
+	} {
+		p := ParseEpisode(in)
+		k, _ := KeyOfFile(p.Kind, p.Episode)
+		if got := k.String(); got != want {
+			t.Errorf("%s: %q want %q (%+v)", in, got, want, p)
+		}
+	}
+}

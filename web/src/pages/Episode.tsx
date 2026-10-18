@@ -1,18 +1,17 @@
-// 单集页（/subject/:provider/:id/episode/:n[/hash/:ih[/file/:index]]）的界面部件；页面逻辑见 watch/Playback.tsx
-import { useEffect, useMemo, useRef } from "react"
+// 单集页（/subject/:provider/:id/episode/:key[/hash/:ih[/file/:index]]）的界面部件；页面逻辑见 watch/Playback.tsx
 import { Link } from "react-router-dom"
-import { useQueryClient } from "@tanstack/react-query"
 import { ChevronRight, Film, HardDrive, Layers, ListVideo, Pin, Sparkles } from "lucide-react"
 import { AccessBadge } from "@/components/badges"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { qk } from "@/lib/queries"
+import { airedCount, EpisodeGrid, useEpisodeChips } from "@/components/EpisodeGrid"
 import { displayTitle } from "@/lib/schedule"
+import { episodeLabel, formatEpisodeKey, type EpisodeKey } from "@/lib/episode"
 import type { EpisodeFile, EpisodeResponse, Subject } from "@/lib/types"
 import { formatBytes, formatDateTime, timeAgo, WEEKDAYS } from "@/lib/format"
 import { useNow } from "@/lib/hooks"
-import { cn, episodeHref, subjectHref } from "@/lib/utils"
+import { cn, subjectHref } from "@/lib/utils"
 import type { PlayerParts } from "./watch/Player"
 
 /** 与 Player 相同的两栏布局（移动端单栏） */
@@ -21,7 +20,7 @@ export const GRID = "grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-5 xl:g
 export const BLEED = "-mx-3 sm:-mx-4 lg:mx-0"
 
 /** 无资源：保留选集，资源区给出提示 */
-export function EmptyEpisode({ data }: { data: EpisodeResponse }) {
+export function EmptyEpisode({ data, ep }: { data: EpisodeResponse; ep: EpisodeKey }) {
   const s = data.subject
   return (
     <div className={GRID}>
@@ -32,14 +31,17 @@ export function EmptyEpisode({ data }: { data: EpisodeResponse }) {
           )}
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/50 px-6 text-center text-white">
             <Film className="h-8 w-8 text-white/80" />
-            <p className="font-medium">第 {data.episode} 话暂无可播放的资源</p>
+            <p className="font-medium">
+              {episodeLabel(ep)}
+              {ep.kind === "main" ? "" : " "}暂无可播放的资源
+            </p>
             <p className="text-xs text-white/70">字幕组发布后会自动出现，可先看看其他集</p>
           </div>
         </div>
-        <EpisodeInfo subject={s} episode={data.episode} />
+        <EpisodeInfo subject={s} ep={ep} />
       </section>
       <aside className="min-w-0 space-y-4 lg:space-y-5">
-        <EpisodeList subject={s} episode={data.episode} hasItems={false} />
+        <EpisodeList subject={s} ep={ep} hasItems={false} />
         <SideSection id="sources-title" icon={Layers} title="资源">
           <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed px-4 py-6 text-center lg:border-0 lg:py-4">
             <p className="text-[13px] text-muted-foreground">本集暂时还没有收录资源，可以在番剧页查看全部种子。</p>
@@ -56,17 +58,13 @@ export function EmptyEpisode({ data }: { data: EpisodeResponse }) {
   )
 }
 
-/** 已播集数（映射库最新一集 / 时间表估算取较大者） */
-function airedCount(s: Subject) {
-  return Math.max(s.latest_episode ?? 0, s.episodes_aired ?? 0)
-}
-
 /** 播放器下方：标题（链接到番剧页）、信息行、操作与统计 */
-export function EpisodeInfo({ subject: s, episode, parts }: { subject: Subject; episode: number; parts?: PlayerParts }) {
+export function EpisodeInfo({ subject: s, ep, parts }: { subject: Subject; ep: EpisodeKey; parts?: PlayerParts }) {
   const title = displayTitle(s)
   const total = airedCount(s)
   const weekly = s.weekday >= 0 && s.weekday <= 6 && s.air_time ? `每${WEEKDAYS[s.weekday]} ${s.air_time} 更新` : null
-  const meta = [`第 ${episode} 话`, total > 0 ? `已更新至第 ${total} 话` : null, weekly].filter(Boolean).join(" · ")
+  // 正片 "第 12.5 话"；特别篇只写 "NCOP1"（不写成 "第 NCOP1 话"）
+  const meta = [episodeLabel(ep), total > 0 ? `已更新至第 ${total} 话` : null, weekly].filter(Boolean).join(" · ")
   return (
     <div className="pt-3 lg:pt-4">
       <Link to={subjectHref(s)} className="group flex items-center gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title="番剧详情">
@@ -115,67 +113,13 @@ export function SideSection({
   )
 }
 
-/** 选集：移动端单行横向滚动，桌面端每行 6 个 */
-export function EpisodeList({ subject: s, episode, hasItems }: { subject: Subject; episode: number; hasItems: boolean }) {
-  const qc = useQueryClient()
+/** 选集：移动端单行横向滚动（特别篇接在正片后），桌面端网格；hasItems：当前集是否有资源 */
+export function EpisodeList({ subject: s, ep, hasItems }: { subject: Subject; ep: EpisodeKey; hasItems: boolean }) {
   const total = airedCount(s)
-  const count = Math.max(total, episode)
-  const list = useRef<HTMLDivElement>(null)
-  const cur = useRef<HTMLAnchorElement>(null)
-  const path = useMemo(() => {
-    const m = episodeHref(s, 1).match(/^\/subject\/([^/]+)\/([^/]+)\//)
-    return m ? { provider: m[1], id: decodeURIComponent(m[2]) } : null
-  }, [s])
-
-  // 当前集滚动到可见区域中间（只滚动列表本身，不滚动页面）
-  useEffect(() => {
-    const box = list.current
-    const el = cur.current
-    if (!box || !el) return
-    if (box.scrollWidth > box.clientWidth) box.scrollLeft = el.offsetLeft - (box.clientWidth - el.offsetWidth) / 2
-    if (box.scrollHeight > box.clientHeight) box.scrollTop = el.offsetTop - (box.clientHeight - el.offsetHeight) / 2
-  }, [episode])
-
-  // 已加载过且确认没有资源的集显示为弱化
-  const empty = (k: number) => {
-    if (k === episode) return !hasItems
-    if (!path) return false
-    const d = qc.getQueryData<EpisodeResponse>(qk.episode(path.provider, path.id, k))
-    return !!d && d.items.length === 0
-  }
-
+  const { chips } = useEpisodeChips(s, ep, hasItems ? undefined : 0)
   return (
     <SideSection id="episodes-title" icon={ListVideo} title="选集" extra={total > 0 ? `已更新至第 ${total} 话` : undefined}>
-      <div
-        ref={list}
-        className={cn(
-          BLEED,
-          "relative flex gap-2 overflow-x-auto px-3 pb-1 scrollbar-none sm:px-4",
-          "lg:grid lg:max-h-[13.5rem] lg:grid-cols-6 lg:overflow-y-auto lg:overflow-x-visible lg:px-0 lg:pb-0",
-        )}
-      >
-        {episodeNumbers(count, episode).map((k) => {
-          const active = k === episode
-          return (
-            <Link
-              key={k}
-              ref={active ? cur : undefined}
-              to={episodeHref(s, k)}
-              aria-current={active ? "page" : undefined}
-              title={`第 ${k} 话`}
-              className={cn(
-                "inline-flex h-10 w-[3.25rem] shrink-0 items-center justify-center rounded-lg border bg-card text-sm font-medium tabular-nums transition-colors lg:w-auto",
-                active
-                  ? "border-primary bg-primary-soft font-semibold text-primary-text"
-                  : "hover:border-primary/60 hover:text-primary-text lg:bg-muted/50 lg:border-transparent lg:hover:bg-card",
-                !active && empty(k) && "text-muted-foreground/60",
-              )}
-            >
-              {k}
-            </Link>
-          )
-        })}
-      </div>
+      <EpisodeGrid subject={s} chips={chips} current={formatEpisodeKey(ep)} variant="side" />
     </SideSection>
   )
 }
@@ -324,11 +268,4 @@ export function EpisodeSideSkeleton() {
       <Skeleton className="h-48 w-full rounded-xl" />
     </div>
   )
-}
-
-/** 选集列表：1..count，再加上当前集（若为小数集如 12.5 或第 0 集），按顺序排列 */
-function episodeNumbers(count: number, current: number) {
-  const list = Array.from({ length: Math.floor(count) }, (_, i) => i + 1)
-  if (!list.includes(current)) list.push(current)
-  return list.sort((a, b) => a - b)
 }
