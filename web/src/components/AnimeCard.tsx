@@ -1,3 +1,4 @@
+import { memo } from "react"
 import { Link } from "react-router-dom"
 import { Info, Play } from "lucide-react"
 import { Cover } from "./Cover"
@@ -11,7 +12,7 @@ export function animeHref(key: string) {
 }
 
 /** 新番时间表卡片（16:9；竖版封面宽度铺满、偏上裁切，以后换成本集截图 / 横版剧照） */
-export function AnimeCard({ item, now }: { item: ScheduleItem; now: number }) {
+export const AnimeCard = memo(function AnimeCard({ item, now }: { item: ScheduleItem; now: number }) {
   const status = airStatus(item, now)
   const title = displayTitle(item)
   const t = item.latest_torrent
@@ -28,7 +29,7 @@ export function AnimeCard({ item, now }: { item: ScheduleItem; now: number }) {
           <Cover src={item.cover} title={title} position="object-[50%_30%]" className="aspect-video w-full transition-transform duration-300 group-hover:scale-[1.03]" />
           {/* 顶部：时间 + 状态 */}
           <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-1 whitespace-nowrap p-1 sm:p-1.5">
-            <span className="rounded bg-black/60 px-1 py-px sm:px-1.5 text-[11px] font-semibold tabular-nums leading-[18px] text-white backdrop-blur-sm">
+            <span className="rounded bg-black/65 px-1 py-px sm:px-1.5 text-[11px] font-semibold tabular-nums leading-[18px] text-white">
               {item.air_time}
             </span>
             {status === "updated" && (
@@ -67,7 +68,7 @@ export function AnimeCard({ item, now }: { item: ScheduleItem; now: number }) {
           aria-label={`${title} 番剧详情`}
           title="番剧详情"
           className={cn(
-            "absolute right-1.5 top-8 hidden h-7 w-7 items-center justify-center rounded-full bg-black/55 text-white opacity-0 backdrop-blur-sm transition-opacity hover:bg-black/75 focus-visible:opacity-100 group-hover:opacity-100 md:inline-flex",
+            "absolute right-1.5 top-8 hidden h-7 w-7 items-center justify-center rounded-full bg-black/65 text-white opacity-0 transition-opacity hover:bg-black/75 focus-visible:opacity-100 group-hover:opacity-100 md:inline-flex",
           )}
         >
           <Info className="h-3.5 w-3.5" />
@@ -75,7 +76,7 @@ export function AnimeCard({ item, now }: { item: ScheduleItem; now: number }) {
       )}
     </div>
   )
-}
+})
 
 export function AnimeCardSkeleton() {
   return (

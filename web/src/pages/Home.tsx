@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from "react"
+import { memo, startTransition, useEffect, useMemo, useState } from "react"
 import useEmblaCarousel from "embla-carousel-react"
 import AutoHeight from "embla-carousel-auto-height"
 import { WheelGesturesPlugin } from "embla-carousel-wheel-gestures"
@@ -56,7 +56,8 @@ function ScheduleSection() {
   // 轮播停在哪天 → 选中哪天
   useEffect(() => {
     if (!embla) return
-    const onSelect = () => setDay(WEEK_ORDER[embla.selectedScrollSnap()])
+    // 低优先级更新，不和拖动动画抢主线程
+    const onSelect = () => startTransition(() => setDay(WEEK_ORDER[embla.selectedScrollSnap()]))
     embla.on("select", onSelect)
     return () => {
       embla.off("select", onSelect)
@@ -142,7 +143,7 @@ function ScheduleSection() {
       ) : (
         // Embla 轮播（loop）：跟手拖动、无缝首尾循环、快速连续滑动不卡；高度跟随当前这天
         <div ref={emblaRef} className="-mx-1.5 overflow-hidden">
-          <div className="flex touch-pan-y items-start transition-[height] duration-200 [touch-action:pan-y_pinch-zoom]">
+          <div className="flex items-start will-change-transform [touch-action:pan-y_pinch-zoom]">
             {WEEK_ORDER.map((w, i) => (
               <DayPanel key={w} weekday={w} items={byDay[i]} pending={isPending} now={now} active={w === day} />
             ))}
