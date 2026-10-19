@@ -228,11 +228,6 @@
   color: var(--muted-foreground);
 }
 
-/* 视频：原生控件 + 主题色 */
-video.kawaii-video {
-  accent-color: var(--primary);
-}
-
 /* 不显示浏览器默认的整页滚动条：它会挤占顶栏宽度，并在数据加载后改变页面宽度（导致轮播错位）。页面仍可正常滚动。 */
 html {
   scrollbar-width: none;

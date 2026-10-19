@@ -1,0 +1,176 @@
+/*
+ * ArtPlayer 主题：与站点一致（主色 #4caf50、进行中 / 下载用蓝色 #2196f3），播放器本身始终是暗色，与站点亮/暗主题无关。
+ * 选择器写成 .art-video-player.art-video-player 以压过 ArtPlayer 运行时注入的样式（注入顺序不确定）。
+ * 网页全屏时播放器会被移到 <body> 下，所以不要依赖外层容器的类名。
+ */
+.art-video-player.art-video-player {
+  --art-theme: #4caf50;
+  --art-progress-height: 6px;
+  --art-progress-color: rgb(255 255 255 / 0.2);
+  --art-hover-color: rgb(255 255 255 / 0.15);
+  --art-loaded-color: rgb(255 255 255 / 0.2);
+  --art-indicator-size: 14px;
+  --art-state-size: 64px;
+  --art-state-opacity: 1;
+  --art-control-opacity: 0.9;
+  --art-control-icon-size: 34px;
+  --art-control-icon-scale: 1;
+  --art-bottom-height: 110px;
+  --art-border-radius: 6px;
+  --art-widget-background: rgb(0 0 0 / 0.85);
+  --art-tip-background: rgb(0 0 0 / 0.8);
+  /* 进度条 piece 图层：已下载 = 蓝（与站点的下载进度条一致），部分下载 = 淡蓝 */
+  --ot-piece-done: rgb(33 150 243 / 0.7);
+  --ot-piece-partial: rgb(33 150 243 / 0.32);
+  font-family: var(--font-sans);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 已缓冲条（浏览器 buffered）叠在 piece 图层之上，较淡 */
+.art-video-player .art-control-progress-inner .ot-progress-pieces {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  background-repeat: no-repeat;
+}
+
+/* 进度条圆点：主色 + 浅色光圈（与旧控件一致） */
+.art-video-player.art-video-player .art-progress-indicator {
+  background-color: var(--art-theme);
+  box-shadow: 0 0 0 3px rgb(76 175 80 / 0.3);
+}
+
+/* 封面：竖版封面完整显示（与原生 <video poster> 一致），两侧留黑 */
+.art-video-player.art-video-player .art-poster {
+  background-size: contain;
+}
+
+/* ArtPlayer 用 <i class="art-icon"> 包裹自定义图标：撑满、取消斜体 */
+.art-video-player.art-video-player .art-icon-state,
+.art-video-player.art-video-player .art-icon-loading {
+  font-style: normal;
+}
+.art-video-player.art-video-player .art-icon-state {
+  width: 100%;
+  height: 100%;
+}
+
+/* 大播放按钮：主色圆形 */
+.art-video-player .ot-state {
+  display: inline-flex;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  background: #4caf50;
+  color: #fff;
+  box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.45);
+  transition: transform 0.15s ease, background-color 0.15s ease;
+}
+.art-video-player .ot-state:hover {
+  background: #43a047;
+  transform: scale(1.05);
+}
+.art-video-player.art-video-player .ot-state svg {
+  width: 44%;
+  height: 44%;
+  margin-left: 6%;
+  fill: #fff;
+}
+.art-video-player.art-video-player .art-state {
+  cursor: pointer;
+}
+/* 解码失败（ArtPlayer 加 .art-error）：显示错误图标、不可点击（下方另有编码提示） */
+.art-video-player.art-error .art-icon-state {
+  display: none;
+}
+.art-video-player.art-video-player.art-error .art-icon-error {
+  display: flex !important;
+  width: 100%;
+  height: 100%;
+  opacity: 0.9;
+}
+.art-video-player.art-video-player.art-error .art-state {
+  pointer-events: none;
+}
+
+/* 移动端稍小 */
+.art-video-player.art-video-player.art-mobile {
+  --art-state-size: 56px;
+}
+
+/* 加载：主色转圈 + 「缓冲中 · 速度」 */
+.art-video-player .ot-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.art-video-player .ot-spin {
+  display: inline-flex;
+  width: 40px;
+  height: 40px;
+  color: #4caf50;
+  animation: ot-spin 0.9s linear infinite;
+}
+.art-video-player.art-video-player .ot-spin svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  filter: drop-shadow(0 0 2px rgb(0 0 0 / 0.5));
+}
+.art-video-player .ot-loading-text {
+  border-radius: 9999px;
+  background: rgb(0 0 0 / 0.6);
+  padding: 4px 10px;
+  font-size: 12px;
+  line-height: 1.2;
+  color: #fff;
+  white-space: nowrap;
+}
+@keyframes ot-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 倍速按钮：文字 */
+.art-video-player .art-control-rate {
+  padding: 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.art-video-player.art-video-player .art-control-rate .art-selector-list {
+  min-width: 72px;
+}
+.art-video-player.art-video-player .art-control-rate .art-selector-item {
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
+/* 时间文字略小、等宽数字 */
+.art-video-player.art-video-player .art-control-time {
+  font-size: 13px;
+  padding: 0 6px;
+}
+
+/* 窄屏（手机竖屏）：控件更紧凑 */
+@media (max-width: 480px) {
+  .art-video-player.art-video-player {
+    --art-padding: 8px;
+    --art-control-icon-size: 30px;
+    --art-progress-top-gap: 6px;
+  }
+  .art-video-player.art-video-player .art-control-time {
+    font-size: 12px;
+    padding: 0 2px;
+  }
+}
+
+/* 键盘聚焦提示（与旧播放器一致） */
+.ot-artplayer:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}

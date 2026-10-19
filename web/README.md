@@ -24,11 +24,13 @@ Mock 模式下的 URL 参数：
 ```
 src/
   lib/        api.ts（类型化客户端，ApiError{status,code}）、types.ts（docs/api.md 对应类型）、
-              queries.ts（TanStack Query hooks）、theme.tsx、format.ts、schedule.ts、utils.ts、hooks.ts
+              queries.ts（TanStack Query hooks）、theme.tsx、format.ts、schedule.ts、utils.ts、hooks.ts、
+              pieces.ts（进度条 piece 图层）
   components/ ui/（button/badge/card/input/dialog/sheet/tabs/dropdown/table/toast…）、layout/（Header、
               MobileTabBar、Footer、Logo、ThemeToggle）、SubjectCard、TorrentList、Cover、Markdown（懒加载）、Turnstile
   pages/      Home、Search、Subject（条目）、Episode（单集，懒加载）、Auth（登录/注册）、Me、NotFound、
-              watch/（Watch、Player、PlayGate、PieceBar、ReportDialog、usePlayResolve）—— 懒加载
+              watch/（Watch、Playback、Player、ArtVideo + artplayer-setup（ArtPlayer，单独 chunk）、PlayGate、ReportDialog、
+              usePlayResolve、useStallWatchdog）—— 懒加载
               admin/（AdminApp + 概览/设置/qB/用户/邀请码兑换码/规则/审核/播放记录/审计）—— 懒加载
   player/     引擎抽象（types.ts）、webtorrent-engine.ts（SW 流式、首尾 piece 优先）、segments.ts（200 段进度）
   mocks/      仅 VITE_MOCK=1 时动态 import；seed.json 为 bgm.tv/bangumi.moe 真实条目快照

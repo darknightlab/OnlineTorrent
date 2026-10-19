@@ -14,7 +14,6 @@ import {
   Info,
   ListTree,
   Loader2,
-  Play,
   RefreshCw,
   ScrollText,
   Server,
@@ -27,8 +26,8 @@ import {
 } from "lucide-react"
 import { loadEngine } from "@/player/engine"
 import { isPlayable, likelyUnsupported, type Engine, type FileKind, type FileSnap, type LogLevel, type Session, type TorrentSnap } from "@/player/types"
-import { segmentCount } from "./PieceBar"
-import { VideoControls } from "./VideoControls"
+import { segmentCount } from "@/lib/pieces"
+import { ArtVideo, loadArtplayer } from "./ArtVideo"
 import { useWebseedEvents } from "./useWebseedEvents"
 import { useStallWatchdog } from "./useStallWatchdog"
 import { ReportDialog } from "./ReportDialog"
@@ -129,20 +128,16 @@ export function Player({
   /** 会话无法继续（如播放器内核不兼容） */
   const [fatal, setFatal] = useState<string | null>(null)
   const [noPicture, setNoPicture] = useState(false)
-  const [buffering, setBuffering] = useState(false)
-  const [needsTap, setNeedsTap] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
   const [tab, setTab] = useState("files")
   const [detailsOpen, setDetailsOpen] = useState(false)
   const [seededBy, setSeededBy] = useState<string[]>([])
   /** 有 WebSeed 权限且已启用：连接 SSE 等待服务器就绪 */
   const [webseedArmed, setWebseedArmed] = useState(false)
+  /** ArtPlayer 内部的 <video>（看门狗用） */
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null)
-  const stageRef = useRef<HTMLDivElement>(null)
   const setVideo = useCallback((el: HTMLVideoElement | null) => {
     videoRef.current = el
-    setVideoEl(el)
   }, [])
   const autoPicked = useRef(false)
   const loc = useLocation()
@@ -167,6 +162,11 @@ export function Player({
 
   const log = useCallback((level: LogLevel, msg: string) => {
     setLogs((l) => [...l.slice(-199), { t: Date.now(), level, msg }])
+  }, [])
+
+  // 预加载 ArtPlayer（单独的 chunk），通常在种子元数据就绪前完成
+  useEffect(() => {
+    loadArtplayer().catch(() => {})
   }, [])
 
   // 启动引擎
@@ -349,15 +349,22 @@ export function Player({
   useEffect(() => {
     setMediaError(null)
     setNoPicture(false)
-    setNeedsTap(false)
   }, [current])
 
-  // 自动播放（可能被浏览器拦截，则显示播放按钮）
-  useEffect(() => {
-    const v = videoRef.current
-    if (!v || !url || file?.kind !== "video") return
-    v.play().catch(() => setNeedsTap(true))
-  }, [url, file?.kind])
+  const onLoadedMetadata = useCallback(
+    (v: HTMLVideoElement) => {
+      if (v.videoWidth === 0 && v.duration > 0) setNoPicture(true)
+      session?.setMediaDuration?.(v.duration)
+    },
+    [session],
+  )
+  const onMediaError = useCallback(
+    (err: MediaError) => {
+      setMediaError(err.message || `MediaError ${err.code}`)
+      log("error", `视频解码失败：${err.message || `code ${err.code}`}`)
+    },
+    [log],
+  )
 
   const infoHash = snap?.infoHash ?? play?.infohash ?? hint?.infohash ?? null
   const title = snap?.name ?? play?.name ?? hint?.title ?? "正在获取种子信息…"
@@ -447,48 +454,31 @@ export function Player({
       <section className="min-w-0">
         {/* 播放区：移动端吸顶、全宽 */}
         <div className="sticky top-[env(safe-area-inset-top)] z-20 -mx-3 bg-black sm:-mx-4 md:top-14 lg:static lg:mx-0 lg:overflow-hidden lg:rounded-xl lg:shadow-lg">
-          <div
-            ref={stageRef}
-            tabIndex={url && file?.kind === "video" ? 0 : undefined}
-            aria-label={url && file?.kind === "video" ? "视频播放器（空格播放/暂停，←/→ 快退/快进，↑/↓ 音量，f 全屏，m 静音）" : undefined}
-            className="relative aspect-video w-full overflow-hidden bg-black outline-none select-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
-          >
+          <div className="relative aspect-video w-full overflow-hidden bg-black select-none">
             {/* 未出画面时：竖版封面两侧用模糊背景填满，避免大片纯黑 */}
             {poster && !url && (
-              <div
-                aria-hidden
-                className="absolute inset-0 scale-110 bg-cover bg-center opacity-50 blur-2xl"
-                style={{ backgroundImage: `url("${poster}")` }}
-              />
+              <>
+                <div
+                  aria-hidden
+                  className="absolute inset-0 scale-110 bg-cover bg-center opacity-50 blur-2xl"
+                  style={{ backgroundImage: `url("${poster}")` }}
+                />
+                <div aria-hidden className="absolute inset-0 bg-contain bg-center bg-no-repeat" style={{ backgroundImage: `url("${poster}")` }} />
+              </>
             )}
             {file?.kind === "video" || !file ? (
-              <video
-                key={`${current}-${url ?? ""}`}
-                ref={setVideo}
-                className="kawaii-video absolute inset-0 h-full w-full"
-                src={url ?? undefined}
-                poster={poster}
-                playsInline
-                preload="metadata"
-                onWaiting={() => setBuffering(true)}
-                onPlaying={() => {
-                  setBuffering(false)
-                  setNeedsTap(false)
-                }}
-                onCanPlay={() => setBuffering(false)}
-                onLoadedMetadata={(e) => {
-                  const v = e.currentTarget
-                  if (v.videoWidth === 0 && v.duration > 0) setNoPicture(true)
-                  session?.setMediaDuration?.(v.duration)
-                }}
-                onError={(e) => {
-                  const err = e.currentTarget.error
-                  if (err) {
-                    setMediaError(err.message || `MediaError ${err.code}`)
-                    log("error", `视频解码失败：${err.message || `code ${err.code}`}`)
-                  }
-                }}
-              />
+              url && (
+                <ArtVideo
+                  key={url}
+                  url={url}
+                  poster={poster}
+                  segments={segments}
+                  speed={snap?.downloadSpeed ?? 0}
+                  onVideo={setVideo}
+                  onLoadedMetadata={onLoadedMetadata}
+                  onMediaError={onMediaError}
+                />
+              )
             ) : file.kind === "audio" ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-gradient-to-br from-primary/40 to-accent/40 p-6">
                 <FileAudio className="h-12 w-12 text-white/80" />
@@ -498,8 +488,6 @@ export function Player({
             ) : (
               url && <img key={url} src={url} alt={file.name} className="absolute inset-0 h-full w-full object-contain" />
             )}
-
-            {url && file?.kind === "video" && <VideoControls video={videoEl} container={stageRef} segments={segments} suspended={needsTap} />}
 
             {/* 状态浮层 */}
             {fatal ? (
@@ -538,24 +526,6 @@ export function Player({
                   <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 )}
               </Overlay>
-            )}
-            {url && file?.kind === "video" && needsTap && (
-              <button
-                type="button"
-                aria-label="播放"
-                onClick={() => videoRef.current?.play().then(() => setNeedsTap(false)).catch(() => {})}
-                className="absolute inset-0 z-30 flex items-center justify-center bg-black/30 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
-              >
-                <span className="inline-flex h-16 w-16 items-center justify-center rounded-full bg-primary text-white shadow-xl transition-transform hover:scale-105">
-                  <Play className="ml-1 h-7 w-7 fill-current" />
-                </span>
-              </button>
-            )}
-            {url && buffering && !needsTap && (
-              <div className="pointer-events-none absolute left-3 top-3 z-30 inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 text-xs text-white">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                缓冲中 · {formatSpeed(snap?.downloadSpeed ?? 0)}
-              </div>
             )}
           </div>
         </div>
@@ -722,7 +692,7 @@ export function Player({
 
 function Overlay({ children }: { children: React.ReactNode }) {
   return (
-    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 px-6 text-center text-sm text-white backdrop-blur-[2px]">
+    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/60 px-6 text-center text-sm text-white backdrop-blur-[2px]">
       {children}
     </div>
   )
