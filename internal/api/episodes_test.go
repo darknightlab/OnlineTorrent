@@ -43,8 +43,8 @@ func TestEpisodeList(t *testing.T) {
 func TestEpisodesEndpoints(t *testing.T) {
 	s, h := testServer(t)
 	ctx := context.Background()
-	if _, err := s.Meta.W.ExecContext(ctx, `INSERT INTO works(id,key,title,title_cn,type,begin_at,summary,updated_at) VALUES
-		(7,'bgm:400602','葬送のフリーレン','葬送的芙莉莲','tv','2099-09-29T00:00:00Z','x','x')`); err != nil {
+	if _, err := s.Meta.W.ExecContext(ctx, `INSERT INTO works(id,key,title,title_cn,type,begin_at,summary,eps,updated_at) VALUES
+		(7,'bgm:400602','葬送のフリーレン','葬送的芙莉莲','tv','2099-09-29T00:00:00Z','x',28,'x')`); err != nil {
 		t.Fatal(err)
 	}
 	_, _ = s.Meta.W.ExecContext(ctx, `INSERT INTO work_ids VALUES('bgm','400602','bgm:400602'),('bangumi_moe','tag1','bgm:400602')`)

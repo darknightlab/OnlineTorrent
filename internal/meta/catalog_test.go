@@ -64,9 +64,9 @@ func openTest(t *testing.T) *Store {
 func TestCatalogAndSearch(t *testing.T) {
 	ctx := context.Background()
 	s := openTest(t)
-	if _, err := s.W.ExecContext(ctx, `INSERT INTO works(id,key,title,title_cn,aliases,type,begin_at,updated_at) VALUES
-		(1,'bgm:400602','葬送のフリーレン','葬送的芙莉莲','["Frieren: Beyond Journey''s End","Sousou no Frieren"]','tv',?, 'x'),
-		(2,'bgm:1','ぼっち・ざ・ろっく！','孤独摇滚！','["Bocchi the Rock!"]','tv','2022-10-08T15:00:00Z','x')`, "2026-01-01T00:00:00Z"); err != nil {
+	if _, err := s.W.ExecContext(ctx, `INSERT INTO works(id,key,title,title_cn,aliases,type,begin_at,eps,updated_at) VALUES
+		(1,'bgm:400602','葬送のフリーレン','葬送的芙莉莲','["Frieren: Beyond Journey''s End","Sousou no Frieren"]','tv',?,28, 'x'),
+		(2,'bgm:1','ぼっち・ざ・ろっく！','孤独摇滚！','["Bocchi the Rock!"]','tv','2022-10-08T15:00:00Z',12,'x')`, "2026-01-01T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.W.ExecContext(ctx, `INSERT INTO work_ids(provider,ext_id,work_key) VALUES('bgm','400602','bgm:400602'),('bangumi_moe','tag1','bgm:400602')`); err != nil {
@@ -91,9 +91,15 @@ func TestCatalogAndSearch(t *testing.T) {
 	if !ct.Trusted || ct.Status != "ready" || ct.FileCount != 3 || ct.Size != 111 || len(ct.Files) != 3 || len(ct.Tags) != 1 {
 		t.Errorf("catalog row: %+v", ct)
 	}
+	// episode 28 is certain (tag + " - 28" within the planned 28 episodes); the lone
+	// unnumbered NCOP is only *inferred* to be ncop1, so since the decision model it stays
+	// unmapped (key kept for display) and the torrent is queued for the model
 	tm, _ := s.GetTorrentMap(ctx, "aa")
-	if tm.Files[0].Kind != "episode" || tm.Files[0].Work == nil || *tm.Files[0].Episode != 28 || tm.Files[1].Kind != "op" || tm.Files[1].Work == nil || tm.Files[1].EpisodeKey != "ncop1" || tm.Files[0].EpisodeKey != "28" || tm.Files[2].Kind != "other" {
+	if tm.Files[0].Kind != "episode" || tm.Files[0].Work == nil || *tm.Files[0].Episode != 28 || tm.Files[1].Kind != "op" || tm.Files[1].Work != nil || tm.Files[1].EpisodeKey != "ncop1" || tm.Files[0].EpisodeKey != "28" || tm.Files[2].Kind != "other" {
 		t.Errorf("files: %+v", tm.Files)
+	}
+	if jobs, _ := s.ListClefJobs(ctx, 10); len(jobs) != 1 || jobs[0].Infohash != "aa" || jobs[0].Status != "pending" {
+		t.Errorf("clef jobs: %+v", jobs)
 	}
 	if st, _ := s.KnownTorrent(ctx, "bb"); st != "pending" {
 		t.Errorf("bb status %q", st)
@@ -201,12 +207,16 @@ func TestReclassifyAndEpisodeKeys(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// Only certain results rewrite stored rows: NCOP1 and PV01 carry their own number (the
+	// work lists no OP/PV episodes, nothing to check against). The lone unnumbered NCED / SP
+	// used to become nced1 / sp1 — an inference, so since the decision model those rows are
+	// left as they are (Reclassify never unmaps or re-decides existing data).
 	n, err := s.Reclassify(ctx)
-	if err != nil || n != 4 {
+	if err != nil || n != 2 {
 		t.Fatalf("reclassify: %d %v", n, err)
 	}
 	tm, _ := s.GetTorrentMap(ctx, "aa")
-	want := []string{"1", "12.5", "ncop1", "nced1", "pv1", "sp1", "", ""}
+	want := []string{"1", "12.5", "ncop1", "", "pv1", "", "", ""}
 	for i, f := range tm.Files {
 		if f.EpisodeKey != want[i] || (want[i] != "" && (f.Work == nil || f.Work.Key != "bgm:1")) {
 			t.Errorf("file %d: key %q work %+v kind %s", i, f.EpisodeKey, f.Work, f.Kind)
@@ -228,7 +238,7 @@ func TestReclassifyAndEpisodeKeys(t *testing.T) {
 	for _, k := range keys {
 		got = append(got, k.Key.String())
 	}
-	if strings.Join(got, ",") != "1,12.5,sp1,ncop1,nced1,pv1" {
+	if strings.Join(got, ",") != "1,12.5,ncop1,pv1" {
 		t.Errorf("keys: %v", got)
 	}
 	if files, _ := s.EpisodeFiles(ctx, "bgm:1", EpisodeKey{Kind: KeyNCOP, Number: 1}); len(files) != 1 || files[0].Index != 2 {

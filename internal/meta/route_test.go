@@ -3,7 +3,9 @@ package meta
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
+	"time"
 )
 
 // seedFamily inserts works (bgm:{id}), their bgm ids, official main episodes and relations.
@@ -129,84 +131,107 @@ func TestRouteMultiSeasonBatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	const root = "Test Show TV+OVA+Movie/"
-	// old works, no bangumi.moe tag: the anchor comes from the title fragments (测试秀 and
-	// テストショー both name bgm:10)
+	// Old works, no bangumi.moe tag: the anchor comes from the title fragments (测试秀 names
+	// only bgm:10, テストショー names bgm:10 and the OVA bgm:14; bgm:10 wins and is certain).
+	// Since the decision model only files that stay on the certain anchor are mapped by rule.
+	// Changed expectations (were mapped by inference before, now unmapped + queued; the
+	// parsed key is still stored for display):
+	//   - Season 2 / ファイナル folders: season-chain and related-title routing (were 11 / 12);
+	//   - Movie / OVA folders: movie/OVA keyword routing (were 13 / 14; the OVA numbers came
+	//     from matching official episode titles, which is gone);
+	//   - unnumbered NCOPs: "only NCOP of its kind → ncop1" is an inference (were 11 / 10).
 	matchFiles(t, s, "batch", "[整理] 测试秀 (テストショー) TV+OVA+剧场版 合集 (整理时间：2026.07.15)", nil, []fileWant{
 		{root + "TV/Season 1/[G] Test Show - 01 [1080p].mkv", 10, "1"},
 		{root + "TV/Season 1/[G] Test Show - 12 [1080p].mkv", 10, "12"},
-		{root + "TV/Season 2/[G] Test Show S2 - 01 [1080p].mkv", 11, "1"},
-		{root + "TV/Season 2/[G] Test Show S2 - 12 [1080p].mkv", 11, "12"},
-		{root + "TV/Season 2/[G] Test Show S2 - NCOP [1080p].mkv", 11, "ncop1"},
-		{root + "TV/テストショー ファイナル/[G] Test Show - 01 [1080p].mkv", 12, "1"},
-		{root + "TV/テストショー ファイナル/[G] Test Show - 10 [1080p].mkv", 12, "10"},
-		{root + "Movie/[G] Test Show The Movie [1080p].mkv", 13, "1"},
-		{root + "OVA/[G] Test Show OVA はじまりの日 [1080p].mkv", 14, "1"},
-		{root + "OVA/[G] Test Show OVA さよならの日 [1080p].mkv", 14, "2"},
-		{root + "SPs/[G] Test Show - NCOP [1080p].mkv", 10, "ncop1"},
+		{root + "TV/Season 2/[G] Test Show S2 - 01 [1080p].mkv", 0, "1"},
+		{root + "TV/Season 2/[G] Test Show S2 - 12 [1080p].mkv", 0, "12"},
+		{root + "TV/Season 2/[G] Test Show S2 - NCOP [1080p].mkv", 0, "ncop1"},
+		{root + "TV/テストショー ファイナル/[G] Test Show - 01 [1080p].mkv", 0, "1"},
+		{root + "TV/テストショー ファイナル/[G] Test Show - 10 [1080p].mkv", 0, "10"},
+		{root + "Movie/[G] Test Show The Movie [1080p].mkv", 0, "1"},
+		{root + "OVA/[G] Test Show OVA はじまりの日 [1080p].mkv", 0, ""},
+		{root + "OVA/[G] Test Show OVA さよならの日 [1080p].mkv", 0, ""},
+		{root + "SPs/[G] Test Show - NCOP [1080p].mkv", 0, "ncop1"},
 		{root + "TV/Season 1/[G] Test Show - 01 [1080p].ass", 0, ""},
 	})
 	tm, _ := s.GetTorrentMap(context.Background(), "batch")
 	if m := tm.Files[0].Method; m != "title+name" {
 		t.Errorf("anchor method %q", m)
 	}
-	if m := tm.Files[2].Method; m != "title+season+name" {
-		t.Errorf("routed method %q", m)
+	if m := tm.Files[2].Method; m != "" {
+		t.Errorf("unmapped method %q", m)
+	}
+	// the rules' guesses are kept as hints for the decision model
+	task, err := s.BuildClefTask(context.Background(), "batch", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(task.Files) != 9 || !task.PerFile {
+		t.Errorf("clef task: %d files, per-file %v", len(task.Files), task.PerFile)
+	}
+	hints := map[int]string{}
+	for _, f := range task.Files {
+		hints[f.Index] = f.Hint
+	}
+	if hints[2] != "bgm:11" || hints[5] != "bgm:12" || hints[7] != "bgm:13" || hints[8] != "bgm:14" || hints[10] != "bgm:10" {
+		t.Errorf("hints %v", hints)
+	}
+	cands := map[string]bool{}
+	for _, c := range task.Candidates {
+		cands[c.WorkKey] = true
+	}
+	for _, k := range []string{"bgm:10", "bgm:11", "bgm:12", "bgm:13", "bgm:14"} {
+		if !cands[k] {
+			t.Errorf("candidate %s missing: %+v", k, task.Candidates)
+		}
 	}
 
-	// the anchor is season 2 (tagged); its title says 第二季, so S2 / S3 land on 11 / 12
+	// the anchor is season 2 (tagged; its title says 第二季): S2 files are certain, S3 files
+	// (season-chain routing, was 12) and the unnumbered NCOP (was ncop1 of 11) are queued
 	matchFiles(t, s, "s2s3", "[G] Test Show S2+S3 [BD]", []string{"tag11"}, []fileWant{
 		{"Show/S2/[G] Test Show S2 - 01.mkv", 11, "1"},
-		{"Show/S3/[G] Test Show S3 - 01.mkv", 12, "1"},
-		{"Show/[G] Test Show - NCOP.mkv", 11, "ncop1"},
+		{"Show/S3/[G] Test Show S3 - 01.mkv", 0, "1"},
+		{"Show/[G] Test Show - NCOP.mkv", 0, "ncop1"},
 	})
 	// a single-season S2 torrent tagged with S2 stays on the anchor
 	matchFiles(t, s, "s2only", "[G] Test Show S2 - 05 [1080p]", []string{"tag11"}, []fileWant{
 		{"[G] Test Show S2 - 05 [1080p].mkv", 11, "5"},
 	})
-	// an implausible season group (14 episodes for a 10-episode work) is left unmapped;
-	// the same numbers in another season do not clash
+	// season 3 files are not mapped (routing is a guess); they keep their parsed numbers
+	// (the old plausibility check that cleared them is gone)
 	matchFiles(t, s, "implausible", "[G] Test Show S1+S3", []string{"tag10"}, func() []fileWant {
 		w := []fileWant{{"Show/Season 1/[G] Test Show - 01.mkv", 10, "1"}}
 		for i := 1; i <= 14; i++ {
-			w = append(w, fileWant{fmt.Sprintf("Show/Season 3/[G] Test Show S3 - %02d.mkv", i), 0, ""})
+			w = append(w, fileWant{fmt.Sprintf("Show/Season 3/[G] Test Show S3 - %02d.mkv", i), 0, fmt.Sprint(i)})
 		}
 		return w
 	}())
-	// season 4 is not in the chain: unmapped (not guessed onto the anchor)
+	// season 4 is not in the chain: unmapped
 	matchFiles(t, s, "s4", "[G] Test Show S1+S4", []string{"tag10"}, []fileWant{
 		{"Show/Season 1/[G] Test Show - 01.mkv", 10, "1"},
-		{"Show/Season 4/[G] Test Show S4 - 01.mkv", 0, ""},
+		{"Show/Season 4/[G] Test Show S4 - 01.mkv", 0, "1"},
 	})
-	// within one work the old clash rule stands: two contents with the same number
+	// two contents with the same number within one work: ambiguous, no number → no longer
+	// mapped to the work either (was work 10 without episode)
 	matchFiles(t, s, "clash", "[G] Test Show", []string{"tag10"}, []fileWant{
-		{"Show/[G] Test Show - 01.mkv", 10, ""},
-		{"Show/[H] Other Cut - 01.mkv", 10, ""},
+		{"Show/[G] Test Show - 01.mkv", 0, ""},
+		{"Show/[H] Other Cut - 01.mkv", 0, ""},
 	})
 
-	// stored rows are re-routed by Reclassify the same way (anchor = unrouted files' work)
+	// Reclassify only rewrites stored rows with certain results: Season 1 gets its numbers
+	// back, the routed files keep their stored (old) mapping (was: re-routed to 11 / 14)
 	if _, err := s.W.Exec(`UPDATE torrent_files SET work_key = 'bgm:10', episode = NULL, method = 'title+name' WHERE infohash = 'batch' AND kind != 'other'`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Reclassify(context.Background()); err != nil {
-		t.Fatal(err)
+	if n, _ := s.Reclassify(context.Background()); n == 0 {
+		t.Error("reclassify changed nothing")
 	}
-	if tm, _ := s.GetTorrentMap(context.Background(), "batch"); tm.Files[3].Work == nil || tm.Files[3].Work.ID != 11 || tm.Files[3].EpisodeKey != "12" ||
-		tm.Files[9].Work == nil || tm.Files[9].Work.ID != 14 || tm.Files[9].EpisodeKey != "2" {
-		t.Errorf("reclassify: %+v / %+v", tm.Files[3], tm.Files[9])
+	if tm, _ := s.GetTorrentMap(context.Background(), "batch"); tm.Files[0].EpisodeKey != "1" || tm.Files[3].Work == nil || tm.Files[3].Work.ID != 10 || tm.Files[3].EpisodeKey != "" ||
+		tm.Files[9].Work == nil || tm.Files[9].Work.ID != 10 || tm.Files[9].EpisodeKey != "" {
+		t.Errorf("reclassify: %+v / %+v / %+v", tm.Files[0], tm.Files[3], tm.Files[9])
 	}
 	if n, _ := s.Reclassify(context.Background()); n != 0 {
 		t.Errorf("second reclassify changed %d", n)
-	}
-	// the subject lists see the torrent under every work it holds
-	for _, k := range []string{"bgm:10", "bgm:11", "bgm:12", "bgm:13", "bgm:14"} {
-		list, _ := s.TorrentsByWork(context.Background(), k, 10, false)
-		found := false
-		for _, x := range list {
-			found = found || x.Infohash == "batch"
-		}
-		if !found {
-			t.Errorf("%s: batch not listed", k)
-		}
 	}
 }
 
@@ -222,7 +247,7 @@ func TestRouteAnchorSeasonFromTitle(t *testing.T) {
 	}
 	matchFiles(t, s, "o", "[G] Another S2-S3", []string{"t21"}, []fileWant{
 		{"Another/Season 2/[G] Another S2 - 03.mkv", 21, "3"},
-		{"Another/Season 3/[G] Another S3 - 03.mkv", 22, "3"},
+		{"Another/Season 3/[G] Another S3 - 03.mkv", 0, "3"}, // season-chain routing: queued (was 22)
 	})
 }
 
@@ -239,8 +264,11 @@ func TestRouteKeepsAnchor(t *testing.T) {
 	if _, err := s.W.Exec(`INSERT INTO work_ids(provider,ext_id,work_key) VALUES('bangumi_moe','t31','bgm:31')`); err != nil {
 		t.Fatal(err)
 	}
+	// the tagged second cour: "14" is not in its official list (1–12) as written, and the
+	// file names the first cour's distinctive title — both inferences now, so it is queued
+	// (was 31 / 14 via the "all files moved onto one other work" fallback)
 	matchFiles(t, s, "cour2", "[G] Mahou no Lulu - 14", []string{"t31"}, []fileWant{
-		{"[G] Mahou no Lulu - 14 [1080p].mkv", 31, "14"},
+		{"[G] Mahou no Lulu - 14 [1080p].mkv", 0, "14"},
 	})
 	matchFiles(t, s, "remake", "[G] Remake Show (2024) - 01", nil, []fileWant{
 		{"[G] Remake Show (2024) - 01.mkv", 0, "1"},
@@ -285,5 +313,61 @@ func TestRouteSeasonHints(t *testing.T) {
 		if got := nameHint(in).Type; got != want {
 			t.Errorf("%q: type %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestNumberOptions(t *testing.T) {
+	ids := func(p, title string, single bool) string {
+		var out []string
+		for _, n := range NumberOptions(p, title, single) {
+			out = append(out, n.ID)
+		}
+		return strings.Join(out, ",")
+	}
+	for in, want := range map[string]string{
+		"[G] Show - 03 [1080p][ABCD1234].mkv":          "n_03,n_1080,n_1234",
+		"Show/Season 2/Show.S02E05.1080p.x264.mkv":     "n_02,n_05,n_1080,n_264",
+		"赤影疾风.Akai.Hayate.1991.OVA.E01.480p.LDRip.mkv": "n_1991,n_01,n_480",
+		"[G] Show - 12.5 [AAC 5.1ch].mkv":              "n_12.5,n_5,n_1",
+	} {
+		if got := ids(in, "", false); got != want {
+			t.Errorf("%q: %s, want %s", in, got, want)
+		}
+	}
+	// a single-video torrent: the title's numbers too; duplicates by value once
+	if got := ids("abc.mkv", "[G] Show - 07 [1080p]", true); got != "n_07,n_1080" {
+		t.Errorf("single: %s", got)
+	}
+	if n := NumberOptions("[G] Show - 03 [1080p].mkv", "", false); !strings.Contains(n[0].Context, "⟦03⟧") || !strings.HasPrefix(n[0].Context, "file name: ") {
+		t.Errorf("context %q", n[0].Context)
+	}
+}
+
+// rule tightening: the same work found by an exact title fragment maps by rule; found only
+// by an alias substring (or with a season the work doesn't state) it is queued with a hint
+func TestUncertainAnchorsQueue(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	begin := time.Now().AddDate(0, -2, 0).UTC().Format(time.RFC3339) // recent: in the alias index
+	seedFamily(t, s, []testWork{{id: 50, title: "ルルの姉妹", cn: "露露姐妹", typ: "tv", begin: begin, eps: 12, aliases: `["Mahou no Lulu"]`, running: true}}, nil)
+	matchFiles(t, s, "exact", "[G] Mahou no Lulu - 03 [1080p]", nil, []fileWant{{"[G] Mahou no Lulu - 03 [1080p].mkv", 50, "3"}})
+	matchFiles(t, s, "alias", "[G] Mahou no Lulu Director's Cut - 03 [1080p]", nil, []fileWant{{"[G] Mahou no Lulu Director's Cut - 03 [1080p].mkv", 0, "3"}})
+	matchFiles(t, s, "season", "[G] Mahou no Lulu S2 - 03 [1080p]", nil, []fileWant{{"[G] Mahou no Lulu S2 - 03 [1080p].mkv", 0, "3"}})
+	// an episode outside the official list (12 episodes) is not certain either
+	matchFiles(t, s, "range", "[G] Mahou no Lulu - 13 [1080p]", nil, []fileWant{{"[G] Mahou no Lulu - 13 [1080p].mkv", 0, "13"}})
+	jobs, _ := s.ListClefJobs(ctx, 10)
+	queued := map[string]bool{}
+	for _, j := range jobs {
+		queued[j.Infohash] = true
+	}
+	if queued["exact"] || !queued["alias"] || !queued["season"] || !queued["range"] {
+		t.Errorf("queued %v", queued)
+	}
+	task, _ := s.BuildClefTask(ctx, "alias", false)
+	if len(task.Files) != 1 || task.Candidates[0].WorkKey != "bgm:50" || task.Candidates[0].Why != "anchor" {
+		t.Errorf("alias task %+v", task)
+	}
+	if task, _ := s.BuildClefTask(ctx, "season", false); task.Files[0].Season != 2 || task.Candidates[0].Season != 1 || task.Candidates[0].SeasonFits(2) {
+		t.Errorf("season task %+v", task)
 	}
 }

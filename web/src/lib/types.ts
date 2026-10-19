@@ -719,3 +719,153 @@ export interface SubjectTag {
 
 /** 列表接口统一处理：后端可能返回数组或分页对象 */
 export type ListLike<T> = T[] | Paged<T>
+
+// ---- 决策模型（Cloudflare Clef，后台 /admin/clef） ----
+
+export type ClefStatusName = "applied" | "pending" | "rejected" | "discarded"
+
+export interface ClefThresholds {
+  metric: "prob" | "confidence"
+  apply: number
+  margin: number
+  review: number
+}
+
+export interface ClefJob {
+  infohash: string
+  title: string
+  status: "pending" | "done" | "failed" | "expired"
+  attempts: number
+  requests: number
+  next_at: string
+  last_error: string
+  created_at: string
+  updated_at: string
+}
+
+/** GET /admin/clef */
+export interface ClefStatus {
+  enabled: boolean
+  configured: boolean
+  model: string
+  base_url: string
+  thresholds: ClefThresholds
+  rate_per_min: number
+  daily_cap: number
+  /** 今日（UTC）已发请求数 */
+  today: number
+  jobs: Record<string, number>
+  decisions: Record<string, number>
+  recent_jobs: ClefJob[]
+  current?: string
+  last_error?: string
+  last_error_at?: string
+  last_ok_at?: string
+  session: { requests: number; input_tokens: number }
+}
+
+export interface ClefOptionP {
+  id: string
+  p: number
+}
+
+export interface ClefAnswerSummary {
+  choice: string
+  confidence: number
+  top: ClefOptionP[]
+  /** 条目问题：去掉没有该集 / 季数不符的候选后重新归一化的概率 */
+  conditioned?: ClefOptionP[]
+}
+
+/** 一条决策（GET /admin/clef/decisions） */
+export interface ClefDecision {
+  id: number
+  infohash: string
+  file_index: number
+  path: string
+  torrent_title: string
+  work_key?: string
+  subject_id?: number
+  title?: string
+  title_cn?: string
+  kind: string
+  episode: number | null
+  episode_key?: string
+  score: number
+  margin: number
+  confidence: number
+  answers: Record<string, ClefAnswerSummary>
+  model: string
+  status: ClefStatusName
+  reason: string
+  created_at: string
+  decided_at?: string
+  decided_by?: string
+}
+
+export interface ClefCandidate {
+  id: string
+  work_key: string
+  subject_id: number
+  title: string
+  cn?: string
+  aliases?: string[]
+  air_date?: string
+  eps?: number
+  type?: string
+  season?: number
+  why: "anchor" | "hint" | "search" | "related"
+}
+
+export interface ClefNumber {
+  id: string
+  value: number
+  context: string
+}
+
+export interface ClefFile {
+  index: number
+  path: string
+  kind: string
+  numbers: ClefNumber[]
+  hint?: string
+  season?: number
+}
+
+export interface ClefFileDecision {
+  file: ClefFile
+  candidate?: ClefCandidate
+  kind: string
+  episode?: number
+  episode_key?: string
+  score: number
+  margin: number
+  confidence: number
+  answers: Record<string, ClefAnswerSummary>
+  status: ClefStatusName
+  reason?: string
+}
+
+export interface ClefRuleFile {
+  index: number
+  path: string
+  kind: string
+  work_key?: string
+  episode?: number
+  queue: boolean
+  hint?: string
+}
+
+/** POST /admin/clef/test */
+export interface ClefTestResponse {
+  rules: ClefRuleFile[]
+  outcome: {
+    task: { infohash: string; title: string; published?: string; files: ClefFile[]; candidates: ClefCandidate[]; per_file: boolean }
+    model: string
+    requests: { Files: number[]; EstTokens: number }[] | null
+    decisions: ClefFileDecision[]
+    usage: { input_tokens: number; output_tokens: number }
+    sent: number
+  } | null
+  error?: string
+}

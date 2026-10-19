@@ -61,6 +61,7 @@ func (s *Server) adminRoutes(mux *http.ServeMux) {
 	adm("GET", "/api/v1/admin/trackers", "Tracker · 查看", s.adminTrackers)
 	adm("GET", "/api/v1/admin/rank-rules", "推荐规则 · 查看", s.adminGetRankRules)
 	adm("PUT", "/api/v1/admin/rank-rules", "推荐规则 · 修改", s.adminPutRankRules)
+	s.adminClefRoutes(mux)
 }
 
 func pathID(r *http.Request) int64 {

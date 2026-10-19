@@ -134,7 +134,7 @@ RSS 条目 → infohash + 文件列表：
 3. 文件分类：视频扩展名；排除 NCOP/NCED/PV/CM/Menu/Sample/特典；集数解析；kind = episode|sp|op|ed|extra|other。
 4. 刮削：沿用 meta.match（bangumi.moe 标签 → 强匹配；标题/别名模糊匹配），写 torrent_files(work_key, episode, confidence, method)。低可信度进入后台待确认（TODO UI）。
    - 已实现：torrent_files 现在保存全部文件（非视频 kind=other）；`meta.ClassifyFile` 处理 SPs/特典 目录与 Sample；所有抓取源的种子均受信（取代原来的「Source == bangumi.moe」判断；源上不再有 trusted 开关）（otd.db torrents.trusted、meta.db torrents.trusted）；会员 seed 后由做种检查（postCheck + 10 分钟复查）入库刮削；元数据队列的种子被做种请求时转入做种分类（`qb.Pool.Push` → adoptMeta）。
-   - 待改进：标题/别名匹配命中率一般（如 Skymoon/ANi 的罗马音标题），可加 FTS 候选 + 相似度打分。
+   - 待改进：标题/别名匹配命中率一般（如 Skymoon/ANi 的罗马音标题），可加 FTS 候选 + 相似度打分。→ 2026-10：规则只映射确定的文件，其余由决策模型 Clef 在 FTS 候选中选择（见「映射关系」→「规则收紧 + 决策模型 Clef」）。
 RSS 信息（标题、发布时间、字幕组、来源条目 ID）作补充；文件列表以种子为准。
 
 ### 3. 搜索（本地优先 + 外部按需）✅（旧 `GET /api/v1/torrents/search` 已删除）
@@ -218,3 +218,31 @@ GitHub release 支持 Range（不支持后缀式 `bytes=-N`，要用绝对区间
 - 种子内的每个文件最多对应一集（集属于某个条目）；一集可以对应多个文件。
 - 结构已满足（`torrent_files` 按文件存 `work_key` + 集）。
 - ✅ 已实现（`internal/meta/route.go`）：种子级匹配（bangumi.moe 标签 → 近期别名 → 标题片段精确匹配任意年代条目，片段里的年份须与开播年相符）得到锚点条目；每个视频文件从文件名到外层文件夹逐级判断：剧场版/OVA 关键词 → 关联条目中同类型的（多个时按独有标题、年份区分）；季号 → 沿 前传/续集（2/3）排出的 TV/WEB 季链第 N 个（锚点自身标题含季号时按它定位）；关联条目的独有标题 → 该条目；否则锚点。分组后按（条目, 类型, 集）做冲突检测；剧场版/OVA 文件转为正片，剧场版唯一视频为第 1 集，无集号的按官方章节标题/播出日期对上；非锚点分组用官方章节数核对，不合理则不映射。一次性重刮标志 `reclassify_match_v3`。
+
+### 规则收紧 + 决策模型 Clef（2026-10）
+规则只在**确定**时直接映射，其余文件留空并交给 Cloudflare Workers AI 的决策模型 Clef（`@cf/cloudflare/clef-flash`，只输出我们给定选项的概率，不生成文本）。数据库里已有的映射不重新处理（`Reclassify` 只用确定的结果改写旧行，不确定时保留原值；一次性重刮标志未升级）。
+
+**确定**（`internal/meta`：`resolveWork` → `route` → `mapFiles`）= 同时满足：
+1. 锚点确定：bangumi.moe 标签；或标题片段（normName 后）**精确等于**恰好一个条目的标题 / 中文名 / 别名（得分最高且有只属于它的片段，年份须相符），且标题里的季号与该条目自身标题的季号一致（S1 也可对无季号条目）。
+2. 文件留在锚点上、没有相反线索：文件名 / 目录的季号就是锚点的季（或 S1 + 锚点是季链第一个）；剧场版 / OVA 关键词与锚点类型一致（或没有该类型的关联条目）；不含其他关联条目的独有标题。
+3. 集数确定（`ParsedName.Sure`）：显式标记（S01E02 / EP02 / 第2话）、` - 02`、单独括号 `[02]`、特别篇自带编号（SP02、NCOP2）。
+4. 集的键**按文件原样**在该条目官方章节里（`officialSet.valid`：该类型有官方章节 → 必须在列表中；无正片章节 → 0 < n ≤ 话数；该类特别篇无官方章节（OP/ED/PV/CM 常见）→ 接受）。
+
+**改为不确定（交给模型）的规则路径**（之前直接映射）：
+| 位置 | 原规则 |
+|---|---|
+| `match.go` `resolveWork` | 近期作品别名**子串**匹配（alias）；标题片段匹配需要打破平局（得分最多 / 优先 TV）；标题季号与条目不符 |
+| `route.go` `route` | 季号 → 沿 前传/续集 季链定位第 N 季；关联条目独有标题（目录）路由；剧场版/OVA 关键词路由到关联条目；「所有文件都被移到另一个条目 → 回到锚点」；「季号不在季链 / 季链为空 → 锚点」 |
+| `route.go` `refineRouted` | 无集号正片按官方章节标题 / 播出日期对上（`matchEpisodeTitles`，已删除）；路由组按官方章节数做合理性检查（`plausible`，已删除） |
+| `parse.go` | 裸数字（`Show 03`）、括号双数字取小者（`[03_51]`）、单视频取种子标题的集号、唯一无编号特别篇 → 1、同键冲突（本来就不映射） |
+| `episodes_bgm.go` | 分割放送换算（文件 01 → 官方 13）：规则只接受原样在官方列表中的键；模型的答案按 `CanonicalKey` 换算后校验 |
+
+**决策模型**（`internal/clef`，worker 在 otd 内；映射库迁移 9：`clef_jobs`、`clef_decisions`）：
+- 入队：`Match` 发现不确定的视频文件 → `clef_jobs`（每个种子一个）；worker 取最新的到期任务，只处理 3 天内入队的（停用期间的积压过期）。
+- 每个种子：候选条目 ≤ 20（规则锚点与推测、标题 / 文件名 FTS 命中、前几名的 前传/续集/关联条目），选项 id `bgm_624085`，criteria = `{title, cn, aliases, air_date, eps, type, season}` + `none`；**条目请求**：`subject`（choice）+ 每个候选一个是/否问题 `v_bgm_…`（「正是这个条目吗」）；**集数请求**：每个文件 `f{i}_ep`（文件名中的数字 `n_03`、`n_1080`… + none）与 `f{i}_kind`（main/sp/op/ed/pv/cm/other）；多季合集等文件属于不同条目时改为逐文件 `f{i}_subject`。state = `{a_torrent, b_files, c_published}`。超过 64 个问题或 token 预算时拆分。
+- 校验：条目必须是候选；类型 + 数字 → 集的键，经 `CanonicalKey`（分割放送换算）后必须在官方章节里；与文件名季号不符的候选概率置 0 后重新归一化（条件化）。
+- 判定（阈值后台可改，校准见 [research/clef-calibration.md](research/clef-calibration.md)）：指标 = 各问题概率的最小值（条目取是/否问题的「是」概率），≥ 0.8 且概率差 ≥ 0.3 → 直接写入（`torrent_files.method = 'clef'`，之后的自动匹配不覆盖）；≥ 0.5 → 审核队列；以下不映射。条目早已完结（完结 > 1 年 / 无完结日期且开播 > 2 年）一律进审核（同名重制 / 新作可能尚未收录）。
+- 每个文件一条 `clef_decisions`（选择、前几名概率、指标、模型、状态 applied/pending/rejected/discarded、原因）；后台可接受 / 拒绝 / 撤销（撤销 = 文件改为未映射且 verified）。
+- 限流（每分钟请求数）、每日上限（UTC），失败指数退避（5/10/20/40 分钟，最多 5 次）；免费额度用尽（4006）与每日上限一样顺延到次日。
+- 后台页 `/admin/clef`：状态、设置（「决策模型」组）、试运行、决策记录 / 审核队列、最近任务。
+- 待改进：官方章节滞后（每周 dump）时，最新一集会被校验拒绝（discarded，不会自动重试）；独立部署的 metad 没有 worker（任务只入队）；多季合集的逐文件条目问题没有是/否确认，校准样本少。

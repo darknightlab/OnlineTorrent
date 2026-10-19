@@ -56,6 +56,12 @@ type ParsedName struct {
 	// names holding several different seasons ("S1+S2") do not count. ClassifyFile(s) fall
 	// back to the innermost folder carrying a season.
 	Season float64
+	// Sure: the number comes from an unambiguous marker — an explicit episode form (S01E02,
+	// EP02, 第2话), " - 02", an isolated bracket "[02]", or a special's own number ("SP02",
+	// "NCOP 2") — and was not inferred (bare numbers, the smaller of a bracket pair, the
+	// torrent title of a single video, the only unnumbered special of its kind → 1, …).
+	// Rule-based mapping only maps sure numbers; the rest goes to the decision model.
+	Sure bool
 }
 
 // ---------------------------------------------------------------------------------------
@@ -877,7 +883,7 @@ func parseName(name string, allowBare bool) analysis {
 		}
 		switch {
 		case len(own) == 1:
-			a.Episode, a.Confidence, a.numIdx, a.strong = ptrF(own[0]), 0.6, ownIdx, true
+			a.Episode, a.Confidence, a.numIdx, a.strong, a.Sure = ptrF(own[0]), 0.6, ownIdx, true, true
 		case len(own) > 1:
 			a.Confidence = 0.2 // "SP1 SP2": ambiguous
 		default:
@@ -893,6 +899,7 @@ func parseName(name string, allowBare bool) analysis {
 			case len(all) == 1:
 				a.Episode, a.Confidence, a.numIdx = ptrF(toks[all[0]].num), 0.5, all[0]
 				a.strong = tierOf(toks, all[0], allowBare) >= tierBracket
+				a.Sure = a.strong
 			case len(all) == 0:
 				a.Confidence, a.noNum = 0.3, true
 			default:
@@ -915,6 +922,7 @@ func parseName(name string, allowBare bool) analysis {
 		}
 		a.Kind, a.Episode, a.Confidence, a.numIdx = "episode", ptrF(v), tierConf[best], cands[0]
 		a.strong = best >= tierBracket
+		a.Sure = a.strong
 	case len(cands) > 1:
 		a.Kind, a.Confidence = "episode", 0.2 // several different candidates: ambiguous
 	default: // nothing left (or only a batch range "01-12")
@@ -1082,7 +1090,7 @@ func classifyOneKind(p, title string, videos int) (ParsedName, fileInfo) {
 		}
 		// a folder of one special kind: the file name may only carry a number
 		if r.Episode != nil {
-			return ParsedName{Kind: dk, Episode: r.Episode, Confidence: 0.5}, info
+			return ParsedName{Kind: dk, Episode: r.Episode, Confidence: 0.5, Sure: r.Sure}, info
 		}
 		info.noNum = r.Kind == "other" || a.noNum
 		return ParsedName{Kind: dk, Confidence: 0.3}, info
@@ -1092,8 +1100,9 @@ func classifyOneKind(p, title string, videos int) (ParsedName, fileInfo) {
 		switch {
 		case r.Kind == "other" && (t.Kind == "episode" || t.Kind == "sp"):
 			r = t
+			r.Sure = false // inferred from the torrent title
 		case r.Kind == t.Kind && t.Episode != nil:
-			r.Episode, r.Confidence = t.Episode, t.Confidence*0.8
+			r.Episode, r.Confidence, r.Sure = t.Episode, t.Confidence*0.8, false
 		}
 	}
 	return r, info
@@ -1172,7 +1181,7 @@ func classifyFilesIn(paths []string, title string, groups []string) []ParsedName
 	if len(clash) > 0 {
 		for i, r := range out {
 			if infos[i].video && r.Episode != nil && clash[ks{groupOf(i), r.Kind, infos[i].sig}] {
-				out[i].Episode, out[i].Confidence = nil, 0.2
+				out[i].Episode, out[i].Confidence, out[i].Sure = nil, 0.2, false
 			}
 		}
 	}
@@ -1182,7 +1191,7 @@ func classifyFilesIn(paths []string, title string, groups []string) []ParsedName
 			continue
 		}
 		if i := idx[0]; out[i].Episode == nil && infos[i].noNum {
-			out[i].Episode, out[i].Confidence = ptrF(1), 0.4
+			out[i].Episode, out[i].Confidence, out[i].Sure = ptrF(1), 0.4, false
 		}
 	}
 	// consecutive numbering of a special kind inside one folder supports the numbers

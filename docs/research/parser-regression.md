@@ -129,3 +129,13 @@ confidence 0.2, nothing gets mapped.
 `stateReclassify` is now `reclassify_parser_v2`. `ReclassifyOnce` inserts it as `pending`
 (`INSERT OR IGNORE`, Go code, no migration) and runs `Reclassify` once, which now uses
 ClassifyFiles per torrent and rewrites only rows with `status = 'auto'`.
+
+## Follow-up (2026-10): sure numbers
+
+`ParsedName.Sure` marks numbers that come from an unambiguous marker: an explicit form
+(S01E02, EP02, 第2话), ` - 02`, an isolated bracket `[02]`, or a special's own number (SP02, NCOP 2).
+Bare numbers, the smaller of a bracket pair (`[03_51]`), the torrent title's number for a single
+video, and "the only unnumbered special → 1" still parse as before but are not sure. Rule-based
+mapping (route.go / match.go) now maps only sure numbers. The rest goes to the decision model
+(see plan.md 「规则收紧 + 决策模型 Clef」). Kind/number expectations in the parser tests are
+unchanged.

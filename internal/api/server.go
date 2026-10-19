@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/darknightlab/onlinetorrent/internal/catalog"
+	"github.com/darknightlab/onlinetorrent/internal/clef"
 	"github.com/darknightlab/onlinetorrent/internal/crawl"
 	"github.com/darknightlab/onlinetorrent/internal/httpx"
 	"github.com/darknightlab/onlinetorrent/internal/meta"
@@ -34,6 +35,7 @@ type Server struct {
 	Crawl   *crawl.Crawler
 	Pool    *qb.Pool
 	Swarm   *swarm.Service // tracker health + swarm stats (may be nil)
+	Clef    *clef.Service  // decision model (may be nil)
 	Policy  *policy.Engine
 	Log     *slog.Logger
 	WebFS   fs.FS // built SPA (may be nil in dev)

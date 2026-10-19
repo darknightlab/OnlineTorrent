@@ -50,20 +50,34 @@ func (s *Store) Match(ctx context.Context, t TorrentInput) error {
 		}
 	}
 
-	work, method, wconf := s.resolveWork(ctx, t)
+	work, method, wconf, sure := s.resolveWork(ctx, t)
 
 	paths := make([]string, len(t.Files))
 	for i, f := range t.Files {
 		paths[i] = f.Path
 	}
-	res := s.mapFiles(ctx, paths, t.Title, work, method, wconf)
+	res := s.mapFiles(ctx, paths, t.Title, work, method, wconf, sure)
+	queue := false
 	for i, f := range t.Files {
 		kind, wk, ep, conf, m := res[i].kind, res[i].work, res[i].ep, res[i].conf, res[i].method
+		// automatic rows are rewritten, except decision-model mappings (method clef) and, for
+		// an uncertain result, rows that are already mapped: existing mappings stay as they
+		// are (a re-delivered torrent is not re-decided)
+		keep := ``
+		if res[i].queue {
+			keep = ` AND torrent_files.work_key IS NULL`
+		}
 		if _, err := s.W.ExecContext(ctx, `INSERT INTO torrent_files(infohash,file_index,path,size_bytes,kind,work_key,episode,confidence,status,method,updated_at) VALUES(?,?,?,?,?,?,?,?, 'auto', ?, ?)
 			ON CONFLICT(infohash,file_index) DO UPDATE SET path=excluded.path, size_bytes=CASE WHEN excluded.size_bytes>0 THEN excluded.size_bytes ELSE size_bytes END,
 			kind=excluded.kind, work_key=excluded.work_key, episode=excluded.episode, confidence=excluded.confidence, method=excluded.method, updated_at=excluded.updated_at
-			WHERE torrent_files.status = 'auto'`,
+			WHERE torrent_files.status = 'auto' AND torrent_files.method != '`+MethodClef+`'`+keep,
 			t.Infohash, f.Index, store.Trunc(f.Path, store.MaxPathBytes), f.Size, kind, wk, ep, conf, m, now); err != nil {
+			return err
+		}
+		queue = queue || res[i].queue
+	}
+	if queue {
+		if err := s.enqueueClef(ctx, t.Infohash); err != nil {
 			return err
 		}
 	}
@@ -165,33 +179,61 @@ func boolInt(b bool) int {
 }
 
 // resolveWork finds the torrent-level work (the anchor of the per-file routing, see
-// route.go): bangumi.moe bangumi tag (via bangumi-data) first, then a conservative alias
-// substring match among recent works, then an exact title match of a title fragment
-// against any work (titleWork).
-func (s *Store) resolveWork(ctx context.Context, t TorrentInput) (*Work, string, float64) {
+// route.go) and whether it is certain:
+//
+//   - a bangumi.moe bangumi tag (via bangumi-data): certain;
+//   - exactly one work whose title / Chinese title / alias equals a fragment of the title
+//     after normName (titleWork, years in the title must fit): certain, unless the title
+//     carries a season marker that the work's own titles do not state;
+//   - otherwise a guess (not certain; files are left for the decision model, see clef.go):
+//     an alias substring of a recent work, or the title-fragment match with tie-breaking.
+func (s *Store) resolveWork(ctx context.Context, t TorrentInput) (w *Work, method string, conf float64, certain bool) {
 	for _, id := range t.MoeTagIDs {
 		if w, err := s.WorkByExternal(ctx, "bangumi_moe", id); err == nil {
-			return w, "moe_tag", 0.95
+			return w, "moe_tag", 0.95, true
 		}
 	}
 	title := strings.ToLower(t.Title)
 	if title == "" {
-		return nil, "", 0
+		return nil, "", 0, false
 	}
-	idx, err := s.aliasIndex(ctx)
-	if err != nil {
-		return nil, "", 0
+	tw, unique := s.titleWork(ctx, t.Title)
+	if tw != nil && unique && titleSeasonFits(t.Title, tw) {
+		return tw, "title", 0.6, true
 	}
-	// idx is sorted by alias length descending: the first hit is the longest match
-	for _, e := range idx {
-		if strings.Contains(title, e.alias) {
-			return e.work, "alias", 0.7
+	if idx, err := s.aliasIndex(ctx); err == nil {
+		// idx is sorted by alias length descending: the first hit is the longest match
+		for _, e := range idx {
+			if strings.Contains(title, e.alias) {
+				return e.work, "alias", 0.7, false
+			}
 		}
 	}
-	if w := s.titleWork(ctx, t.Title); w != nil {
-		return w, "title", 0.6
+	if tw != nil {
+		return tw, "title", 0.6, false
 	}
-	return nil, "", 0
+	return nil, "", 0, false
+}
+
+// titleSeasonFits: a season marker in the torrent title ("Show S2", "第二季") must be the
+// season the work's own titles state; "S1" also fits a work without a season marker.
+func titleSeasonFits(title string, w *Work) bool {
+	ts := ParseTitle(title).Season
+	if ts == 0 {
+		return true
+	}
+	ws := workSeason(w)
+	return ws == ts || (ts == 1 && ws == 0)
+}
+
+// workSeason is the season number a work's own titles state (0 = none).
+func workSeason(w *Work) float64 {
+	for _, n := range append([]string{w.TitleCN, w.Title}, w.Aliases...) {
+		if v := nameHint(n).Season; v > 0 {
+			return v
+		}
+	}
+	return 0
 }
 
 // titleFragments splits a torrent title into the parts that may be a whole title: bracket
@@ -226,11 +268,13 @@ func titleFragments(title string) []string {
 
 // titleWork finds a work (any air date) whose title, Chinese title or an alias equals a
 // fragment of the torrent title (after normName). The work equal to the most fragments
-// wins; ties prefer TV/WEB; a remaining tie gives nil.
-func (s *Store) titleWork(ctx context.Context, title string) *Work {
+// wins; ties prefer TV/WEB; a remaining tie gives nil. unique: exactly one work equals any
+// fragment, or the winner (most fragments, no tie) has a fragment no other work equals —
+// no tie-breaking was needed.
+func (s *Store) titleWork(ctx context.Context, title string) (*Work, bool) {
 	frags := titleFragments(title)
 	if len(frags) == 0 || len(frags) > 20 {
-		return nil
+		return nil, false
 	}
 	// years in the title ("Ranma 1/2 (2024)", "[2025][41-44]") must fit the work: begun
 	// within a year of one of them, or still running since before it (no remake mix-ups).
@@ -258,7 +302,9 @@ func (s *Store) titleWork(ctx context.Context, title string) *Work {
 	}
 	score := map[string]int{}
 	works := map[string]*Work{}
+	only := map[string]bool{} // works that are the single match of some fragment
 	for _, f := range frags {
+		var hit []string
 		nf := normName(f)
 		rows, err := s.R.QueryContext(ctx, `SELECT `+workCols+` FROM works WHERE id IN (SELECT rowid FROM works_fts WHERE works_fts MATCH ? LIMIT 200)`,
 			`"`+strings.ReplaceAll(f, `"`, `""`)+`"`)
@@ -274,11 +320,15 @@ func (s *Store) titleWork(ctx context.Context, title string) *Work {
 				if normName(n) == nf {
 					score[w.Key]++
 					works[w.Key] = w
+					hit = append(hit, w.Key)
 					break
 				}
 			}
 		}
 		rows.Close()
+		if len(hit) == 1 {
+			only[hit[0]] = true
+		}
 	}
 	var best []*Work
 	bestScore := 0
@@ -290,6 +340,7 @@ func (s *Store) titleWork(ctx context.Context, title string) *Work {
 			best = append(best, works[k])
 		}
 	}
+	unique := len(best) == 1 && only[best[0].Key]
 	if len(best) > 1 {
 		var tv []*Work
 		for _, w := range best {
@@ -300,13 +351,13 @@ func (s *Store) titleWork(ctx context.Context, title string) *Work {
 		best = tv
 	}
 	if len(best) != 1 {
-		return nil
+		return nil, false
 	}
 	w, err := s.GetWork(ctx, best[0].Key)
 	if err != nil {
-		return nil
+		return nil, false
 	}
-	return w
+	return w, unique
 }
 
 type aliasEntry struct {

@@ -140,7 +140,7 @@ func (s *Store) reclassifyTorrent(ctx context.Context, ih, title string) (int, e
 	}
 
 	var work *Work
-	method, wconf := "", 0.0
+	method, wconf, sure := "", 0.0, false
 	if len(anchorVotes) > 0 {
 		votes = anchorVotes
 	}
@@ -152,17 +152,20 @@ func (s *Store) reclassifyTorrent(ctx context.Context, ih, title string) (int, e
 	}
 	if best != "" {
 		if w, err := s.GetWork(ctx, best); err == nil {
-			work, method, wconf = w, methodOf[best], workConf(methodOf[best])
+			// the stored anchor is existing data: kept as the (certain) anchor
+			work, method, wconf, sure = w, methodOf[best], workConf(methodOf[best]), true
 		}
 	} else if in, ok := s.GetTorrentInput(ctx, ih); ok {
-		work, method, wconf = s.resolveWork(ctx, in)
+		work, method, wconf, sure = s.resolveWork(ctx, in)
 	}
 
 	n := 0
 	now := store.Now()
-	res := s.mapFiles(ctx, paths, title, work, method, wconf)
+	res := s.mapFiles(ctx, paths, title, work, method, wconf, sure)
 	for i, f := range files {
-		if f.status != "auto" {
+		// existing rows are only rewritten by certain results (an uncertain one leaves the
+		// stored mapping as it is), never decision-model mappings
+		if f.status != "auto" || f.method == MethodClef || res[i].queue {
 			continue
 		}
 		kind, wk, ep, conf, m := res[i].kind, res[i].work, res[i].ep, res[i].conf, res[i].method

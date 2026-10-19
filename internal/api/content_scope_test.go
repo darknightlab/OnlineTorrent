@@ -36,10 +36,10 @@ func TestContentScopeEndpoints(t *testing.T) {
 	s, h := testServer(t)
 	ctx := context.Background()
 	// 7: hidden by the guest expression (no 原创); 8: visible; 9: 原创 but excluded (里番)
-	if _, err := s.Meta.W.ExecContext(ctx, `INSERT INTO works(id,key,title,title_cn,type,begin_at,summary,tags,meta_tags,updated_at) VALUES
-		(7,'bgm:400602','共通作品 Frieren','葬送的芙莉莲','tv','2023-09-29T00:00:00Z','x','["奇幻","漫画改"]','["TV"]','x'),
-		(8,'bgm:800','共通作品 Original','原创番','tv','2023-10-01T00:00:00Z','x','["校园"]','["原创"]','x'),
-		(9,'bgm:900','共通作品 Adult','里番','ova','2023-10-01T00:00:00Z','x','["原创","里番"]','[]','x')`); err != nil {
+	if _, err := s.Meta.W.ExecContext(ctx, `INSERT INTO works(id,key,title,title_cn,type,begin_at,summary,tags,meta_tags,eps,updated_at) VALUES
+		(7,'bgm:400602','共通作品 Frieren','葬送的芙莉莲','tv','2023-09-29T00:00:00Z','x','["奇幻","漫画改"]','["TV"]',28,'x'),
+		(8,'bgm:800','共通作品 Original','原创番','tv','2023-10-01T00:00:00Z','x','["校园"]','["原创"]',12,'x'),
+		(9,'bgm:900','共通作品 Adult','里番','ova','2023-10-01T00:00:00Z','x','["原创","里番"]','[]',2,'x')`); err != nil {
 		t.Fatal(err)
 	}
 	_, _ = s.Meta.W.ExecContext(ctx, `INSERT INTO work_ids VALUES('bgm','400602','bgm:400602'),('bangumi_moe','tag7','bgm:400602'),

@@ -200,6 +200,44 @@ CREATE TABLE swarm_stats (
 );
 CREATE INDEX swarm_stats_scraped ON swarm_stats(scraped_at);
 ALTER TABLE torrent_metainfo ADD COLUMN announce TEXT;   -- JSON []string
+`,
+	// 9: decision model (Cloudflare Clef, clef.go + internal/clef): one job per torrent whose
+	// files the rules could not map with certainty, and one decision row per file (audit,
+	// review queue, revert). Mappings it applies have torrent_files.method = 'clef'.
+	`
+CREATE TABLE clef_jobs (
+	infohash   TEXT PRIMARY KEY,
+	status     TEXT NOT NULL DEFAULT 'pending',  -- pending | done | failed | expired
+	attempts   INTEGER NOT NULL DEFAULT 0,
+	requests   INTEGER NOT NULL DEFAULT 0,       -- API requests made for it
+	next_at    TEXT NOT NULL DEFAULT '',
+	last_error TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+CREATE INDEX clef_jobs_next ON clef_jobs(status, next_at);
+CREATE TABLE clef_decisions (
+	id          INTEGER PRIMARY KEY,
+	infohash    TEXT NOT NULL,
+	file_index  INTEGER NOT NULL,
+	path        TEXT NOT NULL DEFAULT '',
+	work_key    TEXT,                        -- chosen subject (NULL: none)
+	kind        TEXT NOT NULL DEFAULT '',    -- torrent_files.kind
+	episode     REAL,                        -- number as written in the file
+	episode_key TEXT NOT NULL DEFAULT '',    -- canonical key (split-cour shift applied)
+	score       REAL NOT NULL DEFAULT 0,     -- decision metric (min over the file's questions)
+	margin      REAL NOT NULL DEFAULT 0,     -- min top1 − top2 probability
+	confidence  REAL NOT NULL DEFAULT 0,     -- min Clef confidence
+	answers     TEXT NOT NULL DEFAULT '{}',  -- JSON: per question choice + top probabilities
+	model       TEXT NOT NULL DEFAULT '',
+	status      TEXT NOT NULL,               -- applied | pending | rejected | discarded
+	reason      TEXT NOT NULL DEFAULT '',
+	created_at  TEXT NOT NULL,
+	decided_at  TEXT NOT NULL DEFAULT '',
+	decided_by  TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX clef_decisions_status ON clef_decisions(status, id);
+CREATE INDEX clef_decisions_ih ON clef_decisions(infohash, file_index);
 `}
 
 // Store is the meta database.

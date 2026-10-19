@@ -2,6 +2,7 @@ import { useState } from "react"
 import { NavLink, Route, Routes, useLocation } from "react-router-dom"
 import {
   Activity,
+  BrainCircuit,
   ClipboardCheck,
   Gauge,
   History,
@@ -38,6 +39,7 @@ import Rules from "./Rules"
 import Reviews from "./Reviews"
 import TrackersPage from "./Trackers"
 import RankRulesPage from "./RankRules"
+import ClefPage from "./Clef"
 import { Audit, Plays } from "./Logs"
 
 const NAV = [
@@ -47,6 +49,7 @@ const NAV = [
   { to: "/admin/content-scope", label: "内容范围", icon: ListFilter },
   { to: "/admin/qb", label: "qB 服务器", icon: Server },
   { to: "/admin/sources", label: "抓取源", icon: Rss },
+  { to: "/admin/clef", label: "决策模型", icon: BrainCircuit },
   { to: "/admin/trackers", label: "Tracker", icon: RadioTower },
   { to: "/admin/rank-rules", label: "推荐规则", icon: Sparkles },
   { to: "/admin/users", label: "用户", icon: Users },
@@ -127,6 +130,7 @@ export default function AdminApp() {
             <Route path="content-scope" element={<ContentScopePage />} />
             <Route path="qb" element={<QBServers />} />
             <Route path="sources" element={<SourcesPage />} />
+            <Route path="clef" element={<ClefPage />} />
             <Route path="trackers" element={<TrackersPage />} />
             <Route path="rank-rules" element={<RankRulesPage />} />
             <Route path="users" element={<UsersPage />} />

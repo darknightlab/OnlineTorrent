@@ -49,6 +49,10 @@ import type {
   RankRules,
   RankRulesResponse,
   TrackersResponse,
+  ClefStatus,
+  ClefDecision,
+  ClefTestResponse,
+  Paged,
 } from "./types"
 
 export const API_BASE = "/api/v1"
@@ -236,6 +240,15 @@ export const api = {
     trackers: () => get<TrackersResponse>("/admin/trackers"),
     rankRules: () => get<RankRulesResponse>("/admin/rank-rules"),
     saveRankRules: (b: RankRules) => put<RankRulesResponse>("/admin/rank-rules", b),
+
+    clef: () => get<ClefStatus>("/admin/clef"),
+    /** 试运行：不写库，计入每日请求上限 */
+    clefTest: (infohash: string) => post<ClefTestResponse>("/admin/clef/test", { infohash }),
+    clefDecisions: (status: string, page: number, ih?: string) => get<Paged<ClefDecision> & { total: number }>(`/admin/clef/decisions${qs({ status, page, ih })}`),
+    clefAccept: (id: number) => post<ClefDecision>(`/admin/clef/decisions/id/${id}/accept`),
+    /** pending → rejected；applied → 撤销映射（文件改为未映射、已人工确认） */
+    clefReject: (id: number) => post<ClefDecision>(`/admin/clef/decisions/id/${id}/reject`),
+    clefRequeue: (ih: string) => post<ClefStatus>(`/admin/clef/jobs/hash/${seg(ih)}/run`),
 
     plays: (page: number) => get<ListLike<PlayRecord>>(`/admin/plays${qs({ page })}`),
     audit: (page: number) => get<ListLike<AuditEntry>>(`/admin/audit${qs({ page })}`),

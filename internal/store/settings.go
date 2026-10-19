@@ -62,6 +62,39 @@ const (
 	KeyWebseedEnabled    = "webseed.enabled"
 )
 
+// Decision model (Cloudflare Workers AI Clef, internal/clef) settings.
+const (
+	KeyClefEnabled   = "clef.enabled"
+	KeyClefAccountID = "clef.account_id"
+	KeyClefToken     = "clef.api_token"
+	KeyClefModel     = "clef.model"
+	KeyClefBaseURL   = "clef.base_url"
+	KeyClefMetric    = "clef.metric"
+	KeyClefApply     = "clef.apply_threshold"
+	KeyClefMargin    = "clef.apply_margin"
+	KeyClefReview    = "clef.review_threshold"
+	KeyClefRate      = "clef.rate_per_min"
+	KeyClefDailyCap  = "clef.daily_cap"
+)
+
+// clefSettings: group 决策模型 (defaults calibrated, docs/research/clef-calibration.md).
+func clefSettings() []SettingSpec {
+	const g = "决策模型"
+	return []SettingSpec{
+		{Key: KeyClefEnabled, Group: g, Type: "bool", Label: "启用决策模型", Description: "规则无法确定的新收录种子文件，由 Cloudflare Workers AI 的 Clef 决策模型在候选条目 / 文件名中的数字里选择（后台队列，只处理最近 3 天入队的种子）；关闭后「测试」仍可用", Default: false},
+		{Key: KeyClefAccountID, Group: g, Type: "string", Label: "Cloudflare Account ID", Default: ""},
+		{Key: KeyClefToken, Group: g, Type: "secret", Label: "API Token", Description: "需要 Workers AI 权限", Default: ""},
+		{Key: KeyClefModel, Group: g, Type: "enum", Label: "模型", Options: []string{"clef-flash", "clef"}, Description: "clef-flash（9B，$0.038 / 百万输入 token）或 clef（27B，$0.24 / 百万）", Default: "clef-flash"},
+		{Key: KeyClefBaseURL, Group: g, Type: "string", Label: "API 地址", Description: "默认 Cloudflare API；可指向本地模拟服务测试", Default: "https://api.cloudflare.com/client/v4"},
+		{Key: KeyClefMetric, Group: g, Type: "enum", Label: "判定指标", Options: []string{"prob", "confidence"}, Description: "prob（推荐，已校准）= 概率：条目取「是否正是该条目」是/否问题的「是」概率，类型与集数取所选选项的概率；confidence = Clef 返回的 confidence（偏低，不推荐）。取该文件各问题的最小值", Default: "prob"},
+		{Key: KeyClefApply, Group: g, Type: "number", Label: "直接应用阈值", Description: "指标 ≥ 此值且概率差 ≥ 下方「最小概率差」时直接写入映射（来源 clef）；早已完结的条目（完结超过 1 年，或无完结日期且开播超过 2 年）一律进入审核", Default: 0.8},
+		{Key: KeyClefMargin, Group: g, Type: "number", Label: "最小概率差", Description: "第一与第二选项的概率差（取各问题最小值）", Default: 0.3},
+		{Key: KeyClefReview, Group: g, Type: "number", Label: "人工审核阈值", Description: "介于此值与直接应用之间的进入审核队列，低于此值不映射", Default: 0.5},
+		{Key: KeyClefRate, Group: g, Type: "number", Label: "每分钟请求数", Default: 60},
+		{Key: KeyClefDailyCap, Group: g, Type: "number", Label: "每日请求上限", Description: "含后台测试；按 UTC 日期计", Default: 2000},
+	}
+}
+
 var defaultTrackers = []string{
 	"wss://tracker.projectk.org",
 	"wss://tracker.dnlab.net:16443",
@@ -113,7 +146,7 @@ func trackerList(schemes ...string) func(json.RawMessage) (json.RawMessage, erro
 
 // SettingsSchema lists every setting; order is the admin form order.
 func SettingsSchema() []SettingSpec {
-	return []SettingSpec{
+	return append([]SettingSpec{
 		{Key: KeySiteName, Group: "站点", Type: "string", Label: "站点名称", Default: "Project Kawaii", Public: true},
 		{Key: KeySiteBaseURL, Group: "站点", Type: "string", Label: "站点地址", Description: "用于生成邀请链接等，例如 https://www.projectk.org", Default: "https://www.projectk.org"},
 		{Key: KeyAnnouncement, Group: "站点", Type: "markdown", Label: "首页公告", Description: "Markdown，留空则不显示", Default: "", Public: true},
@@ -150,7 +183,7 @@ func SettingsSchema() []SettingSpec {
 		{Key: KeyQBAddTimeoutSec, Group: "qBittorrent", Type: "number", Label: "推送超时（秒）", Default: 8},
 
 		{Key: KeyWebseedEnabled, Group: "WebSeed", Type: "bool", Label: "启用 HTTP WebSeed 加速", Description: "qB 下载完成的文件可经本站以 HTTP 方式补充传输（经 Cloudflare 隧道，消耗服务器上行流量）", Default: true},
-	}
+	}, clefSettings()...)
 }
 
 func specFor(key string) (SettingSpec, bool) {

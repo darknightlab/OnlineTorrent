@@ -19,6 +19,7 @@ import (
 
 	"github.com/darknightlab/onlinetorrent/internal/api"
 	"github.com/darknightlab/onlinetorrent/internal/catalog"
+	"github.com/darknightlab/onlinetorrent/internal/clef"
 	"github.com/darknightlab/onlinetorrent/internal/crawl"
 	"github.com/darknightlab/onlinetorrent/internal/meta"
 	"github.com/darknightlab/onlinetorrent/internal/policy"
@@ -101,7 +102,11 @@ func serve(args []string) error {
 		log.Warn("no users yet; create an admin with: otd user -db <db> -username admin -password <pw> -role admin")
 	}
 
-	srv := &api.Server{St: st, Meta: ms, Cat: cat, Crawl: cr, Pool: pool, Swarm: sw, Policy: policy.New(st), Log: log, WebFS: web.FS(), BaseCtx: ctx}
+	// decision model (Cloudflare Clef) for files the rules cannot map with certainty
+	cl := &clef.Service{St: st, Meta: ms, Log: log}
+	wg.Go(func() { cl.Run(ctx) })
+
+	srv := &api.Server{St: st, Meta: ms, Cat: cat, Crawl: cr, Pool: pool, Swarm: sw, Clef: cl, Policy: policy.New(st), Log: log, WebFS: web.FS(), BaseCtx: ctx}
 	hs := &http.Server{Addr: *addr, Handler: srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
 	wg.Go(func() { srv.RunRecheck(ctx) })

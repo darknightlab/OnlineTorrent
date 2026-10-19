@@ -19,10 +19,18 @@ package meta
 //     nothing decides → the anchor;
 //  2. ClassifyFiles cross-checks per target work (clashes are per (work, kind, number));
 //  3. files routed by a movie/OVA keyword become main episodes of that work (bgm lists OVA /
-//     movie parts as type-0 episodes); a movie's only main video is episode 1; unnumbered
-//     episodes are matched by official episode title or air date;
-//  4. a group routed away from the anchor is checked against the official episodes (count
-//     and numbers); implausible groups are left unmapped (no work, no episode).
+//     movie parts as type-0 episodes); a movie's only main video is episode 1.
+//
+// Certainty (since the decision model, clef.go): a file is mapped by rule only when the
+// anchor is certain (resolveWork), the file stays on the anchor without a contrary hint
+// (its season is the anchor's own, a movie/OVA keyword matches the anchor's type or no
+// related work of that type exists, no related work's distinctive title), the number is
+// sure (ParsedName.Sure) and the key is in the anchor's official episode list as written.
+// Routing to another work (season chain, related title, movie/OVA keyword) only produces a
+// hint; such files stay unmapped and are queued for the decision model. Removed rules:
+// the "all files moved onto one other work → anchor" and "season not in the chain →
+// anchor" fallbacks, unnumbered episodes matched by official title / air date, and the
+// plausibility check of routed groups.
 
 import (
 	"context"
@@ -335,10 +343,12 @@ func (f *family) pickType(typ string, hs []routeHint) (w *famWork, ok bool) {
 	return nil, false
 }
 
-// fileRoute is where one file goes.
+// fileRoute is where one file goes. sure=false: w is only a guess (a hint for the decision
+// model), the file is not mapped by rule.
 type fileRoute struct {
-	w   *famWork // nil: unmapped
-	how string   // "" (anchor by default) | type | season | folder
+	w    *famWork // nil: no idea
+	how  string   // "" (anchor by default) | type | season | folder
+	sure bool
 }
 
 func baseMethod(m string) string {
@@ -352,108 +362,89 @@ func isRoutedMethod(m string) bool {
 }
 
 // route assigns every file of a torrent to a work of the family (see the package comment
-// at the top of this file). title is the torrent title, method the anchor's match method.
-func (f *family) route(paths []string, title, method string) []fileRoute {
+// at the top of this file). title is the torrent title, method the anchor's match method,
+// anchorSure whether the anchor itself is certain. Only files that stay on the anchor
+// without any contrary hint are sure; routing to a related work (season chain, related
+// title, movie/OVA keyword) is a guess.
+func (f *family) route(paths []string, title, method string, anchorSure bool) []fileRoute {
 	out := make([]fileRoute, len(paths))
 	anchorSeason := f.anchorSeason
 	if ts := ParseTitle(title).Season; anchorSeason == 0 && ts > 0 && method == "moe_tag" {
 		anchorSeason = ts // a bangumi.moe-tagged "Show S2" torrent: the tag is season 2
 	}
-	seasons := make([]float64, len(paths))
+	// the season a file names is the anchor's own: stated by its titles (or the tagged
+	// title), or "S1" for an anchor without a season marker that starts its chain
+	onAnchorSeason := func(s float64) bool {
+		return s == anchorSeason || (s == 1 && anchorSeason == 0 && (f.anchorIdx == 0 || len(f.chain) == 0))
+	}
 	for i, p := range paths {
-		out[i] = fileRoute{w: f.anchor}
+		out[i] = fileRoute{w: f.anchor, sure: anchorSure}
 		if !IsVideo(p) {
 			continue
 		}
 		hs := pathHints(p)
 		for _, h := range hs {
 			if h.Type == "movie" || h.Type == "ova" {
+				if f.anchor.kind() == h.Type {
+					out[i] = fileRoute{w: f.anchor, how: "type", sure: anchorSure}
+					break
+				}
 				w, ok := f.pickType(h.Type, hs)
-				if !ok {
+				switch {
+				case !ok:
 					out[i] = fileRoute{how: "type"}
-				} else {
+				case w == f.anchor: // no related work of that type: the anchor (kind from the name)
+					out[i] = fileRoute{w: w, sure: anchorSure}
+				default:
 					out[i] = fileRoute{w: w, how: "type"}
 				}
 				break
 			}
 			if h.Season > 0 {
-				seasons[i] = h.Season
-				out[i] = fileRoute{w: f.seasonWork(h.Season, anchorSeason), how: "season"}
+				if onAnchorSeason(h.Season) {
+					out[i] = fileRoute{w: f.anchor, how: "season", sure: anchorSure}
+				} else {
+					out[i] = fileRoute{w: f.seasonWork(h.Season, anchorSeason), how: "season"}
+				}
 				break
 			}
 			if w := f.matchName(h.Norm); w != nil {
-				out[i] = fileRoute{w: w, how: "folder"}
+				if w == f.anchor {
+					out[i] = fileRoute{w: w, sure: anchorSure}
+				} else {
+					out[i] = fileRoute{w: w, how: "folder"}
+				}
 				break
-			}
-		}
-	}
-	// seasons without a usable chain, or a single season the torrent-level match already
-	// identifies (bangumi.moe tag; a season missing from the chain): the anchor
-	distinct := map[float64]bool{}
-	for _, s := range seasons {
-		if s > 0 {
-			distinct[s] = true
-		}
-	}
-	// a folder/file name that moves every video away from the anchor onto one other work is
-	// the series' base title ("Show - 14" of a tagged second cour), not a second work
-	var moved *famWork
-	single, onAnchor := true, false
-	for i, r := range out {
-		if !IsVideo(paths[i]) || r.w == nil {
-			continue
-		}
-		switch {
-		case r.w == f.anchor:
-			onAnchor = true
-		case r.how == "folder":
-			if moved != nil && moved != r.w {
-				single = false
-			}
-			moved = r.w
-		}
-	}
-	if moved != nil && single && !onAnchor {
-		for i, r := range out {
-			if r.how == "folder" {
-				out[i] = fileRoute{w: f.anchor}
-			}
-		}
-	}
-	for s := range distinct {
-		keep := len(f.chain) == 0
-		if len(distinct) == 1 && ((method == "moe_tag" && anchorSeason == 0) || f.seasonWork(s, anchorSeason) == nil) {
-			keep = true
-		}
-		if !keep {
-			continue
-		}
-		for i := range out {
-			if seasons[i] == s {
-				out[i] = fileRoute{w: f.anchor}
 			}
 		}
 	}
 	return out
 }
 
-// fileResult is the mapping of one file.
+// fileResult is the mapping of one file. queue: a video the rules could not map with
+// certainty (left unmapped for the decision model); hint: the rules' guess (work key).
 type fileResult struct {
 	kind   string
 	work   any // nil or work key
 	ep     *float64
 	conf   float64
 	method string
+	queue  bool
+	hint   string
 }
 
 // mapFiles classifies the files of a torrent and assigns each one its work and episode;
-// anchor is the torrent-level match (nil: none, files are classified only).
-func (s *Store) mapFiles(ctx context.Context, paths []string, title string, anchor *Work, method string, wconf float64) []fileResult {
+// anchor is the torrent-level match (nil: none, files are classified only), anchorSure
+// whether it is certain. A file is mapped only when everything is certain: the work (sure
+// route), the number (ParsedName.Sure) and the episode key, which must be in the work's
+// official episode list as written (see validKey; no split-cour shift). Everything else is
+// left unmapped with queue=true.
+func (s *Store) mapFiles(ctx context.Context, paths []string, title string, anchor *Work, method string, wconf float64, anchorSure bool) []fileResult {
 	out := make([]fileResult, len(paths))
 	if anchor == nil {
 		for i, p := range ClassifyFiles(paths, title) {
 			wk, ep, conf, m := fileMapping(nil, method, wconf, p.Kind, p)
-			out[i] = fileResult{p.Kind, wk, ep, conf, m}
+			out[i] = fileResult{kind: p.Kind, work: wk, ep: ep, conf: conf, method: m, queue: IsVideo(paths[i]) && p.Kind != "extra"}
 		}
 		return out
 	}
@@ -473,7 +464,7 @@ func (s *Store) mapFiles(ctx context.Context, paths []string, title string, anch
 		}
 	}
 	fam := s.loadFamily(ctx, anchor, videos > 1 || hinted)
-	routes := fam.route(paths, title, method)
+	routes := fam.route(paths, title, method, anchorSure)
 	groups := make([]string, len(paths))
 	for i, r := range routes {
 		if r.w != nil {
@@ -483,33 +474,49 @@ func (s *Store) mapFiles(ctx context.Context, paths []string, title string, anch
 		}
 	}
 	ps := classifyFilesIn(paths, title, groups)
-	s.refineRouted(ctx, fam, paths, routes, ps)
+	refineRouted(fam, paths, routes, ps)
+	valid := s.keyValidator()
 	for i, p := range ps {
 		r := routes[i]
-		if r.w == nil {
-			out[i] = fileResult{kind: p.Kind}
+		video := IsVideo(paths[i])
+		sure := r.sure && r.w != nil
+		if sure && video && MappableKind(p.Kind) {
+			k, ok := KeyOfFile(p.Kind, p.Episode)
+			sure = p.Sure && ok && valid(ctx, r.w.w, k)
+		}
+		if !sure {
+			res := fileResult{kind: p.Kind, queue: video && p.Kind != "extra"}
+			if MappableKind(p.Kind) {
+				res.ep = p.Episode
+			}
+			if r.w != nil {
+				res.hint = r.w.w.Key
+			}
+			out[i] = res
 			continue
 		}
 		m, conf := method, wconf
-		if r.how != "" && (r.w != fam.anchor || r.how == "type") {
-			m += "+" + r.how
-			if r.w != fam.anchor {
-				conf *= 0.9
-			}
+		if r.how == "type" {
+			m += "+type"
 		}
 		wk, ep, c, mm := fileMapping(r.w.w, m, conf, p.Kind, p)
-		out[i] = fileResult{p.Kind, wk, ep, c, mm}
+		out[i] = fileResult{kind: p.Kind, work: wk, ep: ep, conf: c, method: mm}
 	}
 	return out
 }
 
 var reFileDate = regexp.MustCompile(`((?:19|20)\d\d)[-./](0?[1-9]|1[0-2])[-./](0?[1-9]|[12]\d|3[01])`)
 
-// refineRouted applies the per-work rules after classification (see the top of this file):
-// movie/OVA keyword files become main episodes, a movie's only video is episode 1,
-// unnumbered episodes are matched by official title / air date, and groups routed away
-// from the anchor that do not fit the official episodes are unmapped (routes[i].w = nil).
-func (s *Store) refineRouted(ctx context.Context, fam *family, paths []string, routes []fileRoute, ps []ParsedName) {
+// refineRouted applies the per-work rules after classification: files routed by a
+// movie/OVA keyword become main episodes of that work (bgm lists OVA / movie parts as
+// type-0 episodes), and a movie's only unnumbered main video is episode 1 (sure when the
+// movie has at most one official main episode).
+//
+// Since the decision model (clef.go) the rules no longer guess beyond this: unnumbered
+// episodes are not matched by official episode title / air date any more, and groups routed
+// away from the anchor are not mapped (the old plausibility check against the official
+// episode count is gone with them).
+func refineRouted(fam *family, paths []string, routes []fileRoute, ps []ParsedName) {
 	groups := map[*famWork][]int{}
 	for i, r := range routes {
 		if r.w != nil && IsVideo(paths[i]) {
@@ -522,7 +529,7 @@ func (s *Store) refineRouted(ctx context.Context, fam *family, paths []string, r
 			for _, i := range idx {
 				if routes[i].how == "type" && (ps[i].Kind == "sp" || ps[i].Kind == "other") {
 					if ps[i].Kind == "other" {
-						ps[i].Episode = nil
+						ps[i].Episode, ps[i].Sure = nil, false
 					}
 					ps[i].Kind = "episode"
 					ps[i].Confidence = max(ps[i].Confidence, 0.5)
@@ -537,104 +544,64 @@ func (s *Store) refineRouted(ctx context.Context, fam *family, paths []string, r
 				}
 			}
 			if len(mains) == 1 && ps[mains[0]].Episode == nil {
-				ps[mains[0]] = ParsedName{Kind: "episode", Episode: ptrF(1), Confidence: 0.7, Season: ps[mains[0]].Season}
-			}
-		}
-		s.matchEpisodeTitles(ctx, w, paths, idx, ps)
-		if w != fam.anchor && !plausible(w, idx, ps) {
-			for _, i := range idx {
-				routes[i].w = nil
+				ps[mains[0]] = ParsedName{Kind: "episode", Episode: ptrF(1), Confidence: 0.7, Season: ps[mains[0]].Season, Sure: w.mainN <= 1}
 			}
 		}
 	}
 }
 
-// matchEpisodeTitles numbers unnumbered main episodes by the official episode title written
-// in the file name ("OVA 1994-09-24 そしてふたりは出会った") or by the air date.
-func (s *Store) matchEpisodeTitles(ctx context.Context, w *famWork, paths []string, idx []int, ps []ParsedName) {
-	var todo []int
-	for _, i := range idx {
-		if ps[i].Kind == "episode" && ps[i].Episode == nil {
-			todo = append(todo, i)
+// keyValidator returns validKey with a per-call cache of official episode lists.
+func (s *Store) keyValidator() func(ctx context.Context, w *Work, k EpisodeKey) bool {
+	cache := map[string]*officialSet{}
+	return func(ctx context.Context, w *Work, k EpisodeKey) bool {
+		set, ok := cache[w.Key]
+		if !ok {
+			set = s.officialSet(ctx, w.Key)
+			cache[w.Key] = set
 		}
+		return set.valid(k, w.Eps)
 	}
-	if len(todo) == 0 || w.mainN == 0 || w.mainN > 500 {
-		return
+}
+
+// officialSet is the official episode list of a work, for key validation.
+type officialSet struct {
+	keys  map[EpisodeKey]bool
+	kinds map[string]int // listed episodes per key kind
+}
+
+func (s *Store) officialSet(ctx context.Context, workKey string) *officialSet {
+	set := &officialSet{keys: map[EpisodeKey]bool{}, kinds: map[string]int{}}
+	eps, _ := s.OfficialEpisodes(ctx, workKey)
+	for _, e := range eps {
+		set.keys[e.Key] = true
+		set.kinds[e.Key.Kind]++
 	}
-	eps, err := s.OfficialEpisodes(ctx, w.w.Key)
+	return set
+}
+
+// valid: key k (as stored, before any split-cour shift) is an episode of the work —
+//   - the work lists episodes of k's kind (bgm Archive): k must be one of them;
+//   - no main episodes listed: 0 < n ≤ the planned count (infobox 话数, eps > 0; recaps
+//     like 12.5 included);
+//   - no specials of k's kind listed (bgm rarely lists OP/ED/PV/CM, often no SP): accepted
+//     (nothing to check against).
+func (o *officialSet) valid(k EpisodeKey, eps int) bool {
+	if o.kinds[k.Kind] > 0 {
+		return o.keys[k]
+	}
+	if k.Kind == KeyMain {
+		return eps > 0 && k.Number > 0 && k.Number <= float64(eps)
+	}
+	return true
+}
+
+// ValidEpisode checks a decision-model answer: the canonical key (split-cour shift
+// applied, see CanonicalKey) must be an episode of the work (officialSet.valid).
+func (s *Store) ValidEpisode(ctx context.Context, workKey string, k EpisodeKey) (EpisodeKey, bool) {
+	w, err := s.GetWork(ctx, workKey)
 	if err != nil {
-		return
+		return k, false
 	}
-	for _, i := range todo {
-		name := stem(paths[i])
-		norm := normName(name)
-		var best *OfficialEpisode
-		bestLen, tie := 0, false
-		for j := range eps {
-			e := &eps[j]
-			if e.Key.Kind != KeyMain {
-				continue
-			}
-			for _, t := range []string{e.Name, e.NameCN} {
-				n := normName(t)
-				if c := utf8.RuneCountInString(n); c < 4 || (!hasNonASCII(n) && c < 6) || len(n) < bestLen || !strings.Contains(norm, n) {
-					continue
-				}
-				switch {
-				case len(n) > bestLen:
-					best, bestLen, tie = e, len(n), false
-				case best != e:
-					tie = true
-				}
-			}
-		}
-		if best == nil || tie {
-			best, tie = nil, false
-			if m := reFileDate.FindStringSubmatch(name); m != nil {
-				y, _ := strconv.Atoi(m[1])
-				mo, _ := strconv.Atoi(m[2])
-				d, _ := strconv.Atoi(m[3])
-				date := time.Date(y, time.Month(mo), d, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
-				for j := range eps {
-					if e := &eps[j]; e.Key.Kind == KeyMain && e.Airdate == date {
-						if best != nil {
-							tie = true
-						}
-						best = e
-					}
-				}
-			}
-		}
-		if best != nil && !tie {
-			ps[i].Episode, ps[i].Confidence = ptrF(best.Key.Number), 0.6
-		}
-	}
-}
-
-// plausible checks the main episodes of a group routed away from the anchor against the
-// work's official episode list (or its planned count): no more distinct numbers than the
-// official count plus a little slack, and every number within 0..count or the official
-// sorts (a last episode listed as SP counts: "24" of 23 main + SP 24).
-func plausible(w *famWork, idx []int, ps []ParsedName) bool {
-	c := w.mainN
-	if c == 0 {
-		c = w.w.Eps
-	}
-	if c == 0 {
-		return true // nothing to check against
-	}
-	slack := 1 + c/10
-	limit := math.Max(float64(c), math.Max(w.mainMax, w.spMax))
-	nums := map[float64]bool{}
-	for _, i := range idx {
-		if ps[i].Kind != "episode" || ps[i].Episode == nil {
-			continue
-		}
-		v := *ps[i].Episode
-		if v < 0 || v > limit {
-			return false
-		}
-		nums[v] = true
-	}
-	return len(nums) <= c+slack
+	c := s.CanonicalKey(ctx, workKey, k)
+	return c, s.officialSet(ctx, workKey).valid(c, w.Eps)
 }

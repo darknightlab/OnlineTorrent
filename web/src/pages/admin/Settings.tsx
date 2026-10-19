@@ -112,7 +112,7 @@ export default function SettingsPage() {
   )
 }
 
-function SettingRow({ item, value, dirty, onChange }: { item: SettingItem; value: SettingValue; dirty: boolean; onChange: (v: SettingValue) => void }) {
+export function SettingRow({ item, value, dirty, onChange }: { item: SettingItem; value: SettingValue; dirty: boolean; onChange: (v: SettingValue) => void }) {
   const id = `setting-${item.key}`
   const [preview, setPreview] = useState(false)
   const label = (
