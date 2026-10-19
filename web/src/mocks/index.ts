@@ -2,7 +2,8 @@
 // 切换身份：?mock_user=guest|member|vip|admin（保存在 sessionStorage）；默认 admin。
 import * as fx from "./fixtures"
 import { canonicalEpisodeKey, compareEpisodeKeys, episodeLabel, parseEpisodeKey, type EpisodeKey } from "@/lib/episode"
-import type { AdminUser, BgmArchiveStatus, EpisodeFile, EpisodeListItem, GrantRole, MeResponse, PermissionItem, PlayResponse, QBServer, Rule, Source, Subject, Torrent, TorrentStatus, User } from "@/lib/types"
+import { scopeVisible, validateScope } from "@/lib/scope"
+import type { AdminUser, BgmArchiveStatus, ContentScope, ContentScopeInput, EpisodeFile, EpisodeListItem, GrantRole, MeResponse, PermissionItem, PlayResponse, QBServer, Rule, Source, Subject, Torrent, TorrentStatus, User } from "@/lib/types"
 
 type Handler = (ctx: { params: Record<string, string>; query: URLSearchParams; body: any }) => unknown
 
@@ -87,6 +88,21 @@ const me = (): MeResponse => {
 
 const subjects = fx.buildSubjects()
 
+// ---- 内容范围（模拟 internal/store/content_scope.go：标签 = tags ∪ meta_tags；AND 优先于 OR；管理员不受限）----
+const SCOPES_KEY = "pk-mock-scopes"
+const defaultScope = (role: GrantRole): ContentScope => ({ role, tag_mode: "all", tags: [], tag_operators: [], exclude_tags: [] })
+const scopes: Record<GrantRole, ContentScope> = {
+  ...Object.fromEntries(ROLES.map((r) => [r, defaultScope(r)])),
+  ...(JSON.parse(sessionStorage.getItem(SCOPES_KEY) ?? "{}") as Record<GrantRole, ContentScope>),
+} as Record<GrantRole, ContentScope>
+const scopesView = () => ({ roles: ROLES, items: ROLES.map((r) => scopes[r]) })
+const myScope = () => {
+  const role = roleOf(currentUser())
+  return role === "admin" ? null : scopes[role as GrantRole]
+}
+const subjectTagsOf = (a: Subject) => [...(a.tags ?? []), ...(a.meta_tags ?? [])]
+const visibleSubject = (a: Subject | undefined) => !a || scopeVisible(myScope(), subjectTagsOf(a))
+
 /** 每个条目往期各集的种子（由最新一集派生） */
 const pastEpisodes = new Map<string, Torrent[]>(
   subjects.map((a) => {
@@ -145,7 +161,7 @@ function page<T>(list: T[], p: number, size = PAGE) {
 
 function findSubject(provider: string, id: string): Subject {
   const a = subjects.find((x) => (provider === "bgm" ? String(x.bgm_id) === id : provider === "id" ? String(x.subject_id) === id : false))
-  if (!a) throw new HttpError(404, "not_found", "番剧不存在")
+  if (!a || !visibleSubject(a)) throw new HttpError(404, "not_found", "番剧不存在")
   return a
 }
 
@@ -215,7 +231,8 @@ function playOf(t: Torrent | undefined, ih: string): PlayResponse {
   if (action === "block") throw new HttpError(451, "blocked", t?.access.reason || "该资源已被屏蔽")
   if (action === "login" && !u) throw new HttpError(401, "login_required", "该资源需要登录后观看")
   if (action === "vip" && (!u || (u.role !== "vip" && u.role !== "admin"))) throw new HttpError(402, "vip_required", t?.access.reason || "该资源仅限大会员")
-  const a = t ? subjectOfTorrent(t) : undefined
+  const found = t ? subjectOfTorrent(t) : undefined
+  const a = visibleSubject(found) ? found : undefined
   const name = t?.title ?? "Unknown torrent"
   const key = (t ? keyOf(t.title) : null) ?? (a ? String(a.episodes_aired) : null)
   const k = parseEpisodeKey(key)
@@ -280,7 +297,8 @@ function torrentStatus(ih: string): TorrentStatus {
       ),
     }
   }
-  const a = subjectOfTorrent(t)
+  const found = subjectOfTorrent(t)
+  const a = visibleSubject(found) ? found : undefined
   const key = keyOf(t.title)
   const k = parseEpisodeKey(key)
   const kind = !k ? "episode" : ({ main: "episode", sp: "sp", ncop: "op", nced: "ed", pv: "pv", cm: "cm" } as const)[k.kind]
@@ -375,7 +393,7 @@ const routes: [string, string, Handler][] = [
     sessionStorage.setItem(USER_KEY, "vip")
     return me()
   }],
-  ["GET", "/schedule", () => (requirePerm("GET /api/v1/schedule"), { generated_at: new Date().toISOString(), season: "2026-10", items: subjects.map(fx.toScheduleItem) })],
+  ["GET", "/schedule", () => (requirePerm("GET /api/v1/schedule"), { generated_at: new Date().toISOString(), season: "2026-10", items: subjects.filter(visibleSubject).map(fx.toScheduleItem) })],
   ["GET", "/subjects/:provider/:id", ({ params }) => {
     requirePerm("GET /api/v1/subjects/{provider}/{id}")
     const a = findSubject(params.provider, params.id)
@@ -413,8 +431,8 @@ const routes: [string, string, Handler][] = [
     const kw = params.keyword.toLowerCase().split(/\s+/).filter(Boolean)
     const p = Math.min(50, Math.max(1, Number(query.get("page") || 1)))
     const hit = (s: string) => kw.every((k) => s.toLowerCase().includes(k))
-    const subs = p === 1 ? subjects.filter((a) => hit(`${a.title} ${a.title_cn}`)).slice(0, 24) : []
-    const list = torrents.filter((t) => hit(`${t.title} ${t.team?.name ?? ""}`))
+    const subs = p === 1 ? subjects.filter((a) => visibleSubject(a) && hit(`${a.title} ${a.title_cn}`)).slice(0, 24) : []
+    const list = torrents.filter((t) => hit(`${t.title} ${t.team?.name ?? ""}`) && visibleSubject(subjectOfTorrent(t)))
     const pg = page(list, p, 30)
     return { subjects: subs, torrents: pg.items, page: pg.page, page_count: Math.min(50, pg.page_count), total: list.length }
   }],
@@ -552,6 +570,42 @@ const routes: [string, string, Handler][] = [
     for (const [key, roles] of Object.entries(input)) grants[key] = new Set(roles as GrantRole[])
     persistGrants()
     return permissionsView()
+  }],
+  ["GET", "/admin/content-scopes", () => (requireAdmin(), scopesView())],
+  ["PUT", "/admin/content-scopes/role/:role", ({ params, body }) => {
+    requireAdmin()
+    if (params.role === "admin") throw new HttpError(400, "bad_request", "管理员不受内容范围限制")
+    if (!ROLES.includes(params.role as GrantRole)) throw new HttpError(404, "not_found", "角色不存在")
+    const known = ["tag_mode", "tags", "tag_operators", "exclude_tags", "role"]
+    const unknown = Object.keys(body ?? {}).find((k) => !known.includes(k))
+    if (unknown) throw new HttpError(400, "bad_request", `请求格式错误：unknown field "${unknown}"`)
+    const input: ContentScopeInput = {
+      tag_mode: body.tag_mode,
+      tags: (body.tags ?? []).map((t: string) => t.trim()),
+      tag_operators: body.tag_operators ?? [],
+      exclude_tags: (body.exclude_tags ?? []).map((t: string) => t.trim()),
+    }
+    const err = validateScope(input)
+    if (err) throw new HttpError(400, "bad_request", err)
+    const role = params.role as GrantRole
+    scopes[role] =
+      input.tag_mode === "all"
+        ? { ...defaultScope(role), exclude_tags: [...new Set(input.exclude_tags)].sort() }
+        : { role, ...input, exclude_tags: [...new Set(input.exclude_tags)].sort() }
+    sessionStorage.setItem(SCOPES_KEY, JSON.stringify(scopes))
+    return scopes[role]
+  }],
+  ["GET", "/admin/subject-tags", ({ query }) => {
+    requireAdmin()
+    const term = (query.get("q") ?? "").trim()
+    const counts = new Map<string, number>()
+    for (const a of subjects) for (const t of new Set(subjectTagsOf(a))) counts.set(t, (counts.get(t) ?? 0) + 1)
+    const items = [...counts.entries()]
+      .filter(([n]) => n.includes(term))
+      .sort((x, y) => Number(y[0].startsWith(term)) - Number(x[0].startsWith(term)) || y[1] - x[1] || x[0].localeCompare(y[0]))
+      .slice(0, 30)
+      .map(([name, count]) => ({ name, count }))
+    return { items }
   }],
   ["GET", "/admin/settings", () => (requireAdmin(), settingsView())],
   ["PUT", "/admin/settings", ({ body }) => {

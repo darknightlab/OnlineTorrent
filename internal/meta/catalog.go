@@ -174,8 +174,9 @@ func likeEscape(s string) string {
 	return "%" + r.Replace(s) + "%"
 }
 
-// SearchTorrents searches torrent titles and file names; newest first.
-func (s *Store) SearchTorrents(ctx context.Context, q string, offset, limit int) ([]*CatalogTorrent, int, error) {
+// SearchTorrents searches torrent titles and file names; newest first. Torrents with a file
+// mapped to a subject outside scope are left out (nil scope: unrestricted).
+func (s *Store) SearchTorrents(ctx context.Context, q string, offset, limit int, scope *store.ScopePlan) ([]*CatalogTorrent, int, error) {
 	expr, terms, ok := ftsQuery(q)
 	if len(terms) == 0 {
 		return []*CatalogTorrent{}, 0, nil
@@ -193,6 +194,11 @@ func (s *Store) SearchTorrents(ctx context.Context, q string, offset, limit int)
 		}
 		where = strings.Join(conds, " AND ")
 	}
+	if scope.Restricted() {
+		pred, pargs := store.TorrentScopePredicate("t", scope)
+		where = "(" + where + ") AND " + pred
+		args = append(args, pargs...)
+	}
 	var total int
 	if err := s.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM torrents t WHERE `+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
@@ -205,16 +211,19 @@ func (s *Store) SearchTorrents(ctx context.Context, q string, offset, limit int)
 	return list, total, s.fillFiles(ctx, list)
 }
 
-// SearchWorksFTS searches works by title / Chinese title / aliases (newest first).
-func (s *Store) SearchWorksFTS(ctx context.Context, q string, limit int) ([]*Work, error) {
+// SearchWorksFTS searches works by title / Chinese title / aliases (newest first) within
+// the content scope (nil: unrestricted).
+func (s *Store) SearchWorksFTS(ctx context.Context, q string, limit int, scope *store.ScopePlan) ([]*Work, error) {
 	expr, terms, ok := ftsQuery(q)
 	if len(terms) == 0 {
 		return []*Work{}, nil
 	}
+	pred, pargs := store.WorkScopePredicate("works", scope)
 	var rows *sql.Rows
 	var err error
 	if ok {
-		rows, err = s.R.QueryContext(ctx, `SELECT `+workCols+` FROM works WHERE id IN (SELECT rowid FROM works_fts WHERE works_fts MATCH ?) ORDER BY begin_at DESC LIMIT ?`, expr, limit)
+		args := append([]any{expr}, pargs...)
+		rows, err = s.R.QueryContext(ctx, `SELECT `+workCols+` FROM works WHERE id IN (SELECT rowid FROM works_fts WHERE works_fts MATCH ?) AND `+pred+` ORDER BY begin_at DESC LIMIT ?`, append(args, limit)...)
 	} else {
 		var conds []string
 		var args []any
@@ -223,7 +232,8 @@ func (s *Store) SearchWorksFTS(ctx context.Context, q string, limit int) ([]*Wor
 			conds = append(conds, `(title LIKE ? ESCAPE '\' OR title_cn LIKE ? ESCAPE '\' OR aliases LIKE ? ESCAPE '\')`)
 			args = append(args, l, l, l)
 		}
-		rows, err = s.R.QueryContext(ctx, `SELECT `+workCols+` FROM works WHERE `+strings.Join(conds, " AND ")+` ORDER BY begin_at DESC LIMIT ?`, append(args, limit)...)
+		args = append(args, pargs...)
+		rows, err = s.R.QueryContext(ctx, `SELECT `+workCols+` FROM works WHERE `+strings.Join(conds, " AND ")+` AND `+pred+` ORDER BY begin_at DESC LIMIT ?`, append(args, limit)...)
 	}
 	if err != nil {
 		return nil, err
@@ -291,4 +301,34 @@ func (s *Store) UpsertExternalWork(ctx context.Context, e ExternalWork) (*Work, 
 	s.aliases = nil // new work: rebuild the alias index on next match
 	s.aliasMu.Unlock()
 	return s.GetWork(ctx, key)
+}
+
+// SubjectTag is a subject tag with the number of works carrying it (tags ∪ meta_tags).
+type SubjectTag struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
+}
+
+// SubjectTags autocompletes subject tags (admin content scope editor): tags containing q
+// (prefix matches first), by number of works; empty q lists the most common tags.
+func (s *Store) SubjectTags(ctx context.Context, q string, limit int) ([]SubjectTag, error) {
+	esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q)
+	rows, err := s.R.QueryContext(ctx, `SELECT value, COUNT(*) AS c FROM (
+			SELECT w.id, j.value FROM works w, json_each(CASE WHEN json_valid(w.tags) THEN w.tags ELSE '[]' END) j
+			UNION SELECT w.id, j.value FROM works w, json_each(CASE WHEN json_valid(w.meta_tags) THEN w.meta_tags ELSE '[]' END) j)
+		WHERE typeof(value) = 'text' AND value LIKE ? ESCAPE '\'
+		GROUP BY value ORDER BY (value LIKE ? ESCAPE '\') DESC, c DESC, value LIMIT ?`, "%"+esc+"%", esc+"%", limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []SubjectTag{}
+	for rows.Next() {
+		var t SubjectTag
+		if err := rows.Scan(&t.Name, &t.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
 }

@@ -237,4 +237,26 @@ UPDATE torrents SET trusted = 1 WHERE source = 'bangumi.moe';
 ALTER TABLE sources DROP COLUMN trusted;
 UPDATE torrents SET trusted = 1 WHERE source NOT IN ('', 'user');
 `,
+	// 6: per-role content scope for subjects (admin panel "内容范围", see content_scope.go):
+	// tag mode + an ordered tag expression (AND binds tighter than OR) + excluded tags.
+	// admin is always unrestricted and has no row. Default: unrestricted.
+	`
+CREATE TABLE role_content_scopes (
+	role     TEXT PRIMARY KEY CHECK (role IN ('guest','member','vip')),
+	tag_mode TEXT NOT NULL DEFAULT 'all' CHECK (tag_mode IN ('all','selected'))
+);
+INSERT INTO role_content_scopes(role, tag_mode) VALUES ('guest','all'), ('member','all'), ('vip','all');
+CREATE TABLE role_tag_expression_terms (
+	role     TEXT NOT NULL REFERENCES role_content_scopes(role) ON DELETE CASCADE,
+	position INTEGER NOT NULL,
+	tag_name TEXT NOT NULL,
+	operator TEXT NOT NULL DEFAULT '' CHECK (operator IN ('','and','or')), -- operator before this term ('' for position 0)
+	PRIMARY KEY (role, position)
+);
+CREATE TABLE role_excluded_tags (
+	role     TEXT NOT NULL REFERENCES role_content_scopes(role) ON DELETE CASCADE,
+	tag_name TEXT NOT NULL,
+	PRIMARY KEY (role, tag_name)
+);
+`,
 }

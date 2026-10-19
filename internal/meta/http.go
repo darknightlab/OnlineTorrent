@@ -13,8 +13,15 @@ import (
 // Authz decides whether a request may modify mappings and returns an actor name.
 type Authz func(r *http.Request) (actor string, ok bool)
 
-// Handler returns the /meta/v1 HTTP API.
-func (s *Store) Handler(authz Authz) http.Handler {
+// Scope returns the content scope of a request (nil: unrestricted).
+type Scope func(r *http.Request) *store.ScopePlan
+
+// Handler returns the /meta/v1 HTTP API. scope (may be nil) limits which subjects reads
+// expose: subjects outside it are 404, left out of search, and hidden from file mappings.
+func (s *Store) Handler(authz Authz, scope Scope) http.Handler {
+	if scope == nil {
+		scope = func(*http.Request) *store.ScopePlan { return nil }
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /meta/v1/torrents/hash/{ih}", func(w http.ResponseWriter, r *http.Request) {
 		tm, err := s.GetTorrentMap(r.Context(), strings.ToLower(r.PathValue("ih")))
@@ -26,6 +33,7 @@ func (s *Store) Handler(authz Authz) http.Handler {
 			httpx.Fail(w, err)
 			return
 		}
+		tm.HideWorks(scope(r))
 		httpx.JSON(w, 200, tm)
 	})
 	mux.HandleFunc("PUT /meta/v1/torrents/hash/{ih}/files/{idx}", func(w http.ResponseWriter, r *http.Request) {
@@ -80,7 +88,7 @@ func (s *Store) Handler(authz Authz) http.Handler {
 			httpx.Fail(w, httpx.E(400, "bad_request", "需要 q 参数（≤100 字）"))
 			return
 		}
-		ws, err := s.SearchWorksFTS(r.Context(), qs, 50)
+		ws, err := s.SearchWorksFTS(r.Context(), qs, 50, scope(r))
 		if err != nil {
 			httpx.Fail(w, err)
 			return
@@ -92,6 +100,9 @@ func (s *Store) Handler(authz Authz) http.Handler {
 	})
 	subject := func(w http.ResponseWriter, r *http.Request) (*Work, bool) {
 		wk, err := s.ResolveSubject(r.Context(), r.PathValue("provider"), r.PathValue("id"))
+		if err == nil && !scope(r).Visible(wk) {
+			err = store.ErrNotFound // outside the content scope: don't reveal it exists
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			httpx.Fail(w, httpx.E(404, "not_found", "条目不存在"))
 			return nil, false

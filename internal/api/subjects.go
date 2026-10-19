@@ -36,6 +36,9 @@ type subjectOut struct {
 
 func (s *Server) resolveSubject(r *http.Request) (*meta.Work, error) {
 	work, err := s.Meta.ResolveSubject(r.Context(), r.PathValue("provider"), r.PathValue("id"))
+	if err == nil && !s.scopeOf(r).Visible(work) {
+		err = store.ErrNotFound // outside the user's content scope: same 404 as a missing subject
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, httpx.E(404, "not_found", "条目不存在")
 	}

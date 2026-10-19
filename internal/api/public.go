@@ -325,7 +325,17 @@ func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) error {
 		httpx.JSON(w, 200, catalog.Schedule{GeneratedAt: store.Now(), Items: []*catalog.ScheduleItem{}})
 		return nil
 	}
-	out := catalog.Schedule{GeneratedAt: sc.GeneratedAt, Season: sc.Season, Items: sc.Items}
+	items := sc.Items
+	// the cached schedule is shared by everyone: filter per request by the content scope
+	if scope := s.scopeOf(r); scope.Restricted() {
+		items = make([]*catalog.ScheduleItem, 0, len(sc.Items))
+		for _, it := range sc.Items {
+			if scope.Visible(it) {
+				items = append(items, it)
+			}
+		}
+	}
+	out := catalog.Schedule{GeneratedAt: sc.GeneratedAt, Season: sc.Season, Items: items}
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	httpx.JSON(w, 200, out)
 	return nil
@@ -366,13 +376,24 @@ func (s *Server) getSearch(w http.ResponseWriter, r *http.Request) error {
 	}
 	ctx := r.Context()
 	page := catalogPage(r)
+	scope := s.scopeOf(r)
 	out := searchResp{Subjects: []subjectOut{}, Page: page}
 	if page == 1 {
-		works, err := s.Meta.SearchWorksFTS(ctx, q, searchMaxSubjects)
+		works, err := s.Meta.SearchWorksFTS(ctx, q, searchMaxSubjects, scope)
 		if err != nil {
 			return err
 		}
-		if len(works) == 0 && utf8.RuneCountInString(q) >= 2 && s.limiter.allow("extsearch:"+ipKey(r), 5, 30*time.Second) {
+		// external fallback only when nothing local matches at all: local subjects hidden by
+		// the content scope must not trigger outbound searches
+		external := len(works) == 0
+		if external && scope.Restricted() {
+			unscoped, err := s.Meta.SearchWorksFTS(ctx, q, 1, nil)
+			if err != nil {
+				return err
+			}
+			external = len(unscoped) == 0
+		}
+		if external && utf8.RuneCountInString(q) >= 2 && s.limiter.allow("extsearch:"+ipKey(r), 5, 30*time.Second) {
 			if ext, err := s.Cat.SearchSubjectsExternal(ctx, q); err == nil {
 				works = ext
 			} else {
@@ -380,10 +401,12 @@ func (s *Server) getSearch(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 		for _, wk := range works {
-			out.Subjects = append(out.Subjects, s.subjectCard(r, wk, false))
+			if scope.Visible(wk) { // external results are upserted works: same scope check
+				out.Subjects = append(out.Subjects, s.subjectCard(r, wk, false))
+			}
 		}
 	}
-	list, total, err := s.Meta.SearchTorrents(ctx, q, (page-1)*searchPageSize, searchPageSize)
+	list, total, err := s.Meta.SearchTorrents(ctx, q, (page-1)*searchPageSize, searchPageSize, scope)
 	if err != nil {
 		return err
 	}

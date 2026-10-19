@@ -10,6 +10,7 @@
   `public`（所有人，不可改：site/me/登录/注册/退出）、`configurable`（游客/会员/大会员可在后台勾选）、`user`（必须登录，会员/大会员可勾选）、`admin`（仅管理员，不可改）。
   授权给某等级即自动包含更高等级；管理员通过所有接口。默认值只在接口第一次出现时写入，之后以后台设置为准。
   无权限：游客 401 `login_required`，已登录 403 `forbidden`。
+- **内容范围**（同 YotsubaNews content scope）：游客 / 会员 / 大会员各有一个按标签限制可见番剧条目的范围（后台「内容范围」，见下方 `/admin/content-scopes`）；管理员不受限制。默认全部可见。范围之外的条目对该等级而言「不存在」：条目详情 / 选集 / 单集 404 `not_found`，不出现在搜索与时间表中；包含映射到它的文件的种子不出现在搜索结果中；种子收录状态与 play 的 `meta` 里不给出它的条目 / 集信息（文件按未刮削显示）；`/meta/v1` 的读取接口同样处理。
 
 ## 路径约定（同 YotsubaNews）
 资源/维度/值，纯路径；只有自由文本搜索、分页等筛选才用 `?`。
@@ -238,6 +239,19 @@ qB 拿到元数据后，后端把文件列表写入本地库并刮削（每个 i
 - `POST /admin/policy/test` `{title, infohash?, files?, tags?, team?}` → `{access, matched_rule}`
 - `GET /admin/reviews?status=pending` / `PUT /admin/reviews/id/{id}` `{action, label, note}`（写入 infohash 级裁决；action 为 block 或 label 为 political/porn 时同时从 qB 移除。note 仅后台可见，前台理由由 action+label 生成）
 - 日志保留：plays / audit 保留 90 天，已处理的 reviews 保留 180 天（每日清理）。
+- 内容范围（仅 admin；写入记审计日志 `content_scope.update`，保存后立即生效——编译结果缓存在内存，写入时替换）：
+  - `GET /admin/content-scopes` → `{"roles":["guest","member","vip"],"items":[ContentScope]}`
+  - `PUT /admin/content-scopes/role/{role}` body = ContentScope（`role` 可省略）→ 规范化后的 ContentScope。`{role}` 为 `admin` 时 400（管理员不受限制），未知等级 404。校验（400 `bad_request`）：`tag_mode` 为 `all|selected`；`tags`、`exclude_tags` 各最多 50 个，每个去掉首尾空白后非空且 ≤ 60 字；`tag_operators` 长度必须等于 `len(tags) - 1`，每项为 `and|or`；`selected` 模式至少一个标签；出现未知字段也 400。`all` 模式会清空 `tags` / `tag_operators`；`exclude_tags` 去重排序。
+  - `GET /admin/subject-tags?q=` → `{"items":[{"name":"原创","count":6867}]}`：标签自动补全，来自 works.tags ∪ meta_tags（`count` = 带该标签的条目数），包含 `q` 的标签，以 `q` 开头的排前，再按条目数，最多 30 个；`q` 为空时给出最常见的标签。
+  ```json
+  ContentScope: { "role": "guest", "tag_mode": "all|selected",
+                  "tags": ["原创", "校园", "战斗"], "tag_operators": ["and", "or"],   // 原创 AND 校园 OR 战斗
+                  "exclude_tags": ["18禁", "R18", "里番"] }
+  ```
+  - 条目的标签 = `works.tags`（bgm 用户标签）∪ `works.meta_tags`（bgm 公共标签），按原样精确匹配。范围只看标签，不使用 `works.nsfw` 字段；要隐藏成人内容请排除 `里番` / `R18` / `18禁` 等标签。
+  - 表达式：AND 优先于 OR——在每个 OR 处分组，条目拥有某一组的全部标签即匹配：`原创 AND 校园 OR 战斗` = `(原创 AND 校园) OR 战斗`。`selected` 模式只显示匹配的条目；`exclude_tags` 在两种模式下都生效（带有任意一个即隐藏，优先于表达式）。
+  - 注意：没有任何标签的条目（如只来自 bangumi-data、尚未被 bangumi Archive 补全的条目，或按需从 bgm.tv / TMDB 搜索写入的条目）在 `selected` 模式下被隐藏。
+  - 搜索：本地条目按范围在 SQL 中过滤（不影响每页数量）；只有本地完全没有匹配（不论范围）时才查询外部，外部结果同样按范围过滤。
 - `GET /admin/plays?page=`：播放/推送记录
 - `GET /admin/audit?page=`
 - `GET /admin/stats`：`{users, plays_24h, qb_online, qb_total, pending_reviews}`
@@ -289,6 +303,7 @@ Source：
               "episode_key": "2",         // 可省略：可映射的 kind 且有编号时（"12.5"、"sp1"、"ncop1"…）
               "confidence": 0.95, "status": "auto|verified|rejected", "method": "moe_tag+name" }] }
 ```
+- 在 otd 内挂载时，读取接口按当前用户的内容范围处理（范围之外的条目 404、不出现在搜索中、文件映射中不给出 `work` / `episode`）；独立部署的 metad 没有用户，不受限制。
 - `GET /meta/v1/subjects/{provider}/{id}`（含 external ids）/ `GET /meta/v1/subjects/search?q=标题`
 - `GET /meta/v1/subjects/{provider}/{id}/episodes` → `{"items":[{key, kind, number, label, files}]}`：有映射文件的集（不含没有文件的已播正片）
 - `GET /meta/v1/subjects/{provider}/{id}/episodes/{key}/files` → `{"key": "ncop1", "items": [...]}`：该集所有已知文件（infohash + file_index + 种子标题）；`{key}` 为集的键，无效 400

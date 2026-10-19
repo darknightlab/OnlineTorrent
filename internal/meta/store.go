@@ -225,6 +225,9 @@ type Work struct {
 	Eps       int               `json:"eps,omitempty"` // planned episode count (bgm infobox 话数)
 }
 
+// ScopeFacts implements store.ScopeTarget (content scope: tags ∪ meta_tags).
+func (w *Work) ScopeFacts() (tags, metaTags []string) { return w.Tags, w.MetaTags }
+
 const workCols = `COALESCE(id,0),key,title,title_cn,aliases,type,begin_at,end_at,broadcast,cover,summary,official,nsfw,platform,tags,meta_tags,score,rank,eps`
 
 func scanWork(sc interface{ Scan(...any) error }) (*Work, error) {
@@ -464,7 +467,13 @@ type WorkRef struct {
 	Title    string            `json:"title"`
 	TitleCN  string            `json:"title_cn"`
 	External map[string]string `json:"external,omitempty"`
+
+	Tags     []string `json:"-"` // content scope only
+	MetaTags []string `json:"-"`
 }
+
+// ScopeFacts implements store.ScopeTarget.
+func (w *WorkRef) ScopeFacts() (tags, metaTags []string) { return w.Tags, w.MetaTags }
 
 // TorrentMap is the API view of a torrent's files.
 type TorrentMap struct {
@@ -483,7 +492,7 @@ func (s *Store) GetTorrentMap(ctx context.Context, ih string) (*TorrentMap, erro
 		}
 		return nil, err
 	}
-	rows, err := s.R.QueryContext(ctx, `SELECT f.file_index,f.path,f.size_bytes,f.kind,f.work_key,COALESCE(w.id,0),COALESCE(w.title,''),COALESCE(w.title_cn,''),f.episode,f.confidence,f.status,f.method
+	rows, err := s.R.QueryContext(ctx, `SELECT f.file_index,f.path,f.size_bytes,f.kind,f.work_key,COALESCE(w.id,0),COALESCE(w.title,''),COALESCE(w.title_cn,''),COALESCE(w.tags,'[]'),COALESCE(w.meta_tags,'[]'),f.episode,f.confidence,f.status,f.method
 		FROM torrent_files f LEFT JOIN works w ON w.key = f.work_key WHERE f.infohash = ? ORDER BY f.file_index`, ih)
 	if err != nil {
 		return nil, err
@@ -493,14 +502,16 @@ func (s *Store) GetTorrentMap(ctx context.Context, ih string) (*TorrentMap, erro
 	for rows.Next() {
 		var f FileMap
 		var wk sql.NullString
-		var wt, wcn string
+		var wt, wcn, wtags, wmeta string
 		var wid int64
 		var ep sql.NullFloat64
-		if err := rows.Scan(&f.Index, &f.Path, &f.Size, &f.Kind, &wk, &wid, &wt, &wcn, &ep, &f.Confidence, &f.Status, &f.Method); err != nil {
+		if err := rows.Scan(&f.Index, &f.Path, &f.Size, &f.Kind, &wk, &wid, &wt, &wcn, &wtags, &wmeta, &ep, &f.Confidence, &f.Status, &f.Method); err != nil {
 			return nil, err
 		}
 		if wk.Valid {
 			f.Work = &WorkRef{ID: wid, Key: wk.String, Title: wt, TitleCN: wcn}
+			_ = json.Unmarshal([]byte(wtags), &f.Work.Tags)
+			_ = json.Unmarshal([]byte(wmeta), &f.Work.MetaTags)
 			works = append(works, &Work{Key: wk.String})
 		}
 		if ep.Valid {
@@ -536,6 +547,21 @@ func (s *Store) GetTorrentMap(ctx context.Context, ih string) (*TorrentMap, erro
 		}
 	}
 	return tm, nil
+}
+
+// HideWorks drops the subject and episode of every file mapped to a subject outside the
+// content scope (the file itself stays listed, like an unmapped file).
+func (tm *TorrentMap) HideWorks(scope *store.ScopePlan) {
+	if !scope.Restricted() {
+		return
+	}
+	for i := range tm.Files {
+		f := &tm.Files[i]
+		if f.Work != nil && !scope.Visible(f.Work) {
+			f.Work, f.Episode, f.EpisodeKey = nil, nil, ""
+			f.Confidence, f.Method = 0, ""
+		}
+	}
 }
 
 func dedupWorks(ws []*Work) []*Work {

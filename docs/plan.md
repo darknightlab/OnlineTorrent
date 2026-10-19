@@ -79,6 +79,8 @@
 - 时间表自动选种优先 AVC/H.264（浏览器兼容），HEVC/10bit 降权。
 - **浏览器分块缓存（2026-10）**：OPFS 每个 piece 一个文件（`ot-pieces/<ih>/<index>`，另存 meta.json 与 .torrent），预算 = min(`max_push_size_bytes`, 25% 配额)，QuotaExceededError 时收缩到已用的 90%。淘汰顺序：旧版 / 未知 OPFS 条目 → 不在播放的种子（整种 LRU）→ 播放中种子读位置之后最远的 piece → 读前窗口之外最远的 piece；读前窗口、首尾 piece、正在读写的 piece 不淘汰。替换 WebTorrent 的文件迭代器为窗口化读取（被淘汰的区间重读时按需重下），不发 HAVE_ALL + lt_donthave + 对缺失 piece 回 reject；离开播放页保留数据，再次打开用缓存的 .torrent 与启动 bitfield 秒开。多 tab 用 Web Locks，第二个 tab 用临时目录。依赖 WebTorrent 内部接口：`npm run build`/`npm test` 会跑 `src/player/store/webtorrent-compat.test.ts`，升级后不兼容直接构建失败；运行时检查不通过则播放器报错「播放器内核不兼容：…」（不回退）。端到端测试：`npm run e2e:chunkstore`。详见 research/chunk-store.md。
 
+- **内容范围（2026-10）**：按等级（游客 / 会员 / 大会员；管理员不受限）限制可见的番剧条目，仿 YotsubaNews content scope：标签模式（全部 / 仅所选标签）+ 标签表达式（AND 优先于 OR）+ 排除标签，只看 works.tags ∪ meta_tags（不使用 nsfw 字段）。存于 otd.db（迁移 6：`role_content_scopes`、`role_tag_expression_terms`、`role_excluded_tags`），编译后缓存在内存（`internal/store/content_scope.go`、`internal/api/content_scope.go`）；SQL 谓词（json_each）用于搜索，内存 `Visible` 用于时间表 / 条目 / 种子状态 / play。后台页 `/admin/content-scope`。详见 api.md「后台」。
+
 ## TODO（低优先级）
 - 浏览器分块缓存按稀有度淘汰：同等距离下优先淘汰 swarm 里副本多的 piece（`_rarityMap` 作次级排序键，见 web/src/player/store/policy.ts `pickVictim`）
 - dandanplay 弹幕（需 AppId/Secret，用户暂无账号）

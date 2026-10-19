@@ -593,5 +593,36 @@ export interface PermissionsUpdate {
   grants: Record<string, GrantRole[]>
 }
 
+// ---------- 内容范围（按等级限制可见的番剧条目） ----------
+
+export type TagMode = "all" | "selected"
+export type TagOperator = "and" | "or"
+
+/**
+ * 某等级的内容范围。条目的标签 = works.tags ∪ works.meta_tags。
+ * tag_mode=selected 时只显示匹配表达式的条目：tags[i] 之间用 tag_operators[i]（长度 = tags.length - 1）连接，AND 优先于 OR。
+ * exclude_tags：带有其中任意一个标签的条目一律隐藏。管理员不受限制。
+ */
+export interface ContentScope {
+  role: GrantRole
+  tag_mode: TagMode
+  tags: string[]
+  tag_operators: TagOperator[]
+  exclude_tags: string[]
+}
+
+export interface ContentScopesResponse {
+  roles: GrantRole[]
+  items: ContentScope[]
+}
+
+export type ContentScopeInput = Omit<ContentScope, "role">
+
+export interface SubjectTag {
+  name: string
+  /** 带有该标签的条目数 */
+  count: number
+}
+
 /** 列表接口统一处理：后端可能返回数组或分页对象 */
 export type ListLike<T> = T[] | Paged<T>

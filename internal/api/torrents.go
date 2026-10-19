@@ -52,6 +52,7 @@ func (s *Server) getTorrentStatus(w http.ResponseWriter, r *http.Request) error 
 	tm, err := s.Meta.GetTorrentMap(ctx, ih)
 	switch {
 	case err == nil:
+		tm.HideWorks(s.scopeOf(r)) // subjects outside the content scope: shown as unmapped
 		out.Title = tm.Title
 		if tm.Status == "ready" && len(tm.Files) > 0 {
 			out.Status = "ready"

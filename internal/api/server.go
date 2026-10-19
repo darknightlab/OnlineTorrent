@@ -56,6 +56,11 @@ type Server struct {
 
 	recheckMu sync.Mutex
 	checked   map[string]uint64 // infohash -> policy generation it was last checked at
+
+	// content scopes (admin "内容范围"): compiled per role, replaced on write
+	scopeMu     sync.RWMutex
+	scopes      map[string]*store.ScopePlan // nil until loaded
+	scopeWrites sync.Mutex                  // keeps DB writes and cache replacement in order
 }
 
 // Wait blocks until background work started by handlers has finished (call after the
@@ -91,7 +96,7 @@ func (s *Server) Handler() http.Handler {
 			return "", false
 		}
 		return u.Username, true
-	})
+	}, s.scopeOf)
 	// reads are one configurable permission; writes are admin-only (checked by the meta authz)
 	s.perms.add(RouteSpec{Key: "GET /meta/v1/", Method: "GET", Path: "/meta/v1/…", Group: "映射库", Label: "读取映射库（作品 / 种子文件映射）", Access: AccessConfigurable, DefaultRoles: []string{store.RoleGuest}})
 	s.perms.add(RouteSpec{Key: "PUT /meta/v1/", Method: "PUT", Path: "/meta/v1/torrents/hash/{ih}/files/{idx}", Group: "映射库", Label: "纠正映射", Access: AccessAdmin})
@@ -99,6 +104,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("PUT /meta/v1/", s.checkPerm("PUT /meta/v1/", metaH.ServeHTTP))
 	if err := s.loadPerms(s.BaseCtx); err != nil {
 		s.Log.Error("load route permissions", "err", err)
+	}
+	if err := s.loadScopes(s.BaseCtx); err != nil {
+		s.Log.Error("load content scopes", "err", err) // retried on demand; fails closed meanwhile
 	}
 	mux.Handle("/", s.spa())
 	return s.withUser(mux)

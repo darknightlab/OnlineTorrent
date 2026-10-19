@@ -178,6 +178,7 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request, in playReq) error 
 		resp.Magnet += "&xs=" + url.QueryEscape(s.siteBase(r)+"/api/v1/torrents/hash/"+t.Infohash+"/torrent")
 	}
 	if tm, err := s.Meta.GetTorrentMap(ctx, t.Infohash); err == nil {
+		tm.HideWorks(s.scopeOf(r)) // never point the player at a subject outside the scope
 		resp.Meta = playMetaOf(tm, in.File)
 	}
 	httpx.JSON(w, 200, resp)

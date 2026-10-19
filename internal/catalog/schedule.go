@@ -31,7 +31,15 @@ type ScheduleItem struct {
 	MoeTagID      *string           `json:"moe_tag_id"`
 	External      map[string]string `json:"external,omitempty"`
 	LatestEpisode *float64          `json:"latest_episode"`
+
+	// content scope (not serialized): the work's tags / meta_tags, so the shared cached
+	// schedule can be filtered per request without loading works again
+	ScopeTags     []string `json:"-"`
+	ScopeMetaTags []string `json:"-"`
 }
+
+// ScopeFacts implements store.ScopeTarget.
+func (it *ScheduleItem) ScopeFacts() (tags, metaTags []string) { return it.ScopeTags, it.ScopeMetaTags }
 
 // Schedule is the timeline response.
 type Schedule struct {
@@ -102,6 +110,7 @@ func (c *Catalog) ItemFor(w *meta.Work, now time.Time) (*ScheduleItem, bool) {
 		Key: w.Key, SubjectID: w.ID, Title: w.Title, TitleCN: w.TitleCN, Cover: c.CoverFor(w), Begin: w.Begin,
 		Weekday: int(local.Weekday()), AirTime: local.Format("15:04"),
 		LastAirAt: ts(a.Last), NextAirAt: ts(a.Next), EpisodesAired: a.Aired, External: w.External,
+		ScopeTags: w.Tags, ScopeMetaTags: w.MetaTags,
 	}
 	if v, err := strconv.ParseInt(w.External["bgm"], 10, 64); err == nil {
 		it.BgmID = &v
@@ -281,3 +290,6 @@ func (c *Catalog) ScheduleItemByKey(key string) *ScheduleItem {
 	}
 	return nil
 }
+
+// SetSchedule publishes items as the current schedule (tests).
+func (c *Catalog) SetSchedule(items []*ScheduleItem) { c.publishSchedule(time.Now(), items) }

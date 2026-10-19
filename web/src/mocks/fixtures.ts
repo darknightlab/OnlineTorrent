@@ -376,6 +376,9 @@ export const permissionSpecs: Spec[] = [
   adm("GET", "/audit", "审计日志 · 查看"),
   adm("GET", "/permissions", "接口权限 · 查看"),
   adm("PUT", "/permissions", "接口权限 · 修改"),
+  adm("GET", "/content-scopes", "内容范围 · 查看"),
+  adm("PUT", "/content-scopes/role/{role}", "内容范围 · 修改"),
+  adm("GET", "/subject-tags", "内容范围 · 查看"),
   { key: "GET /meta/v1/", method: "GET", path: "/meta/v1/…", group: "映射库", label: "读取映射库（作品 / 种子文件映射）", access: "configurable", default_roles: ["guest"] },
   { key: "PUT /meta/v1/", method: "PUT", path: "/meta/v1/torrents/hash/{ih}/files/{idx}", group: "映射库", label: "纠正映射", access: "admin", default_roles: null },
 ]

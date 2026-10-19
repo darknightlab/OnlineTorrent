@@ -52,7 +52,7 @@ func main() {
 	h := ms.Handler(func(r *http.Request) (string, bool) {
 		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		return "token", *token != "" && subtle.ConstantTimeCompare([]byte(got), []byte(*token)) == 1
-	})
+	}, nil) // standalone metad has no user roles: content scopes apply only inside otd
 	hs := &http.Server{Addr: *addr, Handler: h, ReadHeaderTimeout: 10 * time.Second}
 	go func() { <-ctx.Done(); _ = hs.Shutdown(context.Background()) }()
 	log.Info("metad listening", "addr", *addr)

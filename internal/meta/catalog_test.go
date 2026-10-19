@@ -112,7 +112,7 @@ func TestCatalogAndSearch(t *testing.T) {
 		"摇滚":          "bb", // 2 chars → LIKE
 		"nothinghere": "",
 	} {
-		list, total, err := s.SearchTorrents(ctx, q, 0, 10)
+		list, total, err := s.SearchTorrents(ctx, q, 0, 10, nil)
 		if err != nil {
 			t.Fatalf("%q: %v", q, err)
 		}
@@ -127,12 +127,12 @@ func TestCatalogAndSearch(t *testing.T) {
 		}
 	}
 	// FTS query syntax in user input is quoted, not interpreted
-	if _, _, err := s.SearchTorrents(ctx, `"a OR b* NEAR(`, 0, 10); err != nil {
+	if _, _, err := s.SearchTorrents(ctx, `"a OR b* NEAR(`, 0, 10, nil); err != nil {
 		t.Errorf("quoted query: %v", err)
 	}
 
 	for q, want := range map[string]int64{"芙莉莲": 1, "sousou no": 1, "Bocchi": 2, "孤独": 2} {
-		ws, err := s.SearchWorksFTS(ctx, q, 10)
+		ws, err := s.SearchWorksFTS(ctx, q, 10, nil)
 		if err != nil || len(ws) != 1 || ws[0].ID != want {
 			t.Errorf("works %q: %v %+v", q, err, ws)
 		}
@@ -141,14 +141,14 @@ func TestCatalogAndSearch(t *testing.T) {
 	if _, err := s.W.ExecContext(ctx, `UPDATE works SET title_cn = '波奇酱' WHERE id = 2`); err != nil {
 		t.Fatal(err)
 	}
-	if ws, _ := s.SearchWorksFTS(ctx, "波奇酱", 10); len(ws) != 1 {
+	if ws, _ := s.SearchWorksFTS(ctx, "波奇酱", 10, nil); len(ws) != 1 {
 		t.Errorf("after update: %+v", ws)
 	}
 	w, err := s.UpsertExternalWork(ctx, ExternalWork{Provider: "bgm", ExtID: "999", Title: "Some Old Show", TitleCN: "某老番", Type: "tv"})
 	if err != nil || w.ID != 3 || w.External["bgm"] != "999" {
 		t.Fatalf("external: %v %+v", err, w)
 	}
-	if ws, _ := s.SearchWorksFTS(ctx, "某老番", 10); len(ws) != 1 || ws[0].Key != "bgm:999" {
+	if ws, _ := s.SearchWorksFTS(ctx, "某老番", 10, nil); len(ws) != 1 || ws[0].Key != "bgm:999" {
 		t.Errorf("external work not searchable: %+v", ws)
 	}
 	// existing work (bangumi-data) is reused, not duplicated

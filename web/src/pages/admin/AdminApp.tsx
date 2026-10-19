@@ -6,6 +6,7 @@ import {
   Gauge,
   History,
   KeySquare,
+  ListFilter,
   Menu,
   Rss,
   ScrollText,
@@ -26,6 +27,7 @@ import { Navigate } from "react-router-dom"
 import Overview from "./Overview"
 import SettingsPage from "./Settings"
 import PermissionsPage from "./Permissions"
+import ContentScopePage from "./ContentScope"
 import QBServers from "./QBServers"
 import SourcesPage from "./Sources"
 import UsersPage from "./Users"
@@ -38,6 +40,7 @@ const NAV = [
   { to: "/admin", label: "概览", icon: Gauge, end: true },
   { to: "/admin/settings", label: "站点设置", icon: Settings2 },
   { to: "/admin/permissions", label: "接口权限", icon: KeySquare },
+  { to: "/admin/content-scope", label: "内容范围", icon: ListFilter },
   { to: "/admin/qb", label: "qB 服务器", icon: Server },
   { to: "/admin/sources", label: "抓取源", icon: Rss },
   { to: "/admin/users", label: "用户", icon: Users },
@@ -115,6 +118,7 @@ export default function AdminApp() {
             <Route index element={<Overview />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="permissions" element={<PermissionsPage />} />
+            <Route path="content-scope" element={<ContentScopePage />} />
             <Route path="qb" element={<QBServers />} />
             <Route path="sources" element={<SourcesPage />} />
             <Route path="users" element={<UsersPage />} />
