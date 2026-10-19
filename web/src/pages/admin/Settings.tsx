@@ -200,7 +200,7 @@ export function SettingRow({ item, value, dirty, onChange }: { item: SettingItem
                 className={cn(
                   "h-8 rounded-md px-3 text-xs font-medium",
                   !ENUM_LABEL[c] && "font-mono",
-                  value === c ? "bg-card text-primary-text shadow-sm" : "text-muted-foreground hover:text-foreground",
+                  value === c ? "bg-card text-primary-text" : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 {ENUM_LABEL[c] ?? c}

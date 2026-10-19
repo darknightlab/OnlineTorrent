@@ -3,7 +3,7 @@
 import type { Access, RankRules, SwarmStats } from "./types"
 
 export const DEFAULT_RANK_RULES: RankRules = {
-  availability: { server_complete: 2, wt_seeder: 20, wt_cap: 20, wt_scale: 20, bt_seeder: 10, bt_cap: 10, bt_scale: 20, curve: "tanh", dead: -100 },
+  availability: { wt_seeder: 20, wt_cap: 20, wt_scale: 20, bt_seeder: 10, bt_cap: 10, bt_scale: 20, curve: "tanh", dead: -100 },
   keywords: [
     { label: "简体中文", pattern: String.raw`简|chs|\bsc\b|\bgb\b|zh-?hans|jpsc`, score: 25, group: "字幕" },
     { label: "繁体中文", pattern: String.raw`繁|cht|\btc\b|big5|zh-?hant|jptc`, score: 20, group: "字幕" },
@@ -120,6 +120,18 @@ function normalizeSize(s: RankRules["size"] | LegacySize): RankRules["size"] {
   return s
 }
 
+/**
+ * 对当前用户而言无人做种（未统计的不算）：游客类用户（无做种 / WebSeed 权限）只能从 WebRTC 节点拿数据
+ * （本站 qB 做种时也算一个 WebRTC 节点）→ WebRTC 0；有做种或 WebSeed 权限的用户 → BT 与 WebRTC 都为 0。
+ */
+export function swarmDead(sw: SwarmStats | null | undefined, viewer: Viewer): boolean {
+  if (!sw?.checked_at) return false
+  const bt = sw.bt_seeders ?? null
+  const wt = sw.wt_seeders ?? null
+  if (!viewer.canSeed && !viewer.canWebseed) return wt === 0
+  return (bt !== null || wt !== null) && (bt ?? 0) === 0 && (wt ?? 0) === 0
+}
+
 /** 给一个文件打分（策略不允许的资源后端不会返回，这里不处理） */
 export function scoreFile<T extends RankInput>(f: T, rules: RankRules, viewer: Viewer): Scored<T> {
   const a = rules.availability
@@ -129,22 +141,14 @@ export function scoreFile<T extends RankInput>(f: T, rules: RankRules, viewer: V
     if (score !== 0) parts.push({ label, score })
   }
   const sw = f.swarm ?? null
-  const server = !!sw?.server_complete
   const known = !!sw?.checked_at
   const bt = known ? (sw!.bt_seeders ?? null) : null
   const wt = known ? (sw!.wt_seeders ?? null) : null
 
-  if (server) add("服务器已缓存", a.server_complete)
   if (wt !== null && wt > 0) add(`WebRTC 做种 ${wt}`, seederScore(wt, a.wt_seeder, a.wt_cap, curve, a.wt_scale))
   if (viewer.canSeed && bt !== null && bt > 0) add(`BT 做种 ${bt}`, seederScore(bt, a.bt_seeder, a.bt_cap, curve, a.bt_scale))
 
-  // 无可用来源（未统计的不算）：游客类用户只能靠 WebRTC 节点 / 服务器；能用服务器的用户看全部来源
-  let dead = false
-  if (!viewer.canSeed && !viewer.canWebseed) {
-    dead = wt === 0 && !server
-  } else {
-    dead = !server && (bt !== null || wt !== null) && (bt ?? 0) === 0 && (wt ?? 0) === 0
-  }
+  const dead = swarmDead(sw, viewer)
   if (dead) add("无人做种", a.dead)
 
   // 关键词：同一分组只取命中的最高分

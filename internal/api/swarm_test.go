@@ -3,9 +3,12 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/darknightlab/onlinetorrent/internal/meta"
+	"github.com/darknightlab/onlinetorrent/internal/store"
 )
 
 func TestSwarmInListingsAndSiteRules(t *testing.T) {
@@ -79,5 +82,65 @@ func TestSwarmInListingsAndSiteRules(t *testing.T) {
 	getJSON(t, h, "/api/v1/site", &site)
 	if site.RankRules.Availability.Dead != -100 || len(site.RankRules.Keywords) != 7 {
 		t.Fatalf("site rank_rules %+v", site.RankRules)
+	}
+}
+
+// Whether our qB has a torrent is never exposed to users: no server_complete /
+// server_progress in any response, and a torrent known only from our server (never
+// scraped) has swarm null.
+func TestSwarmNeverRevealsServerCache(t *testing.T) {
+	s, h := testServer(t)
+	ctx := context.Background()
+	if _, err := s.Meta.W.ExecContext(ctx, `INSERT INTO works(id,key,title,title_cn,aliases,type,begin_at,eps,updated_at) VALUES
+		(7,'bgm:400602','葬送のフリーレン','葬送的芙莉莲','[]','tv','2023-09-29T00:00:00Z',28,'x')`); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = s.Meta.W.ExecContext(ctx, `INSERT INTO work_ids VALUES('bgm','400602','bgm:400602'),('bangumi_moe','tag1','bgm:400602')`)
+	scraped, cachedOnly := "ae5e267603990c2e6205f8e43df4c9eb368bbeba", "be5e267603990c2e6205f8e43df4c9eb368bbeba"
+	for _, ih := range []string{scraped, cachedOnly} {
+		if err := s.Meta.Match(ctx, meta.TorrentInput{Infohash: ih, Title: "[LoliHouse] Sousou no Frieren - 28 [1080p]", Source: "bangumi.moe", SourceKind: "bangumi_moe",
+			SourceID: "moe" + ih[:2], Trusted: true, MoeTagIDs: []string{"tag1"}, PublishedAt: "2026-10-18T10:00:00Z",
+			Files: []meta.FileInput{{Index: 0, Path: "[LoliHouse] Sousou no Frieren - 28 [1080p].mkv", Size: 100}}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	one := 1
+	if err := s.Meta.PutSwarmScrape(ctx, []meta.SwarmStats{
+		{Infohash: scraped, BTSeeders: &one, BTLeechers: &one, WTSeeders: &one, WTLeechers: &one, ServerComplete: true, ServerProgress: 1, ScrapedAt: store.Now()},
+		{Infohash: cachedOnly, ServerComplete: true, ServerProgress: 1, ScrapedAt: store.Now()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []string{
+		"/api/v1/subjects/bgm/400602/episodes/28",
+		"/api/v1/subjects/bgm/400602",
+		"/api/v1/search/Frieren",
+		"/api/v1/torrents/hash/" + scraped,
+		"/api/v1/torrents/hash/" + cachedOnly,
+		"/meta/v1/subjects/bgm/400602/episodes/28/files",
+		"/meta/v1/torrents/hash/" + scraped,
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", p, nil))
+		body := rec.Body.String()
+		if rec.Code != 200 || strings.Contains(body, "server_complete") || strings.Contains(body, "server_progress") || strings.Contains(body, "服务器") {
+			t.Errorf("%s: %d %s", p, rec.Code, body)
+		}
+	}
+	var st struct {
+		Swarm *struct{} `json:"swarm"`
+	}
+	getJSON(t, h, "/api/v1/torrents/hash/"+cachedOnly, &st)
+	if st.Swarm != nil {
+		t.Fatal("cached-only torrent must have swarm null")
+	}
+	var play map[string]any
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/torrents/hash/"+scraped+"/play", nil)
+	req.Header.Set("X-Requested-With", "fetch")
+	h.ServeHTTP(rec, req)
+	_ = json.Unmarshal(rec.Body.Bytes(), &play)
+	if rec.Code != 200 || strings.Contains(rec.Body.String(), "server_complete") {
+		t.Fatalf("play %d %s", rec.Code, rec.Body.String())
 	}
 }

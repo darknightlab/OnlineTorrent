@@ -244,7 +244,7 @@ export default function PlaybackPage() {
                
                 retry={retry}
                 docTitle={false}
-                className={cn(BLEED, "max-w-none rounded-none border-x-0 border-t-0 shadow-none lg:rounded-xl lg:border")}
+                className={cn(BLEED, "max-w-none rounded-none border-x-0 border-t-0 lg:rounded-xl lg:border")}
               />
             )}
             {info()}

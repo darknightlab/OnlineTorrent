@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom"
 import { Clock, Files, HardDrive, Play } from "lucide-react"
 import { AccessBadge } from "./badges"
-import { SwarmInfo, swarmDead } from "./Swarm"
+import { SwarmInfo } from "./Swarm"
 import type { Torrent } from "@/lib/types"
 import { formatBytes, formatDateTime, timeAgo } from "@/lib/format"
 import { cn, watchHref } from "@/lib/utils"
@@ -46,7 +46,7 @@ export function TorrentRow({ t, now }: { t: Torrent; now: number }) {
             )}
             <span className="group-hover:text-primary-text">{title}</span>
           </p>
-          <SwarmInfo swarm={t.swarm} dead={swarmDead(t.swarm)} className="mt-0.5 flex" />
+          <SwarmInfo swarm={t.swarm} className="mt-0.5 flex" />
           {/* 移动端：元信息行 */}
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground lg:hidden">
             <span className="inline-flex items-center gap-1 tabular-nums">

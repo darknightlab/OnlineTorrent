@@ -259,13 +259,13 @@ WebSeed **只由边缘节点提供**：`{edge_url}/webseed/hash/{ih}/…`（如 
 
 
 ## 做种统计（swarm）
-`Swarm`（单集 items、条目 / 搜索的 Torrent、`GET /torrents/hash/{ih}` 的 `swarm` 字段；从未统计且不在服务器上时为 `null`）：
+`Swarm`（单集 items、条目 / 搜索的 Torrent、`GET /torrents/hash/{ih}` 的 `swarm` 字段；从未统计时为 `null`）：
 ```json
 { "bt_seeders": 23, "bt_leechers": 8,     // UDP / HTTP tracker；null = 该类 tracker 都没有响应过
   "wt_seeders": 1, "wt_leechers": 0,      // WebTorrent（wss）tracker；null 同上
-  "server_complete": true,                // 某台在线 qB 已完整下载（qB 种子列表快照，缓存 1 分钟）
-  "checked_at": "2026-10-19T04:04:01Z" }  // 计数的统计时间；null = 尚未统计（只有 server_complete 可能已知）
+  "checked_at": "2026-10-19T04:04:01Z" }  // 计数的统计时间
 ```
+- **不公开本站服务器的缓存状态**：任何面向用户的响应（上述 swarm、play、`/meta/v1`）都不包含本站 qB 是否已缓存 / 下载进度（`server_complete` / `server_progress` 只留在库里供后台使用）。本站 qB 做种时经 wss tracker 计入 `wt_seeders`。WebSeed 就绪推送（SSE，需 WebSeed 权限）本身仍会体现文件是否就绪。
 - **按需、缓存 30 分钟，不做全库定时查询**：上述接口返回的种子中，没有数据或 `scraped_at` 超过 30 分钟的，当场只查询这些种子——按 tracker 分组批量请求（UDP BEP 15 每包 ≤ 74 个 infohash、connection id 复用约 1 分钟、每次 1.5/2.5/4 秒重试；HTTP scrape 一次多个 `info_hash`（announce → scrape）、5xx 重试一次；wss 发 `{"action":"scrape","info_hash":[latin1 字符串…]}`，每条 ≤ 50 个），所有 tracker 并行；响应最多等待 **1.5 秒**（约 1.2 秒时先把已响应 tracker 的结果写库），返回当时已知的数据（新值、旧值或 null），其余在后台完成后写库。同一 infohash 的并发请求只查询一次（in-flight 集合）；每个 tracker 限速（突发 4 次，之后每秒 1 次）；同时最多 8 组按需查询，再多时直接返回库中数据。每次请求最多刷新 100 个种子。
 - tracker：`bt.trackers` ∪ `webtorrent.trackers` ∪ 种子自带 announce 列表中前 3 个 udp/http（不在配置里的；每次最多 16 个这类 tracker；必须解析到公网地址）。计数取各 tracker 的**最大值**（同一节点会向多个 tracker 汇报，不能相加）：BT = UDP/HTTP tracker 的最大值，WebRTC = wss tracker 的最大值。响应了但没有列出某个种子的 tracker 记为 0。
 - Nyaa RSS 的 `nyaa:seeders` / `nyaa:leechers` / `nyaa:downloads` 在抓取时写为初始值（`checked_at` = 抓取时间），第一次真正 scrape 前有效，之后不再覆盖。
@@ -274,10 +274,9 @@ WebSeed **只由边缘节点提供**：`{edge_url}/webseed/hash/{ih}/…`（如 
 - tracker 状态是**被动**的：只记录每个已配置 tracker 最后一次实际使用（上述按需查询）时的结果，从不为检测主动发请求；保存在内存（重启后为「尚未使用」）。
 
 ## 推荐规则
-`/site.rank_rules`（后台「推荐规则」编辑，设置键 `rank.rules`，不在 `/admin/settings` 中；`/site` 返回规范化后的完整对象）。单集页在浏览器里给每个文件打分（`web/src/lib/rank.ts`，纯函数），按「总分 → 发布时间新 → 原顺序」排序，自动播放第一个。当前用户无权播放的资源后端不返回（见下方「列表只包含可播放的种子」），评分不再处理；管理员能看到全部，自动播放跳过 access 不是 allow 的。自动选中后在本页固定（做种人数刷新导致重新排序时不切换）。默认值（第四版，店主指定）与 43 个场景见 [research/rank-rules.md](research/rank-rules.md)。
+`/site.rank_rules`（后台「推荐规则」编辑，设置键 `rank.rules`，不在 `/admin/settings` 中；`/site` 返回规范化后的完整对象）。单集页在浏览器里给每个文件打分（`web/src/lib/rank.ts`，纯函数），按「总分 → 发布时间新 → 原顺序」排序，自动播放第一个。当前用户无权播放的资源后端不返回（见下方「列表只包含可播放的种子」），评分不再处理；管理员能看到全部，自动播放跳过 access 不是 allow 的。自动选中后在本页固定（做种人数刷新导致重新排序时不切换）。默认值（第五版 = 第四版去掉服务器缓存加分，店主指定）与 43 个场景见 [research/rank-rules.md](research/rank-rules.md)。
 ```json
-{ "availability": { "server_complete": 2,                               // 服务器已缓存
-                    "wt_seeder": 20, "wt_cap": 20, "wt_scale": 20,      // WebTorrent 做种：系数、上限、尺度
+{ "availability": { "wt_seeder": 20, "wt_cap": 20, "wt_scale": 20,      // WebTorrent 做种：系数、上限、尺度
                     "bt_seeder": 10, "bt_cap": 10, "bt_scale": 20,      // BT 做种（只对有做种权限 POST …/seed 的用户）
                     "curve": "tanh",                                    // tanh：系数 × tanh(人数 / 尺度)；log：系数 × log2(1+人数)；linear：每人 系数 分（缺省 = linear）；都不超过上限
                     "dead": -100 },                                     // 无人做种，见下
@@ -293,10 +292,10 @@ WebSeed **只由边缘节点提供**：`{edge_url}/webseed/hash/{ih}/…`（如 
   // 文件大小：过 (from_mb, from_score)、(to_mb, to_score) 的直线；from_mb 以下取 from_score，to_mb 以上取 to_score，extend 时继续延伸（不设下限）；大小未知 0
 ```
 - 分数可为小数（显示取整，tooltip 给明细）。
-- 无人做种（`dead`）：没有做种或 WebSeed 权限的用户（游客类）：`wt_seeders == 0` 且服务器未缓存；有做种或 WebSeed 权限的用户：所有来源都为 0（BT 0、WebRTC 0、服务器未缓存）。从未统计（`checked_at` 为 null）或对应 tracker 都没响应（计数 null）时可用性记 0、不扣分。
-- 兼容：旧写法 `size: {max, full_below_mb, zero_above_mb}`（小文件加分）读作 (full_below_mb, max) → (zero_above_mb, 0)、不延伸；旧的 `oversize` 字段读入时忽略（已删除）；两种 size 写法不能混用。
+- 无人做种（`dead`）：没有做种或 WebSeed 权限的用户（游客类）：`wt_seeders == 0`（本站 qB 做种时也算一个 WebRTC 节点）；有做种或 WebSeed 权限的用户：`bt_seeders == 0` 且 `wt_seeders == 0`。从未统计（`checked_at` 为 null）或对应 tracker 都没响应（计数 null）时可用性记 0、不扣分。
+- 兼容：旧写法 `size: {max, full_below_mb, zero_above_mb}`（小文件加分）读作 (full_below_mb, max) → (zero_above_mb, 0)、不延伸；旧的 `oversize`、`availability.server_complete` 字段读入时忽略（已删除）；两种 size 写法不能混用。
 - 校验（PUT 400 `bad_request`）：未知字段报错；分值 / 系数 −1000…1000，上限 0…1000；`curve` 为 `linear|log|tanh`，tanh 时 `wt_scale`、`bt_scale` 须 > 0（≤ 10⁶）；size 的大小 0…1048576 MB，两个分值不全为 0 时 `to_mb > from_mb`；关键词 ≤ 30 个（名称 ≤ 40 字、正则 ≤ 200 字、分组 ≤ 20 字），字幕组 ≤ 200 个（名称 ≤ 80 字、不重复）；正则须为 Go RE2 与 JavaScript（`i` 标志、无 `u`）共同支持的子集：能被 RE2 编译（因此没有前后查找、反向引用），且不能用 `(?…)`（`(?:` 除外）、`\A \z \Q \E \C`、`\p{…}`、`\x{…}`、`[[:alpha:]]`。
-- 升级：库中的 `rank.rules` 若仍等于任一旧版内置默认值（第一版 7d2effb、第二版 e23a33a、第三版 708decc；JSON 相等，即管理员没改过），启动时替换为当前默认值；改过的保留。
+- 升级：库中的 `rank.rules` 若仍等于任一旧版内置默认值（第一版 7d2effb、第二版 e23a33a、第三版 708decc、第四版（tanh，含服务器缓存 +2）；JSON 相等，即管理员没改过），启动时替换为当前默认值；改过的保留。
 
 ## 列表只包含可播放的种子
 内容策略不允许当前用户播放的种子（`login` 对游客、`vip` 对非大会员、`block` 对所有人）不出现在任何列表中：单集 `items`、条目 `torrents`、搜索 `torrents`（`total` / `page_count` 按过滤后计算；为此先取前 50 页的匹配再分页）、选集的 `sources`、`/meta/v1/subjects/…/episodes`（`files` 计数）与 `/meta/v1/subjects/…/episodes/{key}/files`。管理员看到全部（带 `access`）。按 infohash 直接访问的接口（play、seed、`GET /torrents/hash/{ih}`、种子文件、WebSeed、`/meta/v1/torrents/hash/{ih}`）照旧按策略判定。`access` 字段保留（非管理员恒为 allow）。

@@ -120,7 +120,11 @@ const maxListedEpisodes = 2000
 // episodeList merges official episodes (bangumi Archive; may be empty), the aired main
 // episodes (1..max(episodes_aired, highest mapped integer episode) when there is no official
 // main episode list) and every episode key that has mapped files.
-func episodeList(aired int, official []meta.OfficialEpisode, mapped []meta.EpisodeCount, today string) []episodeItem {
+//
+// today is the current date in JST (bangumi air dates are Japanese dates). An official
+// episode dated today has aired only once its broadcast time has passed: todayAired is that
+// answer from the broadcast schedule (nil = unknown → the date alone decides).
+func episodeList(aired int, official []meta.OfficialEpisode, mapped []meta.EpisodeCount, today string, todayAired *bool) []episodeItem {
 	counts := map[meta.EpisodeKey]int{}
 	off := map[meta.EpisodeKey]meta.OfficialEpisode{}
 	hasMain := false
@@ -169,6 +173,8 @@ func episodeList(aired int, official []meta.OfficialEpisode, mapped []meta.Episo
 		if k.Kind == meta.KeyMain {
 			var a bool
 			switch {
+			case isOff && o.Airdate != "" && o.Airdate == today && todayAired != nil:
+				a = *todayAired
 			case isOff && o.Airdate != "":
 				a = o.Airdate <= today
 			case hasMain && isOff:
@@ -204,15 +210,17 @@ func (s *Server) getEpisodes(w http.ResponseWriter, r *http.Request) error {
 	}
 	now := time.Now()
 	aired := 0
-	if item := s.Cat.ScheduleItemByKey(work.Key); item != nil {
-		aired = item.EpisodesAired
+	sched := s.Cat.ScheduleItemByKey(work.Key)
+	if sched != nil {
+		aired = sched.EpisodesAired
 	} else if n, ok := s.Meta.AiredOfficial(r.Context(), work.Key, now); ok {
 		aired = n
 	} else if item, _ := s.Cat.ItemFor(work, now); item != nil {
 		aired = item.EpisodesAired
 	}
-	today := now.In(time.FixedZone("JST", 9*3600)).Format("2006-01-02")
-	httpx.JSON(w, 200, map[string]any{"items": episodeList(aired, official, mapped, today)})
+	jst := time.FixedZone("JST", 9*3600)
+	today := now.In(jst).Format("2006-01-02")
+	httpx.JSON(w, 200, map[string]any{"items": episodeList(aired, official, mapped, today, airedToday(sched, today, jst))})
 	return nil
 }
 
@@ -256,5 +264,32 @@ func (s *Server) getEpisode(w http.ResponseWriter, r *http.Request) error {
 		out["episode"] = key.Number
 	}
 	httpx.JSON(w, 200, out)
+	return nil
+}
+
+// airedToday answers "has today's broadcast already happened?" from the schedule's exact
+// broadcast times (bangumi-data): the last broadcast fell on today (JST) → yes; the next one
+// is today → not yet; otherwise (or no schedule entry) unknown.
+func airedToday(it *catalog.ScheduleItem, today string, jst *time.Location) *bool {
+	if it == nil {
+		return nil
+	}
+	day := func(ts *string) string {
+		if ts == nil {
+			return ""
+		}
+		t, err := time.Parse(time.RFC3339, *ts)
+		if err != nil {
+			return ""
+		}
+		return t.In(jst).Format("2006-01-02")
+	}
+	yes, no := true, false
+	switch {
+	case day(it.LastAirAt) == today:
+		return &yes
+	case day(it.NextAirAt) == today:
+		return &no
+	}
 	return nil
 }

@@ -45,7 +45,9 @@ export default function SearchPage() {
   const nothing = !!data && subjects.length === 0 && torrents.length === 0
 
   return (
-    <Container className="py-4 sm:py-6">
+    <Container className="pb-4 pt-safe sm:py-6">
+      {/* 手机：与首页顶栏里的搜索入口同一位置（安全区 + 12px），点进来框不跳动 */}
+      <div className="h-3 sm:hidden" aria-hidden />
       <div className="mx-auto max-w-3xl">
         <TorrentSearchBox key={q} size="sm" defaultValue={q} autoFocus={!q} />
         {!q && (
@@ -177,7 +179,7 @@ function SubjectResult({ s }: { s: Subject }) {
       className="group block rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
       title={s.title !== title ? `${title}\n${s.title}` : title}
     >
-      <div className="relative overflow-hidden rounded-lg shadow-card ring-1 ring-black/5 dark:ring-white/5">
+      <div className="relative overflow-hidden rounded-lg ring-1 ring-black/5 dark:ring-white/5">
         <Cover src={s.cover} title={title} className="aspect-[3/4] w-full transition-transform duration-300 group-hover:scale-[1.03]" />
         {(s.latest_episode ?? 0) > 0 && (
           <span className="absolute bottom-1 left-1 inline-flex items-center gap-1 rounded bg-black/65 px-1.5 text-[11px] font-medium leading-[18px] text-white">

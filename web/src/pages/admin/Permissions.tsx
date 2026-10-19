@@ -377,9 +377,8 @@ function Cell({ state, label, onToggle }: { state: CellState; label: string; onT
       >
         <span
           className={cn(
-            "inline-block h-4 w-4 rounded-full bg-white shadow transition-transform",
+            "inline-block h-4 w-4 rounded-full bg-white transition-transform",
             checked ? "translate-x-[18px]" : "translate-x-0.5",
-            !interactive && "shadow-none",
           )}
         />
       </button>

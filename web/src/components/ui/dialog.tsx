@@ -22,7 +22,7 @@ export function DialogContent({
       <DialogPrimitive.Overlay className={overlay} />
       <DialogPrimitive.Content
         className={cn(
-          "fixed z-50 grid max-h-[92dvh] w-full gap-4 overflow-y-auto border bg-popover p-5 text-popover-foreground shadow-xl focus:outline-none",
+          "fixed z-50 grid max-h-[92dvh] w-full gap-4 overflow-y-auto border bg-popover p-5 text-popover-foreground focus:outline-none",
           // 手机：底部弹出；桌面：居中
           "inset-x-0 bottom-0 rounded-t-xl pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:inset-auto sm:left-1/2 sm:top-1/2 sm:max-w-lg sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl sm:pb-5",
           className,
@@ -68,7 +68,7 @@ export function SheetContent({
       <DialogPrimitive.Overlay className={overlay} />
       <DialogPrimitive.Content
         className={cn(
-          "fixed inset-y-0 z-50 flex w-[82vw] max-w-72 flex-col border-r bg-card pt-safe pb-safe shadow-xl focus:outline-none",
+          "fixed inset-y-0 z-50 flex w-[82vw] max-w-72 flex-col border-r bg-card pt-safe pb-safe focus:outline-none",
           side === "left" ? "left-0" : "right-0 border-l border-r-0",
           className,
         )}

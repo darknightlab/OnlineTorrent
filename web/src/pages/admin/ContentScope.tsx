@@ -135,7 +135,7 @@ function ScopeCard({ scope }: { scope: ContentScope }) {
                 onClick={() => setMode(m)}
                 className={cn(
                   "h-8 flex-1 rounded px-4 text-[13px] transition-colors sm:flex-none",
-                  draft.tag_mode === m ? "bg-card font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                  draft.tag_mode === m ? "bg-card font-medium text-foreground" : "text-muted-foreground hover:text-foreground",
                 )}
               >
                 {label}
@@ -317,7 +317,7 @@ function TagInput({ placeholder, onAdd, disabled }: { placeholder: string; onAdd
         <ul
           id={listId}
           role="listbox"
-          className="absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-lg"
+          className="absolute inset-x-0 top-full z-20 mt-1 max-h-64 overflow-y-auto rounded-md border bg-popover p-1 text-popover-foreground"
         >
           {items.length === 0 && (
             <li className="flex items-center gap-2 px-2.5 py-2 text-[13px] text-muted-foreground">

@@ -27,14 +27,14 @@ type SwarmStats struct {
 }
 
 // SwarmView is the public JSON shape (API field "swarm"). Nil counts are unknown;
-// CheckedAt is nil when no tracker / feed numbers are known yet.
+// CheckedAt is nil when no tracker / feed numbers are known yet. Whether our own qB has
+// the torrent is never exposed to users (ServerComplete stays internal).
 type SwarmView struct {
-	BTSeeders      *int    `json:"bt_seeders"`
-	BTLeechers     *int    `json:"bt_leechers"`
-	WTSeeders      *int    `json:"wt_seeders"`
-	WTLeechers     *int    `json:"wt_leechers"`
-	ServerComplete bool    `json:"server_complete"`
-	CheckedAt      *string `json:"checked_at"`
+	BTSeeders  *int    `json:"bt_seeders"`
+	BTLeechers *int    `json:"bt_leechers"`
+	WTSeeders  *int    `json:"wt_seeders"`
+	WTLeechers *int    `json:"wt_leechers"`
+	CheckedAt  *string `json:"checked_at"`
 }
 
 // View converts a row (nil-safe).
@@ -42,7 +42,7 @@ func (st *SwarmStats) View() *SwarmView {
 	if st == nil {
 		return nil
 	}
-	v := &SwarmView{BTSeeders: st.BTSeeders, BTLeechers: st.BTLeechers, WTSeeders: st.WTSeeders, WTLeechers: st.WTLeechers, ServerComplete: st.ServerComplete}
+	v := &SwarmView{BTSeeders: st.BTSeeders, BTLeechers: st.BTLeechers, WTSeeders: st.WTSeeders, WTLeechers: st.WTLeechers}
 	if st.CheckedAt != "" {
 		c := st.CheckedAt
 		v.CheckedAt = &c
@@ -174,7 +174,7 @@ type SwarmCounts struct {
 	Torrents int `json:"torrents"` // catalogue torrents
 	Scraped  int `json:"scraped"`  // scraped at least once
 	Known    int `json:"known"`    // with any count (scrape or feed)
-	Dead     int `json:"dead"`     // known, 0 BT and 0 WebTorrent seeders, not on a server
+	Dead     int `json:"dead"`     // known, 0 BT and 0 WebTorrent seeders
 }
 
 // SwarmSummary counts catalogue torrents and their stats.
@@ -183,7 +183,7 @@ func (s *Store) SwarmSummary(ctx context.Context) (SwarmCounts, error) {
 	err := s.R.QueryRowContext(ctx, `SELECT (SELECT COUNT(*) FROM torrents),
 		COUNT(*) FILTER (WHERE s.scraped_at != ''),
 		COUNT(*) FILTER (WHERE s.checked_at != ''),
-		COUNT(*) FILTER (WHERE s.checked_at != '' AND COALESCE(s.bt_seeders,0) = 0 AND COALESCE(s.wt_seeders,0) = 0 AND s.server_complete = 0)
+		COUNT(*) FILTER (WHERE s.checked_at != '' AND COALESCE(s.bt_seeders,0) = 0 AND COALESCE(s.wt_seeders,0) = 0)
 		FROM swarm_stats s JOIN torrents t ON t.infohash = s.infohash`).Scan(&c.Torrents, &c.Scraped, &c.Known, &c.Dead)
 	return c, err
 }

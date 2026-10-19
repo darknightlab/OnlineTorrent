@@ -46,7 +46,6 @@
 
   --piece-empty: #dde3df;
   --header: color-mix(in oklab, #ffffff 86%, transparent);
-  --shadow-card: 0 1px 2px rgb(16 24 20 / 0.06), 0 1px 1px rgb(16 24 20 / 0.03);
 }
 
 .dark {
@@ -86,7 +85,6 @@
 
   --piece-empty: #2a322d;
   --header: color-mix(in oklab, #121614 84%, transparent);
-  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.3);
 }
 
 @theme inline {
@@ -124,7 +122,6 @@
   --radius-md: calc(var(--radius) - 2px);
   --radius-sm: calc(var(--radius) - 4px);
   --radius-xl: calc(var(--radius) + 4px);
-  --shadow-card: var(--shadow-card);
   --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC",
     "Noto Sans SC", "Source Han Sans SC", sans-serif;

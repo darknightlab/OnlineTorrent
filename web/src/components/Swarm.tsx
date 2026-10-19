@@ -1,51 +1,64 @@
-// 做种统计显示：「BT 23 · WebRTC 1 · 服务器已缓存」，未统计时显示「做种人数未知」
-import { Server, Users } from "lucide-react"
+// 做种统计显示：「BT ↑23 ↓7 · WebRTC ↑1 ↓0」（做种 / 下载中），未统计时显示「做种人数未知」；
+// 对当前用户无人做种时显示「无人做种」。本站服务器是否缓存不对用户显示。
 import type { SwarmStats } from "@/lib/types"
 import { formatDateTime } from "@/lib/format"
+import { PERM, can, useMe } from "@/lib/queries"
+import { swarmDead, type Viewer } from "@/lib/rank"
 import { cn } from "@/lib/utils"
 import { Badge } from "./ui/badge"
 
-/** 是否所有已知来源都为 0（与用户无关的通用判断，列表页用；单集页用 rank 的 dead） */
-export function swarmDead(s: SwarmStats | null | undefined) {
-  if (!s?.checked_at || s.server_complete) return false
-  if (s.bt_seeders === null && s.wt_seeders === null) return false
-  return (s.bt_seeders ?? 0) === 0 && (s.wt_seeders ?? 0) === 0
+/** 当前用户与做种统计相关的权限（无人做种的判断依赖它） */
+export function useSwarmViewer(): Viewer {
+  const me = useMe()
+  return { canSeed: can(me.data, PERM.seed), canWebseed: can(me.data, PERM.webseed) }
 }
 
+function Counts({ label, short, up, down, title }: { label: string; short?: string; up: number | null; down: number | null; title: string }) {
+  const unknown = up === null
+  return (
+    <span className="inline-flex items-center gap-1 whitespace-nowrap tabular-nums" title={unknown ? `${title}：tracker 无响应` : `${title}：${up} / ${down ?? 0}`}>
+      {short ? (
+        <>
+          <span className="sm:hidden">{short}</span>
+          <span className="hidden sm:inline">{label}</span>
+        </>
+      ) : (
+        label
+      )}
+      {unknown ? (
+        <span aria-label="未知">—</span>
+      ) : (
+        <span>
+          <span aria-label="做种">↑{up}</span> <span aria-label="下载中">↓{down ?? 0}</span>
+        </span>
+      )}
+    </span>
+  )
+}
+
+/**
+ * dead：由调用方给出（单集页用推荐评分的结果）；省略时按当前用户权限判断。
+ */
 export function SwarmInfo({ swarm, dead, className }: { swarm?: SwarmStats | null; dead?: boolean; className?: string }) {
+  const viewer = useSwarmViewer()
   const s = swarm ?? null
   const known = !!s?.checked_at
-  const parts: string[] = []
-  if (known && s!.bt_seeders !== null) parts.push(`BT ${s!.bt_seeders}`)
-  if (known && s!.wt_seeders !== null) parts.push(`WebRTC ${s!.wt_seeders}`)
-  const title = known
-    ? [
-        s!.bt_seeders !== null ? `BT 做种 ${s!.bt_seeders} / 下载 ${s!.bt_leechers ?? 0}` : "BT：tracker 无响应",
-        s!.wt_seeders !== null ? `WebRTC 做种 ${s!.wt_seeders} / 下载 ${s!.wt_leechers ?? 0}` : "WebRTC：tracker 无响应",
-        s!.server_complete ? "服务器已完整缓存" : null,
-        `统计于 ${formatDateTime(s!.checked_at!)}`,
-      ]
-        .filter(Boolean)
-        .join("\n")
-    : s?.server_complete
-      ? "服务器已完整缓存；做种人数尚未统计"
-      : "做种人数尚未统计"
+  const isDead = dead ?? swarmDead(s, viewer)
   return (
-    <span className={cn("inline-flex min-w-0 items-center gap-1.5 text-[11px] leading-4 text-muted-foreground", className)} title={title}>
-      {dead && <Badge variant="destructive">无人做种</Badge>}
-      {parts.length > 0 && (
-        <span className="inline-flex items-center gap-1 tabular-nums">
-          <Users className="h-3 w-3 shrink-0" />
-          {parts.join(" · ")}
-        </span>
+    <span
+      className={cn("inline-flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] leading-4 text-muted-foreground", className)}
+      title={known ? `统计于 ${formatDateTime(s!.checked_at!)}` : "做种人数尚未统计"}
+    >
+      {isDead && <Badge variant="destructive">无人做种</Badge>}
+      {known ? (
+        <>
+          <Counts label="BT" up={s!.bt_seeders} down={s!.bt_leechers} title="BT 做种 / 下载中" />
+          <span aria-hidden>·</span>
+          <Counts label="WebRTC" short="RTC" up={s!.wt_seeders} down={s!.wt_leechers} title="WebRTC 做种 / 下载中" />
+        </>
+      ) : (
+        <span className="text-muted-foreground/70">做种人数未知</span>
       )}
-      {s?.server_complete && (
-        <span className="inline-flex items-center gap-1 text-primary-text">
-          <Server className="h-3 w-3 shrink-0" />
-          服务器已缓存
-        </span>
-      )}
-      {!known && !s?.server_complete && <span className="text-muted-foreground/70">做种人数未知</span>}
     </span>
   )
 }

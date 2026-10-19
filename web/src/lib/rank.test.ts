@@ -2,7 +2,7 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
-import { DEFAULT_RANK_RULES as R, describeScore, rankFiles, scoreFile, seederScore, sizeScore, type RankInput, type Viewer } from "./rank.ts"
+import { DEFAULT_RANK_RULES as R, describeScore, rankFiles, scoreFile, seederScore, sizeScore, swarmDead, type RankInput, type Viewer } from "./rank.ts"
 import type { RankRules, SwarmStats } from "./types.ts"
 
 const GUEST: Viewer = { canSeed: false, canWebseed: false }
@@ -13,7 +13,7 @@ const GB = 1024 ** 3
 
 /** 只看可用性的规则（无关键词 / 大小加分），便于验证计算 */
 const AV: RankRules = {
-  availability: { server_complete: 30, wt_seeder: 5, wt_cap: 30, bt_seeder: 1, bt_cap: 20, curve: "linear", dead: -100 },
+  availability: { wt_seeder: 5, wt_cap: 30, bt_seeder: 1, bt_cap: 20, curve: "linear", dead: -100 },
   keywords: [],
   teams: [],
   size: { from_mb: 0, from_score: 0, to_mb: 0, to_score: 0, extend: false },
@@ -24,7 +24,6 @@ const sw = (p: Partial<SwarmStats>): SwarmStats => ({
   bt_leechers: null,
   wt_seeders: null,
   wt_leechers: null,
-  server_complete: false,
   checked_at: "2026-10-19T00:00:00Z",
   ...p,
 })
@@ -47,8 +46,7 @@ test("Go and TS defaults are identical (internal/rank/testdata/default.json)", (
   assert.deepEqual(R, golden)
 })
 
-test("linear availability: server, caps, BT only for seeders", () => {
-  assert.equal(score(file({ swarm: sw({ server_complete: true, bt_seeders: 0, wt_seeders: 0 }) })), 30)
+test("linear availability: caps, BT only for seeders", () => {
   assert.equal(score(file({ swarm: sw({ wt_seeders: 2 }) })), 10)
   assert.equal(score(file({ swarm: sw({ wt_seeders: 50 }) })), 30, "WebRTC cap")
   assert.equal(score(file({ swarm: sw({ bt_seeders: 500 }) })), 20, "BT cap")
@@ -97,11 +95,12 @@ test("size line: 0 up to 200 MB, −16 at 1000 MB, unbounded beyond", () => {
   assert.equal(sizeScore(100 * MB, undefined), 0)
 })
 
-test("guest −100: no WebRTC seeder and not on the server", () => {
+test("guest −100: no WebRTC seeder (our qB counts as one when seeding)", () => {
   const s = scoreFile(file({ swarm: sw({ bt_seeders: 23, wt_seeders: 0 }) }), AV, GUEST)
   assert.equal(s.score, -100)
   assert.equal(s.dead, true)
-  assert.equal(score(file({ swarm: sw({ bt_seeders: 0, wt_seeders: 0, server_complete: true }) }), GUEST), 30)
+  assert.equal(score(file({ swarm: sw({ bt_seeders: 0, wt_seeders: 1 }) }), GUEST), 5)
+  assert.equal(score(file({ swarm: sw({ bt_seeders: 50, wt_seeders: null }) }), GUEST), 0, "WebRTC count unknown → not dead")
   assert.equal(score(file({ swarm: sw({ bt_seeders: 23, wt_seeders: 0 }) }), MEMBER), 20)
 })
 
@@ -110,6 +109,16 @@ test("seed/webseed users: −100 only when every source is empty", () => {
   assert.equal(score(file({ swarm: sw({ bt_seeders: 0, wt_seeders: 0 }) }), WEBSEED_ONLY), -100)
   assert.equal(score(file({ swarm: sw({ bt_seeders: 1, wt_seeders: 0 }) })), 1)
   assert.equal(score(file({ swarm: sw({ bt_seeders: 0, wt_seeders: null }) })), -100)
+})
+
+test("swarmDead per viewer", () => {
+  assert.equal(swarmDead(sw({ bt_seeders: 9, wt_seeders: 0 }), GUEST), true)
+  assert.equal(swarmDead(sw({ bt_seeders: 9, wt_seeders: 0 }), MEMBER), false)
+  assert.equal(swarmDead(sw({ bt_seeders: 9, wt_seeders: 0 }), WEBSEED_ONLY), false)
+  assert.equal(swarmDead(sw({ bt_seeders: 0, wt_seeders: 0 }), WEBSEED_ONLY), true)
+  assert.equal(swarmDead(sw({ bt_seeders: null, wt_seeders: null }), MEMBER), false)
+  assert.equal(swarmDead(sw({ checked_at: null, bt_seeders: 0, wt_seeders: 0 }), GUEST), false)
+  assert.equal(swarmDead(null, GUEST), false)
 })
 
 test("unknown stats score 0", () => {

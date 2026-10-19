@@ -453,7 +453,7 @@ export function Player({
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-5 xl:grid-cols-[minmax(0,1fr)_400px]">
       <section className="min-w-0">
         {/* 播放区：移动端吸顶、全宽 */}
-        <div className="sticky top-[env(safe-area-inset-top)] z-20 -mx-3 bg-black sm:-mx-4 md:top-14 lg:static lg:mx-0 lg:overflow-hidden lg:rounded-xl lg:shadow-lg">
+        <div className="sticky top-[env(safe-area-inset-top)] z-20 -mx-3 bg-black sm:-mx-4 md:top-14 lg:static lg:mx-0 lg:overflow-hidden lg:rounded-xl">
           <div className="relative aspect-video w-full overflow-hidden bg-black select-none">
             {/* 未出画面时：竖版封面两侧用模糊背景填满，避免大片纯黑 */}
             {poster && !url && (
@@ -608,7 +608,7 @@ export function Player({
             </div>
 
             {/* 统计 */}
-            <dl className="mt-3 grid grid-cols-4 overflow-hidden rounded-lg border bg-card text-center shadow-card sm:mt-4">
+            <dl className="mt-3 grid grid-cols-4 overflow-hidden rounded-lg border bg-card text-center sm:mt-4">
               <Stat icon={ArrowDown} label="下载" value={formatSpeed(snap?.downloadSpeed ?? 0)} sub={formatBytes(snap?.downloaded ?? 0)} tone="text-primary-text" />
               <Stat icon={ArrowUp} label="上传" value={formatSpeed(snap?.uploadSpeed ?? 0)} sub={formatBytes(snap?.uploaded ?? 0)} tone="text-accent-text" />
               <Stat icon={Users} label="节点" value={String(snap?.numPeers ?? 0)} sub={snap?.peers.some((p) => p.type === "webSeed") ? "含 WebSeed" : "WebRTC"} />

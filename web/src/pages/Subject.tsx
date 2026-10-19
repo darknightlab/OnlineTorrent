@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react"
+import { useLayoutEffect, useMemo, useRef, useState } from "react"
 import { Link, Navigate, useParams } from "react-router-dom"
 import { CalendarClock, CalendarDays, Clapperboard, ExternalLink, Film, LayoutGrid, List, ListVideo, Play, Star, Tv } from "lucide-react"
 import { Container } from "@/components/layout/Container"
@@ -23,7 +23,8 @@ const EXTERNAL: { key: keyof ExternalIds; label: string; url: (id: string | numb
   { key: "bgm", label: "Bangumi", url: (id) => `https://bgm.tv/subject/${id}` },
   { key: "mal", label: "MyAnimeList", url: (id) => `https://myanimelist.net/anime/${id}` },
   { key: "anidb", label: "AniDB", url: (id) => `https://anidb.net/anime/${id}` },
-  { key: "tmdb", label: "TMDB", url: (id) => `https://www.themoviedb.org/tv/${id}` },
+  // 映射库存 "tv/123" / "movie/123"；旧数据只有数字时按 TV
+  { key: "tmdb", label: "TMDB", url: (id) => (String(id).includes("/") ? `https://www.themoviedb.org/${id}` : `https://www.themoviedb.org/tv/${id}`) },
   { key: "imdb", label: "IMDb", url: (id) => `https://www.imdb.com/title/${id}` },
 ]
 
@@ -86,75 +87,69 @@ export default function SubjectPage() {
 
   return (
     <div>
-      <section className="relative overflow-hidden border-b">
-        {a.cover && (
-          <div aria-hidden className="absolute inset-0 scale-110 bg-cover bg-center opacity-30 blur-2xl dark:opacity-25" style={{ backgroundImage: `url("${a.cover}")` }} />
-        )}
-        <div aria-hidden className="absolute inset-0 bg-gradient-to-b from-background/40 via-background/70 to-background" />
-        <Container className="relative flex gap-4 py-5 sm:gap-6 sm:py-8">
-          <Cover src={a.cover} title={title} eager className="aspect-[3/4] w-28 shrink-0 rounded-lg shadow-lg ring-1 ring-black/10 sm:w-44 lg:w-52" />
-          <div className="flex min-w-0 flex-1 flex-col">
-            <div className="flex flex-wrap items-center gap-1.5">
-              {status === "updated" && <Badge variant="default">已更新</Badge>}
-              {status === "soon" && <Badge variant="accent">即将播出</Badge>}
-              <Badge variant="muted">{a.episodes_aired > 0 ? `已播 ${a.episodes_aired} 话` : "未开播"}</Badge>
-            </div>
-            <h1 className="mt-1.5 text-lg font-bold leading-snug sm:text-2xl">{title}</h1>
-            {a.title_cn && a.title !== a.title_cn && <p className="mt-0.5 text-[13px] text-muted-foreground sm:text-sm">{a.title}</p>}
-            <Rating subject={a} />
-            <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-1 text-[13px] sm:grid-cols-2 sm:text-sm lg:max-w-xl">
-              <Meta icon={Tv} label="放送">
-                每{WEEKDAYS[a.weekday]} {a.air_time}
+      <SubjectHero
+        subject={a}
+        title={title}
+        status={status}
+        meta={
+          <dl className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-[13px] sm:gap-y-1 sm:text-sm lg:max-w-xl">
+            <Meta icon={Tv} label="放送">
+              每{WEEKDAYS[a.weekday]} {a.air_time}
+            </Meta>
+            <Meta icon={CalendarDays} label="开播">
+              {formatDate(a.begin)}
+            </Meta>
+            {a.next_air_at && (
+              <Meta icon={CalendarClock} label="下一话">
+                {timeUntil(a.next_air_at, now)}
               </Meta>
-              <Meta icon={CalendarDays} label="开播">
-                {formatDate(a.begin)}
+            )}
+            {(a.eps ?? 0) > 0 && (
+              <Meta icon={Clapperboard} label="集数">
+                全 {a.eps} 话
               </Meta>
-              {a.next_air_at && (
-                <Meta icon={CalendarClock} label="下一话">
-                  {timeUntil(a.next_air_at, now)}
-                </Meta>
-              )}
-              {(a.eps ?? 0) > 0 && (
-                <Meta icon={Clapperboard} label="集数">
-                  全 {a.eps} 话
-                </Meta>
-              )}
-              <Meta icon={ListVideo} label="资源">
-                {data.torrents.length} 个种子
-              </Meta>
-            </dl>
-            {tags.length > 0 && <TagList tags={tags} className="mt-3 hidden sm:flex" />}
-            <div className="mt-auto flex flex-wrap gap-2 pt-4">
-              {latestEp ? (
-                <Button asChild>
-                  <Link to={episodeHref(a, String(latestEp))}>
-                    <Play className="fill-current" />
-                    播放第 {latestEp} 话
-                  </Link>
-                </Button>
-              ) : latest ? (
-                <Button asChild>
-                  <Link to={watchHref(latest.infohash)} state={{ torrent: latest }}>
-                    <Play className="fill-current" />
-                    播放最新资源
-                  </Link>
-                </Button>
-              ) : null}
-              {ext.map((e) => (
-                <Button key={e.key} asChild variant="outline" size="sm" className="hidden sm:inline-flex">
+            )}
+            <Meta icon={ListVideo} label="资源">
+              {data.torrents.length} 个种子
+            </Meta>
+          </dl>
+        }
+        tags={tags.length > 0 ? <TagList tags={tags} className="flex" /> : null}
+        play={
+          latestEp ? (
+            <Button asChild>
+              <Link to={episodeHref(a, String(latestEp))}>
+                <Play className="fill-current" />
+                播放第 {latestEp} 话
+              </Link>
+            </Button>
+          ) : latest ? (
+            <Button asChild>
+              <Link to={watchHref(latest.infohash)} state={{ torrent: latest }}>
+                <Play className="fill-current" />
+                播放最新资源
+              </Link>
+            </Button>
+          ) : null
+        }
+        links={
+          ext.length > 0
+            ? ext.map((e) => (
+                <Button key={e.key} asChild variant="outline">
                   <a href={e.url(a.external[e.key]!)} target="_blank" rel="noreferrer noopener">
                     {e.label}
                     <ExternalLink className="!size-3.5 text-muted-foreground" />
                   </a>
                 </Button>
-              ))}
-            </div>
-          </div>
-        </Container>
-      </section>
+              ))
+            : null
+        }
+      />
 
       <Container className="space-y-6 py-5 sm:py-6">
-        {(summary || ext.length > 0 || tags.length > 0) && (
+        {/* 选集在简介前 */}
+        <SubjectEpisodes subject={a} latest={latestEp !== null ? String(latestEp) : null} />
+        {summary && (
           <Card className="p-4 sm:p-5">
             <h2 className="mb-2 text-sm font-semibold">简介</h2>
             <p className={cn("max-w-4xl whitespace-pre-line text-[13px] leading-7 text-foreground/85 sm:text-sm", !expanded && "line-clamp-4 sm:line-clamp-none")}>
@@ -165,27 +160,9 @@ export default function SubjectPage() {
                 {expanded ? "收起" : "展开全部"}
               </button>
             )}
-            {tags.length > 0 && <TagList tags={tags} className="mt-3 flex border-t pt-3 sm:hidden" />}
-            {ext.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2 border-t pt-3 sm:hidden">
-                {ext.map((e) => (
-                  <a
-                    key={e.key}
-                    href={e.url(a.external[e.key]!)}
-                    target="_blank"
-                    rel="noreferrer noopener"
-                    className="inline-flex h-9 items-center gap-1 rounded-md border px-3 text-[13px]"
-                  >
-                    {e.label}
-                    <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
-                  </a>
-                ))}
-              </div>
-            )}
           </Card>
         )}
 
-        <SubjectEpisodes subject={a} latest={latestEp !== null ? String(latestEp) : null} />
 
         <section aria-labelledby="torrents-title">
           <SectionHeader id="torrents-title" icon={Film} title="种子资源" extra={<span className="text-xs text-muted-foreground">{torrents.length} 个</span>} />
@@ -361,5 +338,186 @@ function SubjectSkeleton() {
         <Skeleton className="mt-6 h-10 w-36" />
       </div>
     </Container>
+  )
+}
+
+const TITLE_MAX = 24
+const TITLE_MIN = 16
+const TITLE_LINES = 3 // 标题最多行数
+
+/**
+ * 番剧页顶部：封面（原始比例，各断点固定高度）+ 右侧。
+ * 右侧固定两端：标题与评分贴封面顶部，播放按钮贴封面底部（宽屏时外部链接接在按钮右侧，同高）。
+ * 中间依次尝试放「放送信息」「标签」，放不下的（以及窄屏放不下的外部链接）整体挪到封面下方。
+ */
+function SubjectHero({
+  subject: a,
+  title,
+  status,
+  meta,
+  tags,
+  play,
+  links,
+}: {
+  subject: Subject
+  title: string
+  status: ReturnType<typeof airStatus>
+  meta: React.ReactNode
+  tags: React.ReactNode
+  play: React.ReactNode
+  links: React.ReactNode
+}) {
+  const [ratio, setRatio] = useState(1 / Math.SQRT2) // bgm 封面多为 1:√2；加载后用真实比例
+  const mid = useRef<HTMLDivElement>(null) // 右侧中间可用区域
+  const probe = useRef<HTMLDivElement>(null) // 不可见的测量副本（与中间区域同宽）
+  const linksRow = useRef<HTMLDivElement>(null)
+  const [fit, setFit] = useState({ meta: true, tags: true, links: true })
+  // 标题字号：默认最大；只有「标题 + 评分 + 底部按钮」放不进封面高度时才逐级缩小（最小 16px）
+  const col = useRef<HTMLDivElement>(null) // 右侧整列（高度 = 封面高度）
+  const head = useRef<HTMLDivElement>(null) // 顶部：状态 + 标题 + 评分
+  const titleProbe = useRef<HTMLHeadingElement>(null) // 不可见的标题副本（同宽），用来试字号
+  const titleEl = useRef<HTMLHeadingElement>(null)
+  const [titlePx, setTitlePx] = useState(TITLE_MAX)
+  const [titleLines, setTitleLines] = useState<number | null>(null) // 最小字号仍放不下时才截断
+  const [heroH, setHeroH] = useState<number | null>(null) // 封面 / 右侧高度（null = 断点基准高度）
+
+  useLayoutEffect(() => {
+    const m = mid.current
+    const p = probe.current
+    if (!m || !p) return
+    const GAP = 12
+    const calc = () => {
+      const avail = m.clientHeight
+      const [mh, th] = Array.from(p.children).map((c) => (c as HTMLElement).offsetHeight)
+      const metaFits = mh > 0 && mh <= avail
+      const tagsFits = metaFits && th > 0 && mh + GAP + th <= avail
+      // 外部链接与播放按钮同一行：整行不换行才放在右侧
+      const row = linksRow.current
+      const linksFit = !!row && row.scrollWidth <= row.clientWidth + 1
+      setFit((f) => (f.meta === metaFits && f.tags === tagsFits && f.links === linksFit ? f : { meta: metaFits, tags: tagsFits, links: linksFit }))
+    }
+    const ro = new ResizeObserver(calc)
+    ro.observe(m)
+    ro.observe(p)
+    if (linksRow.current) ro.observe(linksRow.current)
+    calc()
+    return () => ro.disconnect()
+  }, [])
+
+  useLayoutEffect(() => {
+    const c = col.current
+    const h = head.current
+    const tp = titleProbe.current
+    const row = linksRow.current
+    if (!c || !h || !tp) return
+    const fitTitle = () => {
+      const title = titleEl.current
+      if (!title) return
+      // 基准高度 / 上限随断点（与 className 里的 h-44 / sm:h-60 / lg:h-72 一致）
+      const vw = window.innerWidth
+      const [base, cap] = vw >= 1024 ? [288, 320] : vw >= 640 ? [240, 288] : [176, 216]
+      // 右侧除标题外的固定部分（状态、评分）+ 中间最小间距（my-3）+ 底部按钮行；用小数避免取整抖动
+      const fixed = h.getBoundingClientRect().height - title.getBoundingClientRect().height + 24 + (row?.getBoundingClientRect().height ?? 0)
+      const measure = (px: number) => {
+        tp.style.fontSize = `${px}px`
+        const r = tp.getBoundingClientRect().height
+        const lh = parseFloat(getComputedStyle(tp).lineHeight) || px * 1.375
+        return { lh, lines: Math.round(r / lh), h: r }
+      }
+      // 1. 最大字号、最多 TITLE_LINES 行：右侧需要多高，封面就长多高（不超过上限）
+      let px = TITLE_MAX
+      let m = measure(px)
+      let height = Math.max(base, Math.ceil(fixed + m.h))
+      if (m.lines > TITLE_LINES || height > cap) {
+        // 2. 放不下：封面取上限，按「TITLE_LINES 行」定字号（只取决于可用高度，不来回跳），
+        //    仍超过 TITLE_LINES 行再继续缩小（最小 TITLE_MIN），最后才截断
+        height = cap
+        const avail = cap - fixed
+        px = Math.max(TITLE_MIN, Math.min(TITLE_MAX, Math.floor(avail / (TITLE_LINES * (m.lh / TITLE_MAX)))))
+        m = measure(px)
+        while (m.lines > TITLE_LINES && px > TITLE_MIN) m = measure(--px)
+        if (m.h > avail + 0.5) height = cap // 截断时高度保持上限
+      }
+      const lines = m.lines > TITLE_LINES ? TITLE_LINES : null
+      const hv = height === base ? null : height
+      setTitlePx((v) => (v === px ? v : px))
+      setTitleLines((v) => (v === lines ? v : lines))
+      setHeroH((v) => (v === hv ? v : hv))
+    }
+    window.addEventListener("resize", fitTitle)
+    const ro = new ResizeObserver(fitTitle)
+    ro.observe(tp) // 同宽副本：宽度变化（含封面变宽）即重算
+    fitTitle()
+    return () => {
+      ro.disconnect()
+      window.removeEventListener("resize", fitTitle)
+    }
+  }, [])
+
+  const below = [!fit.meta && meta, !fit.tags && tags, !fit.links && links && (
+      // 下方的外部链接用小号按钮
+      <div className="flex flex-wrap gap-2 [&>a]:h-8 [&>a]:px-3 [&>a]:text-[13px]">{links}</div>
+    )].filter(Boolean)
+  return (
+    <section className="relative overflow-hidden border-b">
+      {a.cover && (
+        <div aria-hidden className="absolute inset-0 scale-110 bg-cover bg-center opacity-30 blur-2xl dark:opacity-25" style={{ backgroundImage: `url("${a.cover}")` }} />
+      )}
+      <div aria-hidden className="absolute inset-0 bg-gradient-to-b from-background/40 via-background/70 to-background" />
+      <Container className="relative py-5 sm:py-8">
+        <div className="flex gap-4 sm:gap-6">
+          {/* 封面：各断点固定高度、按原始比例定宽 */}
+          <div
+            className="h-44 shrink-0 overflow-hidden rounded-lg bg-muted ring-1 ring-black/10 sm:h-60 lg:h-72"
+            style={{ aspectRatio: String(ratio), ...(heroH ? { height: heroH } : null) }}
+          >
+            <Cover src={a.cover} title={title} eager className="h-full w-full" onRatio={setRatio} />
+          </div>
+          {/* 右侧与封面等高：顶部标题 / 中间内容自下而上贴着按钮（留白在标题下方）/ 底部按钮 */}
+          <div ref={col} className="flex h-44 min-w-0 flex-1 flex-col sm:h-60 lg:h-72" style={heroH ? { height: heroH } : undefined}>
+            <div ref={head} className="relative shrink-0">
+              {/* 标题测量副本：同宽、不可见 */}
+              <h1 ref={titleProbe} aria-hidden className="invisible absolute inset-x-0 top-0 font-bold leading-snug" style={{ fontSize: TITLE_MAX }}>
+                {title}
+              </h1>
+              {(status === "updated" || status === "soon") && (
+                <div className="mb-1 flex flex-wrap items-center gap-1.5">
+                  {status === "updated" && <Badge variant="default">已更新</Badge>}
+                  {status === "soon" && <Badge variant="accent">即将播出</Badge>}
+                </div>
+              )}
+              <h1
+                ref={titleEl}
+                className={cn("font-bold leading-snug", titleLines !== null && "overflow-hidden")}
+                style={{ fontSize: titlePx, ...(titleLines !== null ? { display: "-webkit-box", WebkitBoxOrient: "vertical", WebkitLineClamp: titleLines } : null) }}
+                title={title}
+              >
+                {title}
+              </h1>
+              <Rating subject={a} />
+            </div>
+            <div ref={mid} className="relative my-3 flex min-h-0 flex-1 flex-col justify-end overflow-hidden">
+              {/* 测量副本：与中间区域同宽、不可见 */}
+              <div ref={probe} aria-hidden className="invisible absolute inset-x-0 top-0 space-y-3">
+                <div>{meta}</div>
+                <div>{tags}</div>
+              </div>
+              <div className="space-y-3">
+                {fit.meta && meta}
+                {fit.tags && tags}
+              </div>
+            </div>
+            <div ref={linksRow} className="flex min-w-0 shrink-0 gap-2 overflow-hidden [&>*]:shrink-0">
+              {play}
+              {fit.links && links}
+              {/* 测量链接是否放得下：放不下时也保留不可见的一份撑开宽度 */}
+              {!fit.links && links && <div aria-hidden className="invisible flex gap-2">{links}</div>}
+            </div>
+          </div>
+        </div>
+        {/* 右侧放不下的内容：封面下方，与顶部同一块背景 */}
+        {below.length > 0 && <div className="mt-5 space-y-3 border-t border-border/60 pt-4">{below}</div>}
+      </Container>
+    </section>
   )
 }

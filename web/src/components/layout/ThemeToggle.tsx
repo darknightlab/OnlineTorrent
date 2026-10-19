@@ -47,7 +47,7 @@ export function ThemeSegmented() {
           onClick={() => setTheme(o.value)}
           className={
             "inline-flex h-9 items-center gap-1.5 rounded-md px-3 text-[13px] font-medium transition-colors " +
-            (theme === o.value ? "bg-card text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")
+            (theme === o.value ? "bg-card text-foreground" : "text-muted-foreground hover:text-foreground")
           }
         >
           <o.icon className="h-4 w-4" />

@@ -20,10 +20,9 @@ export interface Cand {
   mb: number
   bt?: number | null
   wt?: number | null
-  server?: boolean
   /** 发布于几小时前 */
   age: number
-  /** false = 从未统计（swarm 为 null，除非 server） */
+  /** false = 从未统计（swarm 为 null） */
   known?: boolean
   access?: AccessAction
   /** 文件路径（默认 标题 + .mkv） */
@@ -49,17 +48,7 @@ export function toInput(c: Cand): RankInput & { id: string } {
     size_bytes: Math.round(c.mb * 1024 ** 2),
     published_at: new Date(NOW - c.age * 3600_000).toISOString(),
     access: { action: c.access ?? "allow", reason: "" },
-    swarm:
-      known || c.server
-        ? {
-            bt_seeders: known ? (c.bt ?? 0) : null,
-            bt_leechers: 0,
-            wt_seeders: known ? (c.wt ?? 0) : null,
-            wt_leechers: 0,
-            server_complete: !!c.server,
-            checked_at: known ? new Date(NOW - 600_000).toISOString() : null,
-          }
-        : null,
+    swarm: known ? { bt_seeders: c.bt ?? 0, bt_leechers: 0, wt_seeders: c.wt ?? 0, wt_leechers: 0, checked_at: new Date(NOW - 600_000).toISOString() } : null,
   }
 }
 
@@ -70,7 +59,7 @@ export const SCENARIOS: Scenario[] = [
     name: "01 服务器已缓存的生肉 vs 新发布的简繁内封（会员）",
     viewer: "member",
     cands: [
-      { id: "raw", title: `[Ohys-Raws] ${S} - 05 (AT-X 1280x720 x264 AAC)`, mb: 400, bt: 30, wt: 1, server: true, age: 30 },
+      { id: "raw", title: `[Ohys-Raws] ${S} - 05 (AT-X 1280x720 x264 AAC)`, mb: 400, bt: 30, wt: 1, age: 30 },
       { id: "sub", title: `[喵萌奶茶屋&LoliHouse] ${S} - 05 [WebRip 1080p HEVC-10bit AAC][简繁日内封字幕]`, mb: 320, bt: 80, wt: 0, age: 3 },
     ],
     expect: "sub",
@@ -80,7 +69,7 @@ export const SCENARIOS: Scenario[] = [
     name: "02 同上（游客）：字幕版没有 WebRTC 节点",
     viewer: "guest",
     cands: [
-      { id: "raw", title: `[Ohys-Raws] ${S} - 05 (AT-X 1280x720 x264 AAC)`, mb: 400, bt: 30, wt: 1, server: true, age: 30 },
+      { id: "raw", title: `[Ohys-Raws] ${S} - 05 (AT-X 1280x720 x264 AAC)`, mb: 400, bt: 30, wt: 1, age: 30 },
       { id: "sub", title: `[喵萌奶茶屋&LoliHouse] ${S} - 05 [WebRip 1080p HEVC-10bit AAC][简繁日内封字幕]`, mb: 320, bt: 80, wt: 0, age: 3 },
     ],
     expect: "raw",
@@ -90,7 +79,7 @@ export const SCENARIOS: Scenario[] = [
     name: "03 同上（游客）：字幕版已有 WebRTC 节点",
     viewer: "guest",
     cands: [
-      { id: "raw", title: `[Ohys-Raws] ${S} - 05 (AT-X 1280x720 x264 AAC)`, mb: 400, bt: 30, wt: 1, server: true, age: 30 },
+      { id: "raw", title: `[Ohys-Raws] ${S} - 05 (AT-X 1280x720 x264 AAC)`, mb: 400, bt: 30, wt: 1, age: 30 },
       { id: "sub", title: `[喵萌奶茶屋&LoliHouse] ${S} - 05 [WebRip 1080p HEVC-10bit AAC][简繁日内封字幕]`, mb: 320, bt: 80, wt: 2, age: 3 },
     ],
     expect: "sub",
@@ -100,7 +89,7 @@ export const SCENARIOS: Scenario[] = [
     name: "04 服务器已缓存的简体 AVC vs 新出的简体 HEVC 小文件（会员）",
     viewer: "member",
     cands: [
-      { id: "old", title: `[桜都字幕组] ${S} [05][1080p][简体内嵌]`, mb: 700, bt: 5, wt: 1, server: true, age: 40, path: `[桜都字幕组] ${S} [05][1080p][简体内嵌].mp4` },
+      { id: "old", title: `[桜都字幕组] ${S} [05][1080p][简体内嵌]`, mb: 700, bt: 5, wt: 1, age: 40, path: `[桜都字幕组] ${S} [05][1080p][简体内嵌].mp4` },
       { id: "new", title: `[LoliHouse] ${S} - 05 [WebRip 1080p HEVC-10bit AAC][简体内封]`, mb: 300, bt: 25, wt: 0, age: 4 },
     ],
     expect: "new",
@@ -111,7 +100,7 @@ export const SCENARIOS: Scenario[] = [
     name: "05 同上（游客）",
     viewer: "guest",
     cands: [
-      { id: "old", title: `[桜都字幕组] ${S} [05][1080p][简体内嵌]`, mb: 700, bt: 5, wt: 1, server: true, age: 40 },
+      { id: "old", title: `[桜都字幕组] ${S} [05][1080p][简体内嵌]`, mb: 700, bt: 5, wt: 1, age: 40 },
       { id: "new", title: `[LoliHouse] ${S} - 05 [WebRip 1080p HEVC-10bit AAC][简体内封]`, mb: 300, bt: 25, wt: 0, age: 4 },
     ],
     expect: "old",
@@ -142,7 +131,7 @@ export const SCENARIOS: Scenario[] = [
     name: "08 生肉 1080p vs 简体 720p",
     viewer: "member",
     cands: [
-      { id: "raw1080", title: `[Ohys-Raws] ${S} - 05 (TBS 1920x1080 x264 AAC)`, mb: 900, bt: 60, wt: 1, server: true, age: 20 },
+      { id: "raw1080", title: `[Ohys-Raws] ${S} - 05 (TBS 1920x1080 x264 AAC)`, mb: 900, bt: 60, wt: 1, age: 20 },
       { id: "chs720", title: `[某字幕组] ${S} [05][720p][简体]`, mb: 280, bt: 10, wt: 1, age: 12 },
     ],
     expect: "chs720",
@@ -162,7 +151,7 @@ export const SCENARIOS: Scenario[] = [
     name: "10 同上（会员）",
     viewer: "member",
     cands: [
-      { id: "eng", title: `[SubsPlease] ${S} - 05 (1080p) [A1B2C3D4]`, mb: 1400, bt: 500, wt: 3, server: true, age: 8 },
+      { id: "eng", title: `[SubsPlease] ${S} - 05 (1080p) [A1B2C3D4]`, mb: 1400, bt: 500, wt: 3, age: 8 },
       { id: "cht", title: `[ANi] 藥師少女的獨語 - 05 [1080P][Baha][WEB-DL][AAC AVC][CHT]`, mb: 600, bt: 50, wt: 0, age: 6 },
     ],
     expect: "cht",
@@ -245,7 +234,7 @@ export const SCENARIOS: Scenario[] = [
     viewer: "member",
     cands: [
       { id: "batch", title: `[喵萌奶茶屋&VCB-Studio] ${S} [01-12][Ma10p_1080p][x265_flac][简繁内封]`, mb: 1100, bt: 120, wt: 0, age: 2000, path: `[喵萌奶茶屋&VCB-Studio] ${S} [01-12][Ma10p_1080p][x265_flac][简繁内封]/${S} [05][Ma10p_1080p][x265_flac].mkv` },
-      { id: "weekly", title: `[桜都字幕组] ${S} [05][1080p][简体内嵌]`, mb: 600, bt: 15, wt: 2, server: true, age: 2100 },
+      { id: "weekly", title: `[桜都字幕组] ${S} [05][1080p][简体内嵌]`, mb: 600, bt: 15, wt: 2, age: 2100 },
     ],
     expect: "weekly",
     alt: ["batch"],
@@ -256,7 +245,7 @@ export const SCENARIOS: Scenario[] = [
     viewer: "guest",
     cands: [
       { id: "batch", title: `[喵萌奶茶屋&VCB-Studio] ${S} [01-12][Ma10p_1080p][x265_flac][简繁内封]`, mb: 1100, bt: 120, wt: 0, age: 2000 },
-      { id: "weekly", title: `[桜都字幕组] ${S} [05][1080p][简体内嵌]`, mb: 600, bt: 15, wt: 2, server: true, age: 2100 },
+      { id: "weekly", title: `[桜都字幕组] ${S} [05][1080p][简体内嵌]`, mb: 600, bt: 15, wt: 2, age: 2100 },
     ],
     expect: "weekly",
     why: "合集对游客无可用来源",
@@ -276,7 +265,7 @@ export const SCENARIOS: Scenario[] = [
     viewer: "guest",
     cands: [
       { id: "new", title: `[LoliHouse] ${S} - 05 [WebRip 1080p HEVC-10bit AAC][简体内封]`, mb: 300, age: 0.2, known: false },
-      { id: "cht", title: `[ANi] 藥師少女的獨語 - 05 [1080P][Baha][WEB-DL][AAC AVC][CHT]`, mb: 600, bt: 50, wt: 2, server: true, age: 6 },
+      { id: "cht", title: `[ANi] 藥師少女的獨語 - 05 [1080P][Baha][WEB-DL][AAC AVC][CHT]`, mb: 600, bt: 50, wt: 2, age: 6 },
     ],
     expect: "new",
     alt: ["cht"],
@@ -287,7 +276,7 @@ export const SCENARIOS: Scenario[] = [
     viewer: "guest",
     cands: [
       { id: "new", title: `[LoliHouse] ${S} - 05 [WebRip 1080p HEVC-10bit AAC][简体内封]`, mb: 300, age: 0.2, known: false },
-      { id: "old", title: `[桜都字幕组] ${S} [05][1080p][简体内嵌]`, mb: 700, bt: 20, wt: 2, server: true, age: 30 },
+      { id: "old", title: `[桜都字幕组] ${S} [05][1080p][简体内嵌]`, mb: 700, bt: 20, wt: 2, age: 30 },
     ],
     expect: "new",
     alt: ["old"],
@@ -298,19 +287,19 @@ export const SCENARIOS: Scenario[] = [
     name: "24 游客：已缓存的繁体 vs 有 WebRTC 节点的简体",
     viewer: "guest",
     cands: [
-      { id: "cht", title: `[ANi] 藥師少女的獨語 - 05 [1080P][Baha][WEB-DL][AAC AVC][CHT]`, mb: 600, bt: 50, wt: 3, server: true, age: 10 },
+      { id: "cht", title: `[ANi] 藥師少女的獨語 - 05 [1080P][Baha][WEB-DL][AAC AVC][CHT]`, mb: 600, bt: 50, wt: 3, age: 10 },
       { id: "chs", title: `[桜都字幕组] ${S} [05][1080p][简体内嵌]`, mb: 700, bt: 8, wt: 1, age: 8 },
     ],
-    expect: "cht",
-    alt: ["chs"],
-    why: "（第三版改）繁体只比简体少 5 分：繁体更小、已缓存、节点更多，可以压过简体；选简体也可接受",
+    expect: "chs",
+    alt: ["cht"],
+    why: "（第五版改）没有服务器缓存加分后简体以 1 分领先，回到「差不多时选简体」；繁体也可接受",
   },
   {
     name: "25 会员：简体只有 1 个 BT 做种 vs 繁体大量做种且已缓存",
     viewer: "member",
     cands: [
       { id: "chs", title: `[某字幕组] ${S} [05][1080p][简体]`, mb: 550, bt: 1, wt: 0, age: 50 },
-      { id: "cht", title: `[ANi] 藥師少女的獨語 - 05 [1080P][Baha][WEB-DL][AAC AVC][CHT]`, mb: 600, bt: 100, wt: 3, server: true, age: 50 },
+      { id: "cht", title: `[ANi] 藥師少女的獨語 - 05 [1080P][Baha][WEB-DL][AAC AVC][CHT]`, mb: 600, bt: 100, wt: 3, age: 50 },
     ],
     expect: "cht",
     alt: ["chs"],
@@ -383,7 +372,7 @@ export const SCENARIOS: Scenario[] = [
     name: "32 只有生肉（会员）：已缓存 AVC 1.3 GB vs HEVC 400 MB（BT 50）",
     viewer: "member",
     cands: [
-      { id: "avc", title: `[Ohys-Raws] ${S} - 05 (TBS 1920x1080 x264 AAC)`, mb: 1300, bt: 5, wt: 1, server: true, age: 20 },
+      { id: "avc", title: `[Ohys-Raws] ${S} - 05 (TBS 1920x1080 x264 AAC)`, mb: 1300, bt: 5, wt: 1, age: 20 },
       { id: "hevc", title: `[NC-Raws] ${S} - 05 (B-Global 1920x1080 HEVC AAC MKV)`, mb: 400, bt: 50, wt: 0, age: 20 },
     ],
     expect: "hevc",
@@ -394,7 +383,7 @@ export const SCENARIOS: Scenario[] = [
     name: "33 只有生肉（游客）",
     viewer: "guest",
     cands: [
-      { id: "avc", title: `[Ohys-Raws] ${S} - 05 (TBS 1920x1080 x264 AAC)`, mb: 1300, bt: 5, wt: 1, server: true, age: 20 },
+      { id: "avc", title: `[Ohys-Raws] ${S} - 05 (TBS 1920x1080 x264 AAC)`, mb: 1300, bt: 5, wt: 1, age: 20 },
       { id: "hevc", title: `[NC-Raws] ${S} - 05 (B-Global 1920x1080 HEVC AAC MKV)`, mb: 400, bt: 50, wt: 0, age: 20 },
     ],
     expect: "avc",
@@ -415,7 +404,7 @@ export const SCENARIOS: Scenario[] = [
     name: "36 游客：只有服务器缓存的生肉 vs 有 WebRTC 节点的简体",
     viewer: "guest",
     cands: [
-      { id: "raw", title: `[Ohys-Raws] ${S} - 05 (AT-X 1280x720 x264 AAC)`, mb: 400, bt: 0, wt: 0, server: true, age: 30 },
+      { id: "raw", title: `[Ohys-Raws] ${S} - 05 (AT-X 1280x720 x264 AAC)`, mb: 400, bt: 0, wt: 1, age: 30 },
       { id: "chs", title: `[桜都字幕组] ${S} [05][1080p][简体内嵌]`, mb: 700, bt: 3, wt: 1, age: 8 },
     ],
     expect: "chs",
@@ -425,7 +414,7 @@ export const SCENARIOS: Scenario[] = [
     name: "37 整季简体合集已缓存 vs 每周繁体（游客）",
     viewer: "guest",
     cands: [
-      { id: "batch", title: `[喵萌奶茶屋] ${S} [01-12][1080p][简日双语]`, mb: 1300, bt: 40, wt: 1, server: true, age: 900, path: `[喵萌奶茶屋] ${S} [01-12][1080p][简日双语]/[喵萌奶茶屋] ${S} [05][1080p][简日双语].mp4` },
+      { id: "batch", title: `[喵萌奶茶屋] ${S} [01-12][1080p][简日双语]`, mb: 1300, bt: 40, wt: 1, age: 900, path: `[喵萌奶茶屋] ${S} [01-12][1080p][简日双语]/[喵萌奶茶屋] ${S} [05][1080p][简日双语].mp4` },
       { id: "cht", title: `[ANi] 藥師少女的獨語 - 05 [1080P][Baha][WEB-DL][AAC AVC][CHT]`, mb: 600, bt: 30, wt: 2, age: 1000 },
     ],
     expect: "cht",
@@ -437,7 +426,7 @@ export const SCENARIOS: Scenario[] = [
     viewer: "member",
     cands: [
       { id: "chs", title: `[桜都字幕组] ${S} [05][1080p][简体内嵌]`, mb: 700, bt: 3, wt: 0, age: 1 },
-      { id: "cht", title: `[ANi] 藥師少女的獨語 - 05 [1080P][Baha][WEB-DL][AAC AVC][CHT]`, mb: 600, bt: 60, wt: 3, server: true, age: 7 },
+      { id: "cht", title: `[ANi] 藥師少女的獨語 - 05 [1080P][Baha][WEB-DL][AAC AVC][CHT]`, mb: 600, bt: 60, wt: 3, age: 7 },
     ],
     expect: "cht",
     alt: ["chs"],
@@ -448,7 +437,7 @@ export const SCENARIOS: Scenario[] = [
     viewer: "guest",
     cands: [
       { id: "chs", title: `[桜都字幕组] ${S} [05][1080p][简体内嵌]`, mb: 700, bt: 3, wt: 0, age: 1 },
-      { id: "cht", title: `[ANi] 藥師少女的獨語 - 05 [1080P][Baha][WEB-DL][AAC AVC][CHT]`, mb: 600, bt: 60, wt: 3, server: true, age: 7 },
+      { id: "cht", title: `[ANi] 藥師少女的獨語 - 05 [1080P][Baha][WEB-DL][AAC AVC][CHT]`, mb: 600, bt: 60, wt: 3, age: 7 },
     ],
     expect: "cht",
     why: "游客只能播有 WebRTC 节点 / 服务器缓存的",
@@ -457,7 +446,7 @@ export const SCENARIOS: Scenario[] = [
     name: "42 日文字幕 vs 生肉（第四版新增）",
     viewer: "member",
     cands: [
-      { id: "raw", title: `[Ohys-Raws] ${S} - 05 (TBS 1920x1080 x264 AAC)`, mb: 900, bt: 60, wt: 1, server: true, age: 20 },
+      { id: "raw", title: `[Ohys-Raws] ${S} - 05 (TBS 1920x1080 x264 AAC)`, mb: 900, bt: 60, wt: 1, age: 20 },
       { id: "jp", title: `[某组] ${S} - 05 [1080p][HEVC][日字]`, mb: 400, bt: 20, wt: 1, age: 10 },
     ],
     expect: "jp",
@@ -478,7 +467,7 @@ export const SCENARIOS: Scenario[] = [
     name: "44 游客：繁体 20 个 WebRTC 节点 vs 简体 1 个（第四版新增）",
     viewer: "guest",
     cands: [
-      { id: "cht", title: `[ANi] 藥師少女的獨語 - 05 [1080P][Baha][WEB-DL][AAC AVC][CHT]`, mb: 600, bt: 300, wt: 20, server: true, age: 30 },
+      { id: "cht", title: `[ANi] 藥師少女的獨語 - 05 [1080P][Baha][WEB-DL][AAC AVC][CHT]`, mb: 600, bt: 300, wt: 20, age: 30 },
       { id: "chs", title: `[桜都字幕组] ${S} [05][1080p][简体内嵌]`, mb: 600, bt: 5, wt: 1, age: 30 },
     ],
     expect: "cht",
@@ -499,21 +488,21 @@ export const SCENARIOS: Scenario[] = [
     name: "40 真实：学生会也有洞！03（会员，生产环境统计）",
     viewer: "member",
     cands: [
-      { id: "tv", title: "[TV版&无修版] 学生会也有洞！ - EP03 [简／繁] (1080p H.264 AAC SRTx2) {生徒会にも穴はある！ | 脑洞学生会 | Even the Student Council Has Its Holes!}", path: "[TV版&无修版] 学生会也有洞！ - EP03 [简／繁] (1080p H.264 AAC SRTx2)/【10月】学生会也有洞！ 03【TV放送版】.mp4", mb: 448857591 / 1024 ** 2, bt: 98, wt: 1, server: true, age: 30 },
+      { id: "tv", title: "[TV版&无修版] 学生会也有洞！ - EP03 [简／繁] (1080p H.264 AAC SRTx2) {生徒会にも穴はある！ | 脑洞学生会 | Even the Student Council Has Its Holes!}", path: "[TV版&无修版] 学生会也有洞！ - EP03 [简／繁] (1080p H.264 AAC SRTx2)/【10月】学生会也有洞！ 03【TV放送版】.mp4", mb: 448857591 / 1024 ** 2, bt: 98, wt: 1, age: 30 },
       { id: "nekomoe", title: "【喵萌奶茶屋】★10月新番★[学生会也有洞 / Seitokai ni mo Ana wa Aru!][03][1080p][简日双语]", path: "[Nekomoe kissaten][Seitokai ni mo Ana wa Aru!][03][1080p][JPSC].mp4", mb: 365901113 / 1024 ** 2, bt: 226, wt: 0, age: 20 },
-      { id: "ani", title: "[ANi] Seitokai ni mo Ana wa Aru /  學生會也有洞！ - 03 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]", path: "[ANi] 學生會也有洞！ - 03 [1080P][Baha][WEB-DL][AAC AVC][CHT].mp4", mb: 369444782 / 1024 ** 2, bt: 476, wt: 1, server: true, age: 40 },
+      { id: "ani", title: "[ANi] Seitokai ni mo Ana wa Aru /  學生會也有洞！ - 03 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]", path: "[ANi] 學生會也有洞！ - 03 [1080P][Baha][WEB-DL][AAC AVC][CHT].mp4", mb: 369444782 / 1024 ** 2, bt: 476, wt: 1, age: 40 },
     ],
-    expect: "tv",
-    alt: ["nekomoe", "ani"],
-    why: "三者接近：简繁版已缓存且有节点；喵萌简体小 80 MB、做种更多；ANi 繁体做种最多，都可接受",
+    expect: "nekomoe",
+    alt: ["tv", "ani"],
+    why: "（第五版改）没有服务器缓存加分后，更小的喵萌简体略领先；简繁版、繁体 ANi 都可接受",
   },
   {
     name: "41 真实：学生会也有洞！03（游客）",
     viewer: "guest",
     cands: [
-      { id: "tv", title: "[TV版&无修版] 学生会也有洞！ - EP03 [简／繁] (1080p H.264 AAC SRTx2)", path: "【10月】学生会也有洞！ 03【TV放送版】.mp4", mb: 448857591 / 1024 ** 2, bt: 98, wt: 1, server: true, age: 30 },
+      { id: "tv", title: "[TV版&无修版] 学生会也有洞！ - EP03 [简／繁] (1080p H.264 AAC SRTx2)", path: "【10月】学生会也有洞！ 03【TV放送版】.mp4", mb: 448857591 / 1024 ** 2, bt: 98, wt: 1, age: 30 },
       { id: "nekomoe", title: "【喵萌奶茶屋】★10月新番★[学生会也有洞 / Seitokai ni mo Ana wa Aru!][03][1080p][简日双语]", path: "[Nekomoe kissaten][Seitokai ni mo Ana wa Aru!][03][1080p][JPSC].mp4", mb: 365901113 / 1024 ** 2, bt: 226, wt: 0, age: 20 },
-      { id: "ani", title: "[ANi] Seitokai ni mo Ana wa Aru /  學生會也有洞！ - 03 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]", mb: 369444782 / 1024 ** 2, bt: 476, wt: 1, server: true, age: 40 },
+      { id: "ani", title: "[ANi] Seitokai ni mo Ana wa Aru /  學生會也有洞！ - 03 [1080P][Baha][WEB-DL][AAC AVC][CHT][MP4]", mb: 369444782 / 1024 ** 2, bt: 476, wt: 1, age: 40 },
     ],
     expect: "tv",
     alt: ["ani"],

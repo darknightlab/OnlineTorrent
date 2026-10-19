@@ -1,6 +1,5 @@
 {
   "availability": {
-    "server_complete": 2,
     "wt_seeder": 20,
     "wt_cap": 20,
     "wt_scale": 20,

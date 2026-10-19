@@ -37,24 +37,20 @@ export interface Site {
 
 /**
  * 做种统计（tracker scrape，按需刷新、缓存 30 分钟）。计数为 null = 未知（该类 tracker 没有响应过）；
- * checked_at 为 null = 从未统计（只有 server_complete 可能已知）。
+ * checked_at 为 null = 从未统计。本站服务器是否已缓存不对用户公开。
  */
 export interface SwarmStats {
   bt_seeders: number | null
   bt_leechers: number | null
-  /** WebTorrent（wss tracker）做种 / 下载人数 */
+  /** WebTorrent（wss tracker）做种 / 下载人数（本站 qB 做种时也计入） */
   wt_seeders: number | null
   wt_leechers: number | null
-  /** 某台 qB 服务器已完整下载（可做种 / WebSeed） */
-  server_complete: boolean
   checked_at: string | null
 }
 
 /** 推荐规则（GET /site 的 rank_rules，后台 GET/PUT /admin/rank-rules）；说明见 docs/research/rank-rules.md */
 export interface RankRules {
   availability: {
-    /** 服务器已缓存加分 */
-    server_complete: number
     /** WebTorrent 做种者：系数、上限、尺度（tanh） */
     wt_seeder: number
     wt_cap: number

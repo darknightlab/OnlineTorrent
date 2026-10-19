@@ -19,13 +19,16 @@ import (
 
 // Availability scores (swarm stats).
 type Availability struct {
-	ServerComplete float64 `json:"server_complete"` // a qB server has the whole torrent
-	WTSeeder       float64 `json:"wt_seeder"`       // WebTorrent seeders: coefficient …
-	WTCap          float64 `json:"wt_cap"`          // … cap …
-	WTScale        float64 `json:"wt_scale"`        // … and scale (tanh curve)
-	BTSeeder       float64 `json:"bt_seeder"`       // BT seeders (only viewers who can make the server seed): coefficient …
-	BTCap          float64 `json:"bt_cap"`          // … cap …
-	BTScale        float64 `json:"bt_scale"`        // … and scale (tanh curve)
+	// ServerComplete (a bonus when our qB had the file) was removed in v5 — users must not
+	// learn what our servers cache. Still accepted on input so older saved rules parse,
+	// and dropped.
+	ServerComplete *float64 `json:"server_complete,omitempty"`
+	WTSeeder       float64  `json:"wt_seeder"` // WebTorrent seeders: coefficient …
+	WTCap          float64  `json:"wt_cap"`    // … cap …
+	WTScale        float64  `json:"wt_scale"`  // … and scale (tanh curve)
+	BTSeeder       float64  `json:"bt_seeder"` // BT seeders (only viewers who can make the server seed): coefficient …
+	BTCap          float64  `json:"bt_cap"`    // … cap …
+	BTScale        float64  `json:"bt_scale"`  // … and scale (tanh curve)
 	// Curve: "linear" = coefficient per seeder; "log" = coefficient × log2(1 + seeders);
 	// "tanh" = coefficient × tanh(seeders / scale) (≈ coefficient·n/scale for few seeders,
 	// saturating at coefficient). The cap applies to every curve. Missing = linear (rules
@@ -130,12 +133,13 @@ const (
 	MaxSizeMB     = 1 << 20
 )
 
-// Default returns the built-in rules (owner-specified v4; scenarios:
+// Default returns the built-in rules (owner-specified v5 = v4 without the server-cache
+// bonus; scenarios:
 // docs/research/rank-rules.md, web/src/lib/rank.scenarios.test.ts). Keep in sync with
 // DEFAULT_RANK_RULES in web/src/lib/rank.ts (golden file testdata/default.json).
 func Default() Rules {
 	return Rules{
-		Availability: Availability{ServerComplete: 2, WTSeeder: 20, WTCap: 20, WTScale: 20, BTSeeder: 10, BTCap: 10, BTScale: 20, Curve: CurveTanh, Dead: -100},
+		Availability: Availability{WTSeeder: 20, WTCap: 20, WTScale: 20, BTSeeder: 10, BTCap: 10, BTScale: 20, Curve: CurveTanh, Dead: -100},
 		Keywords: []Keyword{
 			{Label: "简体中文", Pattern: `简|chs|\bsc\b|\bgb\b|zh-?hans|jpsc`, Score: 25, Group: "字幕"},
 			{Label: "繁体中文", Pattern: `繁|cht|\btc\b|big5|zh-?hant|jptc`, Score: 20, Group: "字幕"},
@@ -159,6 +163,8 @@ var legacyDefaults = []string{
 	`{"availability":{"server_complete":2,"wt_seeder":2,"wt_cap":6,"bt_seeder":1,"bt_cap":4,"curve":"log","dead":-100},"keywords":[{"label":"简体中文","pattern":"简|chs|\\bsc\\b|\\bgb\\b|zh-?hans","score":25,"group":"字幕"},{"label":"繁体中文","pattern":"繁|cht|\\btc\\b|big5|zh-?hant","score":12,"group":"字幕"},{"label":"1080p","pattern":"1080[pi]?\\b|1920x1080","score":10,"group":"分辨率"},{"label":"4K","pattern":"2160p?\\b|3840x2160|\\b4k\\b","score":5,"group":"分辨率"},{"label":"720p","pattern":"720p\\b|1280x720","score":4,"group":"分辨率"},{"label":"HEVC","pattern":"hevc|[hx]\\.?265","score":2,"group":""}],"teams":[],"size":{"max":6,"full_below_mb":300,"zero_above_mb":1500},"oversize":-10}`,
 	// v3 (2026-10, 708decc): BT cap 10, 繁体 20, small-file bonus 16 over 200–1000 MB
 	`{"availability":{"server_complete":2,"wt_seeder":2,"wt_cap":6,"bt_seeder":1,"bt_cap":10,"curve":"log","dead":-100},"keywords":[{"label":"简体中文","pattern":"简|chs|\\bsc\\b|\\bgb\\b|zh-?hans","score":25,"group":"字幕"},{"label":"繁体中文","pattern":"繁|cht|\\btc\\b|big5|zh-?hant","score":20,"group":"字幕"},{"label":"1080p","pattern":"1080[pi]?\\b|1920x1080","score":15,"group":"分辨率"},{"label":"4K","pattern":"2160p?\\b|3840x2160|\\b4k\\b","score":8,"group":"分辨率"},{"label":"720p","pattern":"720p\\b|1280x720","score":5,"group":"分辨率"},{"label":"HEVC","pattern":"hevc|[hx]\\.?265","score":2,"group":""}],"teams":[],"size":{"max":16,"full_below_mb":200,"zero_above_mb":1000},"oversize":-10}`,
+	// v4 (2026-10, deployed with the tanh curves): server_complete +2
+	`{"availability":{"server_complete":2,"wt_seeder":20,"wt_cap":20,"wt_scale":20,"bt_seeder":10,"bt_cap":10,"bt_scale":20,"curve":"tanh","dead":-100},"keywords":[{"label":"简体中文","pattern":"简|chs|\\bsc\\b|\\bgb\\b|zh-?hans|jpsc","score":25,"group":"字幕"},{"label":"繁体中文","pattern":"繁|cht|\\btc\\b|big5|zh-?hant|jptc","score":20,"group":"字幕"},{"label":"日文","pattern":"\\bjpn?\\b|\\bjapanese\\b|日字|日文|日[语語]|[简繁中]日|ch[st][_&.-]?jp|jp[_&.-]?ch[st]","score":10,"group":"字幕"},{"label":"4K 及以上","pattern":"2160p?\\b|3840x2160|4320p?\\b|7680x4320|\\b[48]k\\b","score":30,"group":"分辨率"},{"label":"1080p","pattern":"1080[pi]?\\b|1920x1080","score":20,"group":"分辨率"},{"label":"720p","pattern":"720p\\b|1280x720","score":10,"group":"分辨率"},{"label":"HEVC","pattern":"hevc|[hx]\\.?265","score":2,"group":""}],"teams":[],"size":{"from_mb":200,"from_score":0,"to_mb":1000,"to_score":-16,"extend":true}}`,
 }
 
 // IsLegacyDefault reports whether raw equals (as JSON) an earlier built-in default.
@@ -206,11 +212,12 @@ func score(name string, v float64) error {
 
 func (r *Rules) normalize() error {
 	r.Oversize = nil
+	r.Availability.ServerComplete = nil
 	a := &r.Availability
 	for _, c := range []struct {
 		n string
 		v float64
-	}{{"服务器已缓存加分", a.ServerComplete}, {"WebTorrent 做种系数", a.WTSeeder}, {"BT 做种系数", a.BTSeeder}, {"无人做种扣分", a.Dead},
+	}{{"WebTorrent 做种系数", a.WTSeeder}, {"BT 做种系数", a.BTSeeder}, {"无人做种扣分", a.Dead},
 		{"文件大小起点分值", r.Size.FromScore}, {"文件大小终点分值", r.Size.ToScore}} {
 		if err := score(c.n, c.v); err != nil {
 			return err

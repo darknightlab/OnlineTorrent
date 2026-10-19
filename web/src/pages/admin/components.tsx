@@ -127,7 +127,7 @@ export function Mono({ children, className }: { children: ReactNode; className?:
 export function StatusDot({ ok, label }: { ok: boolean | null; label: string }) {
   return (
     <span className="inline-flex items-center gap-1.5 text-[13px]">
-      <span className={cn("h-2 w-2 rounded-full", ok === null ? "bg-muted-foreground/40" : ok ? "bg-primary shadow-[0_0_0_3px_var(--primary-soft)]" : "bg-destructive")} />
+      <span className={cn("h-2 w-2 rounded-full", ok === null ? "bg-muted-foreground/40" : ok ? "bg-primary" : "bg-destructive")} />
       {label}
     </span>
   )

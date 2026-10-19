@@ -19,7 +19,7 @@ import (
 const swarmBudget = 1500 * time.Millisecond
 
 // swarmFor returns the swarm view of each infohash (absent = null: never seen by any
-// tracker / feed and not on a qB server).
+// tracker / feed). Our own qB servers are not revealed.
 func (s *Server) swarmFor(ctx context.Context, ihs []string) map[string]*meta.SwarmView {
 	out := map[string]*meta.SwarmView{}
 	if len(ihs) == 0 {
@@ -32,7 +32,7 @@ func (s *Server) swarmFor(ctx context.Context, ihs []string) map[string]*meta.Sw
 		rows, _ = s.Meta.SwarmStatsMany(ctx, ihs)
 	}
 	for ih, st := range rows {
-		if v := st.View(); v != nil && (v.CheckedAt != nil || v.ServerComplete) {
+		if v := st.View(); v != nil && v.CheckedAt != nil {
 			out[ih] = v
 		}
 	}

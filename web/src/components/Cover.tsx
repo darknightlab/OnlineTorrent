@@ -9,6 +9,8 @@ export function Cover({
   className,
   eager,
   position,
+  natural,
+  onRatio,
 }: {
   src: string | null | undefined
   title: string
@@ -16,10 +18,36 @@ export function Cover({
   eager?: boolean
   /** object-position 类名，例如横向卡片里竖版海报偏上裁切 */
   position?: string
+  /**
+   * 按图片原始比例显示（宽度由 className 决定，高度自动；不裁切）。
+   * 加载完成前 / 无图时按 bgm 封面常见比例 1:√2（400×566）占位。
+   */
+  natural?: boolean
+  /** 图片加载后回报原始宽高比（宽 / 高） */
+  onRatio?: (ratio: number) => void
 }) {
   const [failed, setFailed] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const show = src && !failed
+  if (natural)
+    return (
+      <div className={cn("relative overflow-hidden bg-muted", !(show && loaded) && "aspect-[1/1.414]", className)}>
+        {show ? (
+          <img
+            src={src}
+            alt=""
+            loading={eager ? "eager" : "lazy"}
+            decoding="async"
+            referrerPolicy="no-referrer"
+            onLoad={() => setLoaded(true)}
+            onError={() => setFailed(true)}
+            className={cn("block h-auto w-full transition-opacity duration-300", loaded ? "opacity-100" : "absolute inset-0 opacity-0")}
+          />
+        ) : (
+          <Placeholder title={title} />
+        )}
+      </div>
+    )
   return (
     <div className={cn("relative overflow-hidden bg-muted", className)}>
       {show ? (
@@ -29,7 +57,11 @@ export function Cover({
           loading={eager ? "eager" : "lazy"}
           decoding="async"
           referrerPolicy="no-referrer"
-          onLoad={() => setLoaded(true)}
+          onLoad={(e) => {
+            setLoaded(true)
+            const im = e.currentTarget
+            if (onRatio && im.naturalWidth > 0 && im.naturalHeight > 0) onRatio(im.naturalWidth / im.naturalHeight)
+          }}
           onError={() => setFailed(true)}
           className={cn("h-full w-full object-cover transition-opacity duration-300", position, loaded ? "opacity-100" : "opacity-0")}
         />

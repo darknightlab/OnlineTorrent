@@ -34,14 +34,13 @@ function patternError(p: string): string | null {
 
 type NumKey = Exclude<keyof RankRules["availability"], "curve">
 const AVAIL: { key: NumKey; label: string; hint: string }[] = [
-  { key: "server_complete", label: "服务器已缓存", hint: "某台 qB 已完整下载（可 WebRTC 做种 / WebSeed）。只作小加分，否则更好的新版本出现后推荐不会换" },
-  { key: "wt_seeder", label: "WebTorrent 做种系数", hint: "wss tracker 统计的做种人数；曲线见下" },
+  { key: "wt_seeder", label: "WebTorrent 做种系数", hint: "wss tracker 统计的做种人数（本站服务器做种时也计入）；曲线见下" },
   { key: "wt_cap", label: "WebTorrent 加分上限", hint: "≥ 0" },
   { key: "wt_scale", label: "WebTorrent 尺度", hint: "仅 tanh 曲线：系数 × tanh(人数 / 尺度)" },
   { key: "bt_seeder", label: "BT 做种系数", hint: "仅对能让服务器做种的用户（接口权限 seed）" },
   { key: "bt_cap", label: "BT 加分上限", hint: "≥ 0" },
   { key: "bt_scale", label: "BT 尺度", hint: "仅 tanh 曲线" },
-  { key: "dead", label: "无人做种", hint: "游客类用户：WebRTC 做种 0 且服务器未缓存；有做种 / WebSeed 权限的用户：所有来源都为 0。未统计过的不扣分" },
+  { key: "dead", label: "无人做种", hint: "游客类用户（无做种 / WebSeed 权限）：WebRTC 做种 0；有做种或 WebSeed 权限的用户：BT 与 WebRTC 都为 0。未统计过的不扣分" },
 ]
 
 export default function RankRulesPage() {
@@ -126,7 +125,7 @@ export default function RankRulesPage() {
                     role="radio"
                     aria-checked={draft.availability.curve === v}
                     onClick={() => set((r) => void (r.availability.curve = v))}
-                    className={cn("h-8 rounded-md px-3 text-xs font-medium", draft.availability.curve === v ? "bg-card text-primary-text shadow-sm" : "text-muted-foreground hover:text-foreground")}
+                    className={cn("h-8 rounded-md px-3 text-xs font-medium", draft.availability.curve === v ? "bg-card text-primary-text" : "text-muted-foreground hover:text-foreground")}
                   >
                     {l}
                   </button>
@@ -327,14 +326,12 @@ function TryIt({ rules }: { rules: RankRules }) {
   const [title, setTitle] = useState("[Team] Show - 02 [WebRip 1080p HEVC-10bit AAC][简繁内封]")
   const [bt, setBt] = useState("23")
   const [wt, setWt] = useState("0")
-  const [server, setServer] = useState(false)
   const [mb, setMb] = useState("320")
   const swarm: SwarmStats = {
     bt_seeders: bt === "" ? null : Number(bt),
     bt_leechers: 0,
     wt_seeders: wt === "" ? null : Number(wt),
     wt_leechers: 0,
-    server_complete: server,
     checked_at: bt === "" && wt === "" ? null : new Date().toISOString(),
   }
   return (
@@ -354,10 +351,6 @@ function TryIt({ rules }: { rules: RankRules }) {
           <label className="flex items-center gap-1.5">
             大小 MB
             <Input type="number" min={0} className="w-24" value={mb} onChange={(e) => setMb(e.target.value)} placeholder="未知" />
-          </label>
-          <label className="flex items-center gap-1.5">
-            <input type="checkbox" checked={server} onChange={(e) => setServer(e.target.checked)} />
-            服务器已缓存
           </label>
         </div>
         <ul className="grid gap-1.5">

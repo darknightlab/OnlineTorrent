@@ -4,7 +4,6 @@ import { ChevronDown } from "lucide-react"
 import { Link } from "react-router-dom"
 import { useEpisodes } from "@/lib/queries"
 import {
-  EPISODE_KIND_LABEL,
   EPISODE_KINDS,
   compareEpisodeKeys,
   episodeLabel,
@@ -109,9 +108,9 @@ export function episodeSummary(chips: EpisodeChip[]) {
 
 /**
  * 选集按钮。variant：
- * - side：单集页右栏。移动端单行横向滚动（特别篇接在正片后，以细分隔线 + 分组名隔开），桌面端正片每行 6 个、
- *   特别篇分组每行 4 个；当前集高亮并滚动到可见区域。
- * - page：番剧页，网格换行，特别篇分组带小标题。
+ * - side：单集页右栏。移动端单行横向滚动，桌面端每行 6 个；当前集高亮并滚动到可见区域。
+ * - page：番剧页，网格换行。
+ * 两种都把特别篇（NCOP1、SP1…）直接接在正片之后，同一个列表，不分组、不加分隔线。
  * 资源数为 0 的集弱化显示；未播出（且无资源）的集用虚线边框、更浅的文字（仍可点击）。
  */
 export function EpisodeGrid({
@@ -177,57 +176,22 @@ export function EpisodeGrid({
     )
   }
 
-  const gs = groups(chips)
-  const main = gs.find((g) => g.kind === "main")
-  const specials = gs.filter((g) => g.kind !== "main")
+  // 正片与特别篇（NCOP1、SP1…）排在同一个列表里，不分组、不加分隔线；特别篇按种类接在正片之后
+  const ordered = groups(chips).flatMap((g) => g.items)
   if (side)
-    // 移动端：所有按钮在同一行（分组容器为 display: contents），特别篇各组前加细分隔线 + 组名；
-    // 桌面端：正片网格每行 6 个，特别篇在分隔线下方每组一行（左侧组名）
     return (
       <div
         ref={list}
         className={cn(
           "relative -mx-3 flex gap-2 overflow-x-auto px-3 pb-1 scrollbar-none sm:-mx-4 sm:px-4",
-          "lg:mx-0 lg:block lg:max-h-[15rem] lg:overflow-y-auto lg:overflow-x-visible lg:px-0 lg:pb-0",
+          "lg:mx-0 lg:grid lg:max-h-[15rem] lg:grid-cols-6 lg:overflow-y-auto lg:overflow-x-visible lg:px-0 lg:pb-0",
         )}
       >
-        {main && <div className="contents lg:grid lg:grid-cols-6 lg:gap-2">{main.items.map(chip)}</div>}
-        {specials.length > 0 && (
-          <div className={cn("contents lg:block lg:space-y-2", main && "lg:mt-3 lg:border-t lg:pt-3")}>
-            {specials.map((g, i) => (
-              <div key={g.kind} role="group" aria-label={KIND_DESC[g.kind]} className="contents lg:flex lg:items-start lg:gap-2">
-                <span className="flex shrink-0 items-center gap-2 lg:w-10 lg:pt-3" title={KIND_DESC[g.kind]}>
-                  {(main || i > 0) && <span aria-hidden className="ml-1 h-6 w-px bg-border lg:hidden" />}
-                  <span className="text-[11px] font-medium leading-4 text-muted-foreground">{EPISODE_KIND_LABEL[g.kind]}</span>
-                </span>
-                <div className="contents lg:grid lg:min-w-0 lg:flex-1 lg:grid-cols-4 lg:gap-2">{g.items.map(chip)}</div>
-              </div>
-            ))}
-          </div>
-        )}
+        {ordered.map(chip)}
       </div>
     )
 
-  // 番剧页：正片与特别篇共用同一套列宽；特别篇每组从新的一行开始，第一格为组名
-  const grid = "grid grid-cols-5 gap-2 sm:grid-cols-8 lg:grid-cols-12"
-  return (
-    <div className="space-y-3">
-      {main && <div className={grid}>{main.items.map(chip)}</div>}
-      {specials.length > 0 && (
-        <div className={cn(grid, main && "border-t pt-3")}>
-          {specials.map((g) => (
-            <div key={g.kind} role="group" aria-label={KIND_DESC[g.kind]} className="contents">
-              <span className="col-start-1 flex h-10 min-w-0 flex-col justify-center leading-tight">
-                <span className="text-xs font-semibold text-foreground/80">{EPISODE_KIND_LABEL[g.kind]}</span>
-                <span className="truncate text-[11px] text-muted-foreground">{KIND_DESC[g.kind]}</span>
-              </span>
-              {g.items.map(chip)}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
+  return <div className="grid grid-cols-5 gap-2 sm:grid-cols-8 lg:grid-cols-12">{ordered.map(chip)}</div>
 }
 
 /** 列表视图折叠：显示的集数 / 超过多少集才折叠 / 最新一集之后多显示几集（移动端与 sm 以上分别计算） */
@@ -248,7 +212,7 @@ export function EpisodeRows({ subject, chips, highlight }: { subject: Subject; c
   const [expanded, setExpanded] = useState(false)
   const gs = groups(chips)
   const main = gs.find((g) => g.kind === "main")?.items ?? []
-  const specials = gs.filter((g) => g.kind !== "main")
+  const specials = gs.filter((g) => g.kind !== "main").flatMap((g) => g.items)
   // 连载中（还有未播出的集）时折叠窗口包含最新一集，否则从第 1 话开始
   const hi = main.some(isFuture) ? Math.max(0, main.findIndex((c) => c.key === highlight)) : 0
   const [m0, m1] = foldWindow(main.length, hi, FOLD.mobile)
@@ -267,7 +231,11 @@ export function EpisodeRows({ subject, chips, highlight }: { subject: Subject; c
   )
   return (
     <div className="space-y-3">
-      {main.length > 0 && <div className={grid}>{main.map((c, i) => row(c, i))}</div>}
+      {/* 正片与特别篇同一个列表，不分组、不加分隔线（折叠只作用于正片） */}
+      <div className={grid}>
+        {main.map((c, i) => row(c, i))}
+        {specials.map((c) => row(c))}
+      </div>
       {foldMobile && (
         <button
           type="button"
@@ -282,15 +250,6 @@ export function EpisodeRows({ subject, chips, highlight }: { subject: Subject; c
           <ChevronDown className={cn("h-4 w-4 transition-transform", expanded && "rotate-180")} />
         </button>
       )}
-      {specials.map((g) => (
-        <div key={g.kind} role="group" aria-label={KIND_DESC[g.kind]} className={cn(main.length > 0 && "border-t pt-3")}>
-          <p className="mb-2 flex items-baseline gap-2">
-            <span className="text-xs font-semibold text-foreground/80">{EPISODE_KIND_LABEL[g.kind]}</span>
-            <span className="text-[11px] text-muted-foreground">{KIND_DESC[g.kind]}</span>
-          </p>
-          <div className={grid}>{g.items.map((c) => row(c))}</div>
-        </div>
-      ))}
     </div>
   )
 }
@@ -311,8 +270,9 @@ function EpisodeRow({ subject, c, highlight, className }: { subject: Subject; c:
     >
       <span
         className={cn(
-          "inline-flex h-8 min-w-8 shrink-0 items-center justify-center rounded-md px-1 text-[13px] font-semibold tabular-nums",
-          future ? "border border-dashed text-muted-foreground/60" : none ? "bg-muted text-muted-foreground" : "bg-primary-soft text-primary-text",
+          // 纯数字，无底色 / 边框（卡片本身已有边框，避免框套框）
+          "min-w-8 shrink-0 whitespace-nowrap text-center text-base font-semibold tabular-nums",
+          future ? "text-muted-foreground/60" : none ? "text-muted-foreground" : "text-primary-text",
         )}
       >
         {episodeShort(c)}

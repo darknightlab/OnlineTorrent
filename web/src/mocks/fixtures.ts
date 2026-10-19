@@ -191,18 +191,16 @@ export const btTrackers = [
   "udp://explodie.org:6969/announce",
 ]
 
-/** 按 infohash 生成稳定的做种统计（约 1/5 未统计、1/6 无人做种、1/4 服务器已缓存） */
+/** 按 infohash 生成稳定的做种统计（约 1/5 未统计、1/6 无人做种） */
 export function mockSwarm(ih: string): SwarmStats | null {
   const n = parseInt(ih.slice(0, 6), 16) || 0
-  const server = n % 4 === 0
-  if (n % 5 === 1) return server ? { bt_seeders: null, bt_leechers: null, wt_seeders: null, wt_leechers: null, server_complete: true, checked_at: null } : null
-  if (n % 6 === 2) return { bt_seeders: 0, bt_leechers: 1, wt_seeders: 0, wt_leechers: 0, server_complete: false, checked_at: new Date(Date.now() - 12 * 60_000).toISOString() }
+  if (n % 5 === 1) return null
+  if (n % 6 === 2) return { bt_seeders: 0, bt_leechers: 1, wt_seeders: 0, wt_leechers: 0, checked_at: new Date(Date.now() - 12 * 60_000).toISOString() }
   return {
     bt_seeders: n % 40,
     bt_leechers: (n >> 3) % 9,
     wt_seeders: (n >> 5) % 3,
     wt_leechers: (n >> 7) % 2,
-    server_complete: server,
     checked_at: new Date(Date.now() - ((n >> 9) % 30) * 60_000).toISOString(),
   }
 }

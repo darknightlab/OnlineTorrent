@@ -14,12 +14,12 @@ func TestDefaultValid(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := r.Availability
-	if a.ServerComplete != 2 || a.BTSeeder != 10 || a.BTScale != 20 || a.WTSeeder != 20 || a.WTScale != 20 || a.Dead != -100 || a.Curve != CurveTanh ||
+	if a.ServerComplete != nil || a.BTSeeder != 10 || a.BTScale != 20 || a.WTSeeder != 20 || a.WTScale != 20 || a.Dead != -100 || a.Curve != CurveTanh ||
 		len(r.Keywords) != 7 || r.Oversize != nil || r.Size != (SizeRule{FromMB: 200, ToMB: 1000, ToScore: -16, Extend: true}) {
 		t.Fatalf("%+v", r)
 	}
 	// the dead penalty stays decisive: more than every bonus together (size only subtracts)
-	sum := a.ServerComplete + min(a.WTCap, a.WTSeeder) + min(a.BTCap, a.BTSeeder) + max(r.Size.FromScore, 0)
+	sum := min(a.WTCap, a.WTSeeder) + min(a.BTCap, a.BTSeeder) + max(r.Size.FromScore, 0)
 	groups := map[string]float64{}
 	for _, k := range r.Keywords {
 		if k.Group == "" {
@@ -80,8 +80,17 @@ func TestLegacyDefault(t *testing.T) {
 	if err != nil || r.Size != (SizeRule{FromMB: 200, FromScore: 16, ToMB: 1000}) || r.Oversize != nil {
 		t.Fatalf("v3: %+v %v", r, err)
 	}
-	if b, _ := json.Marshal(r); strings.Contains(string(b), "oversize") || strings.Contains(string(b), "full_below_mb") {
+	if b, _ := json.Marshal(r); strings.Contains(string(b), "oversize") || strings.Contains(string(b), "full_below_mb") || strings.Contains(string(b), "server_complete") {
 		t.Fatalf("legacy fields re-emitted: %s", b)
+	}
+	// a customised rule set that still has server_complete parses; the field is dropped
+	custom := strings.Replace(legacyDefaults[3], `"server_complete":2`, `"server_complete":7`, 1)
+	if IsLegacyDefault([]byte(custom)) {
+		t.Fatal("edited v4 is not a default")
+	}
+	r, err = Parse([]byte(custom))
+	if err != nil || r.Availability.ServerComplete != nil || r.Availability.Curve != CurveTanh {
+		t.Fatalf("custom v4: %+v %v", r, err)
 	}
 }
 
@@ -122,7 +131,7 @@ func TestParseValidation(t *testing.T) {
 	cases := map[string][]byte{
 		"unknown field": []byte(`{"availability":{},"keywords":[],"teams":[],"oversize":0,"extra":1}`),
 		"not object":    []byte(`[]`),
-		"score range":   mut(func(r *Rules) { r.Availability.ServerComplete = 5000 }),
+		"score range":   mut(func(r *Rules) { r.Availability.WTSeeder = 5000 }),
 		"cap range":     mut(func(r *Rules) { r.Availability.WTCap = -1 }),
 		"empty label":   mut(func(r *Rules) { r.Keywords[0].Label = " " }),
 		"bad regex":     mut(func(r *Rules) { r.Keywords[0].Pattern = `(?=x)` }),

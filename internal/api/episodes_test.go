@@ -4,7 +4,9 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/darknightlab/onlinetorrent/internal/catalog"
 	"github.com/darknightlab/onlinetorrent/internal/meta"
 )
 
@@ -17,7 +19,7 @@ func TestEpisodeList(t *testing.T) {
 		{Key: meta.EpisodeKey{Kind: meta.KeyNCOP, Number: 1}, Files: 2},
 		{Key: meta.EpisodeKey{Kind: meta.KeySP, Number: 1}, Files: 1},
 	}
-	items := episodeList(3, nil, mapped, "2026-10-18")
+	items := episodeList(3, nil, mapped, "2026-10-18", nil)
 	var keys []string
 	for _, it := range items {
 		keys = append(keys, it.Key)
@@ -35,7 +37,7 @@ func TestEpisodeList(t *testing.T) {
 	if items[3].Label != "第 2.5 话" || items[6].Label != "SP1" || items[7].Kind != "ncop" {
 		t.Errorf("labels: %+v", items)
 	}
-	if got := episodeList(0, nil, nil, "2026-10-18"); len(got) != 0 {
+	if got := episodeList(0, nil, nil, "2026-10-18", nil); len(got) != 0 {
 		t.Errorf("empty: %+v", got)
 	}
 }
@@ -143,7 +145,7 @@ func TestEpisodeListOfficial(t *testing.T) {
 		{Key: meta.EpisodeKey{Kind: meta.KeySP, Number: 1}, Name: "特別編"},
 	}
 	mapped := []meta.EpisodeCount{{Key: meta.EpisodeKey{Kind: meta.KeyMain, Number: 13}, Files: 2}}
-	items := episodeList(2, official, mapped, "2026-10-18")
+	items := episodeList(2, official, mapped, "2026-10-18", nil)
 	var keys []string
 	for _, it := range items {
 		keys = append(keys, it.Key)
@@ -157,5 +159,40 @@ func TestEpisodeListOfficial(t *testing.T) {
 	}
 	if !*items[1].Aired || *items[2].Aired || items[3].Aired != nil {
 		t.Errorf("aired %+v", items)
+	}
+}
+
+// An official episode dated today is listed as aired only after its broadcast time: the
+// schedule's last/next broadcast decides; without a schedule entry the date alone does.
+func TestEpisodeAiredToday(t *testing.T) {
+	jst := time.FixedZone("JST", 9*3600)
+	official := []meta.OfficialEpisode{
+		{Key: meta.EpisodeKey{Kind: meta.KeyMain, Number: 2}, Airdate: "2026-10-13"},
+		{Key: meta.EpisodeKey{Kind: meta.KeyMain, Number: 3}, Airdate: "2026-10-20"},
+	}
+	aired := func(items []episodeItem, n float64) bool {
+		for _, it := range items {
+			if it.Kind == meta.KeyMain && it.Number == n {
+				return it.Aired != nil && *it.Aired
+			}
+		}
+		t.Fatalf("episode %v missing", n)
+		return false
+	}
+	str := func(s string) *string { return &s }
+	// 02:00 JST on air day, broadcast at 21:25 JST → next broadcast is today → not aired yet
+	before := &catalog.ScheduleItem{LastAirAt: str("2026-10-13T12:25:00Z"), NextAirAt: str("2026-10-20T12:25:00Z")}
+	items := episodeList(2, official, nil, "2026-10-20", airedToday(before, "2026-10-20", jst))
+	if !aired(items, 2) || aired(items, 3) {
+		t.Fatalf("before broadcast: ep2 aired=%v ep3 aired=%v", aired(items, 2), aired(items, 3))
+	}
+	// 22:00 JST: the last broadcast was today → aired
+	after := &catalog.ScheduleItem{LastAirAt: str("2026-10-20T12:25:00Z"), NextAirAt: str("2026-10-27T12:25:00Z")}
+	if items = episodeList(3, official, nil, "2026-10-20", airedToday(after, "2026-10-20", jst)); !aired(items, 3) {
+		t.Fatal("after broadcast: ep3 should be aired")
+	}
+	// no schedule entry: date decides
+	if items = episodeList(2, official, nil, "2026-10-20", airedToday(nil, "2026-10-20", jst)); !aired(items, 3) {
+		t.Fatal("unknown broadcast time: dated today counts as aired")
 	}
 }

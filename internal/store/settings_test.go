@@ -75,11 +75,13 @@ func TestTrackerAndRankSettings(t *testing.T) {
 	if _, err := st.SetJSON(ctx, KeyRankRules, json.RawMessage(`{"keywords":[{"label":"x","pattern":"(?<=a)b","score":1}]}`)); err == nil {
 		t.Error("lookbehind accepted")
 	}
-	out, err := st.SetJSON(ctx, KeyRankRules, json.RawMessage(`{"availability":{"server_complete":10},"teams":[{"name":" A ","score":3}]}`))
+	// server_complete (removed) is accepted and dropped
+	out, err := st.SetJSON(ctx, KeyRankRules, json.RawMessage(`{"availability":{"server_complete":10,"bt_seeder":3},"teams":[{"name":" A ","score":3}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(out), `"name":"A"`) || !strings.Contains(string(st.Raw(KeyRankRules)), `"server_complete":10`) {
+	raw := string(st.Raw(KeyRankRules))
+	if !strings.Contains(string(out), `"name":"A"`) || !strings.Contains(raw, `"bt_seeder":3`) || strings.Contains(raw, "server_complete") {
 		t.Fatalf("stored %s", out)
 	}
 }

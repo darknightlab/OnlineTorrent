@@ -29,7 +29,7 @@ export function EmptyEpisode({ data, ep }: { data: EpisodeResponse; ep: EpisodeK
   return (
     <div className={GRID}>
       <section className="min-w-0">
-        <div className={cn(BLEED, "relative aspect-video overflow-hidden bg-black lg:rounded-xl lg:shadow-lg")}>
+        <div className={cn(BLEED, "relative aspect-video overflow-hidden bg-black lg:rounded-xl")}>
           {s.cover && (
             <div aria-hidden className="absolute inset-0 scale-110 bg-cover bg-center opacity-40 blur-2xl" style={{ backgroundImage: `url("${s.cover}")` }} />
           )}
@@ -139,7 +139,7 @@ export function SideSection({
   children: React.ReactNode
 }) {
   return (
-    <section aria-labelledby={id} className="lg:overflow-hidden lg:rounded-xl lg:border lg:bg-card lg:p-4 lg:shadow-card">
+    <section aria-labelledby={id} className="lg:overflow-hidden lg:rounded-xl lg:border lg:bg-card lg:p-4">
       <div className="mb-2.5 flex items-center justify-between gap-3">
         <h2 id={id} className="flex items-center gap-1.5 text-[15px] font-semibold">
           <Icon className="h-4 w-4 text-primary-text" />
