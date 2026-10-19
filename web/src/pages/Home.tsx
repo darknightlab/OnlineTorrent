@@ -76,6 +76,12 @@ function ScheduleSection() {
       cancelAnimationFrame(raf)
     }
   }, [embla])
+  const counts = useMemo(() => {
+    const c = new Map<number, number>()
+    for (const i of visible) c.set(i.weekday, (c.get(i.weekday) ?? 0) + 1)
+    return c
+  }, [visible])
+
   return (
     <section aria-labelledby="schedule-title" id="schedule">
       <SectionHeader id="schedule-title" icon={CalendarDays} title="新番时间表" />
@@ -102,6 +108,8 @@ function ScheduleSection() {
               )}
             >
               {WEEKDAYS[w]}
+              {/* 桌面端标签较宽：顺带显示这天有几部 */}
+              {!isPending && <span className="ml-1.5 hidden text-xs font-normal tabular-nums text-muted-foreground md:inline">{counts.get(w) ?? 0} 部</span>}
               {isToday && !active && <span aria-hidden className="absolute right-[18%] top-2 h-1.5 w-1.5 rounded-full bg-primary" />}
             </button>
           )

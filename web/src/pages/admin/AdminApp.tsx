@@ -96,7 +96,7 @@ export default function AdminApp() {
   const current = NAV.filter((n) => (n.end ? pathname === n.to || pathname === `${n.to}/` : pathname.startsWith(n.to))).pop()
 
   return (
-    <div className="mx-auto flex w-full max-w-[1360px]">
+    <div className="mx-auto flex w-full max-w-[1680px]">
       <aside className="sticky top-14 hidden h-[calc(100dvh-3.5rem)] w-56 shrink-0 overflow-y-auto border-r lg:block">
         <div className="flex items-center gap-2 px-5 pb-1 pt-5 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           <ScrollText className="h-3.5 w-3.5" />
