@@ -114,7 +114,8 @@ test("seed/webseed users: −100 only when every source is empty", () => {
 test("swarmDead per viewer", () => {
   assert.equal(swarmDead(sw({ bt_seeders: 9, wt_seeders: 0 }), GUEST), true)
   assert.equal(swarmDead(sw({ bt_seeders: 9, wt_seeders: 0 }), MEMBER), false)
-  assert.equal(swarmDead(sw({ bt_seeders: 9, wt_seeders: 0 }), WEBSEED_ONLY), false)
+  // WebSeed 权限不能触发服务器下载：BT 做种者对其无用，WebRTC 为 0 即死种
+  assert.equal(swarmDead(sw({ bt_seeders: 9, wt_seeders: 0 }), WEBSEED_ONLY), true)
   assert.equal(swarmDead(sw({ bt_seeders: 0, wt_seeders: 0 }), WEBSEED_ONLY), true)
   assert.equal(swarmDead(sw({ bt_seeders: null, wt_seeders: null }), MEMBER), false)
   assert.equal(swarmDead(sw({ checked_at: null, bt_seeders: 0, wt_seeders: 0 }), GUEST), false)

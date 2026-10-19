@@ -121,14 +121,16 @@ function normalizeSize(s: RankRules["size"] | LegacySize): RankRules["size"] {
 }
 
 /**
- * 对当前用户而言无人做种（未统计的不算）：游客类用户（无做种 / WebSeed 权限）只能从 WebRTC 节点拿数据
- * （本站 qB 做种时也算一个 WebRTC 节点）→ WebRTC 0；有做种或 WebSeed 权限的用户 → BT 与 WebRTC 都为 0。
+ * 对当前用户而言无人做种（未统计的不算）：
+ * - 能让服务器下载做种（PERM.seed）的用户：服务器可从 BT 拉取 → BT 与 WebRTC 都为 0 才算；
+ * - 其他用户（包括只有 WebSeed 权限的游客）：不能触发服务器下载，BT 做种者对他无用；
+ *   服务器已有的数据也会以 WebRTC 节点出现（qB 向 wss tracker 宣告）→ WebRTC 为 0 即算。
  */
 export function swarmDead(sw: SwarmStats | null | undefined, viewer: Viewer): boolean {
   if (!sw?.checked_at) return false
   const bt = sw.bt_seeders ?? null
   const wt = sw.wt_seeders ?? null
-  if (!viewer.canSeed && !viewer.canWebseed) return wt === 0
+  if (!viewer.canSeed) return wt === 0
   return (bt !== null || wt !== null) && (bt ?? 0) === 0 && (wt ?? 0) === 0
 }
 

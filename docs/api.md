@@ -292,7 +292,7 @@ WebSeed **只由边缘节点提供**：`{edge_url}/webseed/hash/{ih}/…`（如 
   // 文件大小：过 (from_mb, from_score)、(to_mb, to_score) 的直线；from_mb 以下取 from_score，to_mb 以上取 to_score，extend 时继续延伸（不设下限）；大小未知 0
 ```
 - 分数可为小数（显示取整，tooltip 给明细）。
-- 无人做种（`dead`）：没有做种或 WebSeed 权限的用户（游客类）：`wt_seeders == 0`（本站 qB 做种时也算一个 WebRTC 节点）；有做种或 WebSeed 权限的用户：`bt_seeders == 0` 且 `wt_seeders == 0`。从未统计（`checked_at` 为 null）或对应 tracker 都没响应（计数 null）时可用性记 0、不扣分。
+- 无人做种（`dead`）：没有做种权限的用户（不能触发服务器下载，包括只有 WebSeed 权限的游客）：`wt_seeders == 0`（本站 qB 做种时也算一个 WebRTC 节点）；有做种权限的用户：`bt_seeders == 0` 且 `wt_seeders == 0`。从未统计（`checked_at` 为 null）或对应 tracker 都没响应（计数 null）时可用性记 0、不扣分。
 - 兼容：旧写法 `size: {max, full_below_mb, zero_above_mb}`（小文件加分）读作 (full_below_mb, max) → (zero_above_mb, 0)、不延伸；旧的 `oversize`、`availability.server_complete` 字段读入时忽略（已删除）；两种 size 写法不能混用。
 - 校验（PUT 400 `bad_request`）：未知字段报错；分值 / 系数 −1000…1000，上限 0…1000；`curve` 为 `linear|log|tanh`，tanh 时 `wt_scale`、`bt_scale` 须 > 0（≤ 10⁶）；size 的大小 0…1048576 MB，两个分值不全为 0 时 `to_mb > from_mb`；关键词 ≤ 30 个（名称 ≤ 40 字、正则 ≤ 200 字、分组 ≤ 20 字），字幕组 ≤ 200 个（名称 ≤ 80 字、不重复）；正则须为 Go RE2 与 JavaScript（`i` 标志、无 `u`）共同支持的子集：能被 RE2 编译（因此没有前后查找、反向引用），且不能用 `(?…)`（`(?:` 除外）、`\A \z \Q \E \C`、`\p{…}`、`\x{…}`、`[[:alpha:]]`。
 - 升级：库中的 `rank.rules` 若仍等于任一旧版内置默认值（第一版 7d2effb、第二版 e23a33a、第三版 708decc、第四版（tanh，含服务器缓存 +2）；JSON 相等，即管理员没改过），启动时替换为当前默认值；改过的保留。
