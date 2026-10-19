@@ -38,7 +38,8 @@
 | GET | `/api/v1/subjects/{provider}/{id}/episodes/{n}` | 单集所有已知文件（含当前用户 access 与做种统计 swarm），由前端按推荐规则排序；`{n}` 为集的键 |
 | GET | `/api/v1/search/{keyword}` | 搜索：番剧 + 种子（本地库；翻页 `?page=`） |
 | GET | `/api/v1/torrents/hash/{ih}` | 种子收录状态与文件刮削结果（做种后轮询） |
-| POST | `/api/v1/torrents/hash/{ih}/play` | 打开种子（策略判定 + 磁力） |
+| POST | `/api/v1/torrents/hash/{ih}/play` | 打开种子（策略判定 + 磁力；新种子先返回 pending） |
+| GET | `/api/v1/torrents/hash/{ih}/resolve/events` | 新种子的元数据获取与判定结果（SSE） |
 | POST | `/api/v1/torrents/moe/{id}/play` | 按 bangumi.moe ID 打开（本地库中由 bangumi.moe 抓取源收录的种子） |
 | POST | `/api/v1/torrents/hash/{ih}/seed` / `report` | 服务器做种 / 举报 |
 | GET | `/api/v1/torrents/hash/{ih}/torrent` | 种子文件（.torrent，HTTP 元数据；磁力 `xs=` 指向这里） |
@@ -177,7 +178,7 @@ Torrent：
   "access": { "action": "allow|login|vip|block", "reason": "" }
 }
 ```
-受信：后台把抓取源标记为「受信」（默认只有 bangumi.moe）后，其种子与原来的 bangumi.moe 种子一样不受「用户自填磁力最低权限」限制；未受信来源（如 Nyaa、蜜柑）的种子与用户磁力同等对待（默认需登录）。
+`access` 按真实标题 / 文件判定（策略规则）并叠加内容范围：种子中任一已应用映射的文件属于当前角色看不到的条目时，该种子对此用户不可播放，也不出现在列表里（未映射的文件只看策略规则）。旧设置「用户自填磁力最低权限」（`policy.user_magnet_action`）已删除（app 库迁移 7 删除存储的值）：没有元数据的种子根本不能播放，伪造的 dn= 不再参与判定。
 
 ### `GET /torrents/hash/{ih}`
 种子在本地库中的收录状态与逐文件刮削结果，供播放页在「服务器做种」后轮询（建议 3–5 秒一次）。只读本地数据；唯一的外部请求是做种统计过期时的按需 scrape（见「做种统计」，最多等待 1.5 秒）。接口权限可配置，默认游客可用。
@@ -195,10 +196,13 @@ Torrent：
 - 前端：若当前播放文件刮削到 `subject` + `episode_key`（任意类型），切到 `/subject/{bgm|id}/{…}/episode/{episode_key}/hash/{ih}/file/{index}`。
 
 ### `POST /torrents/hash/{ih}/play` / `POST /torrents/moe/{id}/play`（无 body）
-服务端：解析 → 策略判定 → 返回带 wss tracker 的磁力（**不再推送给 qB**，见下方 seed）。默认游客可用。本地库已收录的种子（抓取源）使用库中的标题、文件列表与受信标记；`moe/{id}` 只查本地库（bangumi.moe 抓取源收录过的），找不到返回 404。
+所有用户（游客 / 会员，只有权限不同）同一流程。默认游客可用。`moe/{id}` 只查本地库（bangumi.moe 抓取源收录过的），找不到返回 404。
+- **已有元数据**（本地库中 status ready、文件已知）：按库中真实标题 / 文件判定（策略 + 内容范围），允许时返回带 wss tracker 的磁力（**不推送给 qB**，见下方 seed）。
+- **新种子**（没有元数据）：记录这次请求（播放记录 action `pending`；用户提交种子的 `submitted_at` / `submitted_by` 取第一次这样的请求，游客为 NULL），把它以优先级 1 加入 qB 元数据队列（只取元数据：`projectk-meta` 分类、`stopCondition=MetadataReceived`，拿到后即从 qB 删除，不下载、不做种，所以游客也可以触发；交互请求排在抓取积压之前并有单独的并发名额），返回 `{"status":"pending","access":{"action":"pending","reason":""},"infohash":"…","magnet":"",…}`——**没有磁力**，判定前浏览器不能开始 P2P。之后订阅 `GET /torrents/hash/{ih}/resolve/events`。
 - 200：
 ```json
-{ "access": {"action":"allow","reason":""},
+{ "status": "ready",                           // ready | pending（见上）
+  "access": {"action":"allow","reason":""},
   "infohash": "...", "name": "...", "magnet": "magnet:?xt=...&tr=wss://...",
   "seeded_by": [], "webseeds": [] ,           // 恒为空，保留字段兼容
   "meta": { "subject_id": 1034, "subject_key": "bgm:123", "bgm_id": "123", "title": "…",
@@ -208,11 +212,18 @@ Torrent：
 ```
 - 401 `{"error":{"code":"login_required"}}`，402 `{"error":{"code":"vip_required"}}`，451 `{"error":{"code":"blocked","message":"原因"}}`。
 - `magnet` 末尾可能带 `&xs=<站点地址>/api/v1/torrents/hash/{ih}/torrent`（URL 编码；站点地址同 WebSeed：设置 `site.base_url`，为空时 `https://{Host}`）：当前用户有 `GET /api/v1/torrents/hash/{ih}/torrent` 权限且元数据可得时才加——本地已存 .torrent、bangumi.moe 抓取源收录的种子，或某台在线 qB 已有该种子的元数据（`torrents/info`，1.5 秒超时；结果缓存：有 5 分钟、无 15 秒）。WebTorrent 启动时会同源请求 xs 地址（带登录 Cookie），校验 infohash 后直接作为元数据，不必等 WebRTC 节点通过 ut_metadata 提供（校园网等无法建立 WebRTC 连接时也能显示文件列表、使用 WebSeed）。
-- 用户磁力里的 `tr=` 一律丢弃（只用站点配置的 tracker）；`dn=` 只作为未受信标题参与判定（用户磁力最低权限始终生效），不写入种子标题，真实标题以 qB 元数据为准。
+- 用户磁力只取 infohash：`tr=` 与 `dn=` 一律丢弃，不参与判定、不写入任何地方，标题以 qB 元数据为准。
+
+### `GET /torrents/hash/{ih}/resolve/events`（SSE）
+等待新种子的元数据并推送结果（接口权限可配置，默认游客可用；每个 IP 最多 6 个并发流；每 25 秒心跳注释）。元数据入库后：规则映射；规则不确定的文件同步交给决策模型（最多等 15 秒，超时就按未映射继续，任务在后台跑完）；然后对当前用户判定。只推送一个事件后关闭：
+- `redirect {"path":"/subject/{bgm|id}/{id}/episode/{key}/hash/{ih}/file/{idx}"}`：有文件已应用映射（待审核的不算）——即使该条目对此用户隐藏也跳转，目标页自己会拒绝 / 404。
+- `ready {}`：未映射且允许播放：重新 POST play，拿到磁力（此时元数据已有，带 xs=）就地播放。
+- `denied {"action":"login|vip|block","reason":"…"}`：不允许（之后再访问由 play 直接返回 401/402/451）。
+- `timeout {}`：60 秒内没拿到元数据（队列继续尝试；前端「暂时无法获取种子信息」+ 重试，重试会重新 POST play）。没有 P2P 回退。
 - 用户提交的种子获取元数据后会被复查；此外后台每 10 分钟用 qB 中的真实名称与文件列表复查本站分类下所有种子，命中屏蔽规则或超过大小上限的会被移除。
 
 ### `POST /torrents/hash/{ih}/seed` → `{"seeded_by": ["ams"]}`
-让所有在线 qB 下载并做种（消耗服务器带宽 / 磁盘）。推给 qB 的 tracker 由本站管理（不依赖 qB 的「自动添加 tracker」）：`webtorrent.trackers` + `bt.trackers` + 种子自带的 announce 列表（本地存的 .torrent），去重后最多 30 个；磁力带上全部，`torrents/add` 之后再 `torrents/addTrackers` 一次（qB 跳过已有的，所以已在 qB 里的种子也会补上缺少的 tracker）。wss 只有在该 qB 开启 `add_wss_trackers` 时才经 addTrackers 添加（qB 会过滤磁力里的 wss）。抓取源的 qB 元数据队列同样使用 Feed 磁力的 tracker + 以上列表。默认仅会员及以上。种子须先经 play 打开过；会对当前用户重新做策略判定。超过 `play.max_push_size_mb` 返回 413 `too_large`。
+让所有在线 qB 下载并做种（消耗服务器带宽 / 磁盘）。推给 qB 的 tracker 由本站管理（不依赖 qB 的「自动添加 tracker」）：`webtorrent.trackers` + `bt.trackers` + 种子自带的 announce 列表（本地存的 .torrent），去重后最多 30 个；磁力带上全部，`torrents/add` 之后再 `torrents/addTrackers` 一次（qB 跳过已有的，所以已在 qB 里的种子也会补上缺少的 tracker）。wss 只有在该 qB 开启 `add_wss_trackers` 时才经 addTrackers 添加（qB 会过滤磁力里的 wss）。抓取源的 qB 元数据队列同样使用 Feed 磁力的 tracker + 以上列表。默认仅会员及以上。种子须先经 play 打开过（且元数据已知）；会对当前用户重新做策略 + 内容范围判定。超过 `play.max_push_size_mb` 返回 413 `too_large`。
 qB 拿到元数据后，后端把文件列表写入本地库并刮削（每个 infohash 一次）；期间 `GET /torrents/hash/{ih}` 返回 `pending`，完成后 `ready`。若该种子正好在抓取源的元数据队列里（qB 分类 `projectk-meta`），会被转入做种分类并开始下载，不会被队列删除。
 
 ### `GET /torrents/hash/{ih}/torrent` → `application/x-bittorrent`

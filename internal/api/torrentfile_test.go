@@ -86,7 +86,8 @@ func TestTorrentFileEndpoint(t *testing.T) {
 	s, h := testServer(t)
 	ctx := context.Background()
 	data, ih := testTorrent("Foo - 01.mkv")
-	if err := s.St.UpsertTorrent(ctx, store.TorrentRecord{Infohash: ih, Title: "Foo - 01", Source: "bangumi.moe", Trusted: true}); err != nil {
+	if err := s.Meta.Match(ctx, meta.TorrentInput{Infohash: ih, Title: "Foo - 01", Source: "bangumi.moe", SourceKind: "bangumi_moe", Trusted: true,
+		PublishedAt: "2026-01-10T00:00:00Z", Files: []meta.FileInput{{Index: 0, Path: "Foo - 01.mkv", Size: 1}}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Meta.PutMetainfo(ctx, ih, data, meta.MetainfoCrawl); err != nil {
@@ -110,14 +111,15 @@ func TestTorrentFileEndpoint(t *testing.T) {
 	if rec := doReq(h, "GET", "/api/v1/torrents/hash/"+strings.Repeat("ab", 20)+"/torrent", member); rec.Code != 404 {
 		t.Fatalf("unknown ih: %d %s", rec.Code, rec.Body.String())
 	}
-	// unknown user torrent for a guest: the user-magnet floor (login) applies → 403
-	if rec := doReq(h, "GET", "/api/v1/torrents/hash/"+strings.Repeat("cd", 20)+"/torrent", ""); rec.Code != 403 {
+	// unknown torrent (no metadata) for a guest: nothing to serve → 404
+	if rec := doReq(h, "GET", "/api/v1/torrents/hash/"+strings.Repeat("cd", 20)+"/torrent", ""); rec.Code != 404 {
 		t.Fatalf("guest unknown ih: %d", rec.Code)
 	}
 
 	// policy block (admin verdict) → 403 for everyone but admins' route bypass doesn't skip policy
 	data2, ih2 := testTorrent("Bar - 02.mkv")
-	_ = s.St.UpsertTorrent(ctx, store.TorrentRecord{Infohash: ih2, Title: "Bar - 02", Source: "bangumi.moe", Trusted: true})
+	_ = s.Meta.Match(ctx, meta.TorrentInput{Infohash: ih2, Title: "Bar - 02", Source: "bangumi.moe", SourceKind: "bangumi_moe", Trusted: true,
+		PublishedAt: "2026-01-10T00:00:00Z", Files: []meta.FileInput{{Index: 0, Path: "Bar - 02.mkv", Size: 1}}})
 	_ = s.Meta.PutMetainfo(ctx, ih2, data2, meta.MetainfoCrawl)
 	if err := s.St.SetVerdict(ctx, nil, store.Verdict{Infohash: ih2, Action: policy.Block, Label: "other"}); err != nil {
 		t.Fatal(err)
@@ -170,7 +172,7 @@ func TestPlayMagnetXS(t *testing.T) {
 	if m := play(ih, ""); !strings.HasSuffix(m, wantXS) {
 		t.Fatalf("stored torrent: no xs in %s", m)
 	}
-	// nothing stored, no qB server: no xs (member, so the user-magnet floor passes)
+	// nothing stored, no qB server: no xs
 	member := loginAs(t, s, "bob", store.RoleMember)
 	if m := play(ih2, member); strings.Contains(m, "xs=") {
 		t.Fatalf("unknown torrent got xs: %s", m)

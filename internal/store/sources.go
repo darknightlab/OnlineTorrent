@@ -320,9 +320,10 @@ type MetadataJob struct {
 	Trackers  []string `json:"-"`
 	CreatedAt string   `json:"created_at"`
 	UpdatedAt string   `json:"updated_at"`
+	Priority  int      `json:"priority"` // 1 = interactive (a user is waiting)
 }
 
-const jobCols = `infohash,source_id,status,attempts,next_at,server_id,added,started_at,last_error,trackers,created_at,updated_at`
+const jobCols = `infohash,source_id,status,attempts,next_at,server_id,added,started_at,last_error,trackers,created_at,updated_at,priority`
 
 func scanJob(sc interface{ Scan(...any) error }) (MetadataJob, error) {
 	var j MetadataJob
@@ -330,7 +331,7 @@ func scanJob(sc interface{ Scan(...any) error }) (MetadataJob, error) {
 	var started sql.NullString
 	var added int
 	var trackers string
-	err := sc.Scan(&j.Infohash, &src, &j.Status, &j.Attempts, &j.NextAt, &srv, &added, &started, &j.LastError, &trackers, &j.CreatedAt, &j.UpdatedAt)
+	err := sc.Scan(&j.Infohash, &src, &j.Status, &j.Attempts, &j.NextAt, &srv, &added, &started, &j.LastError, &trackers, &j.CreatedAt, &j.UpdatedAt, &j.Priority)
 	_ = json.Unmarshal([]byte(trackers), &j.Trackers)
 	if src.Valid {
 		j.SourceID = &src.Int64
@@ -390,9 +391,23 @@ func (s *Store) GetMetadataJob(ctx context.Context, ih string) (*MetadataJob, er
 	return &list[0], nil
 }
 
-// DueMetadataJobs returns pending jobs whose next_at has passed (oldest first).
+// DueMetadataJobs returns pending jobs whose next_at has passed: interactive ones
+// (priority 1) first, then oldest first.
 func (s *Store) DueMetadataJobs(ctx context.Context, limit int) ([]MetadataJob, error) {
-	return s.queryJobs(ctx, `WHERE status = 'pending' AND next_at <= ? ORDER BY next_at LIMIT ?`, Now(), limit)
+	return s.queryJobs(ctx, `WHERE status = 'pending' AND next_at <= ? ORDER BY priority DESC, next_at LIMIT ?`, Now(), limit)
+}
+
+// RequestMetadataJob queues ih for an interactive metadata fetch (a user opened a hash we
+// have no metadata for): a new job, or an existing one made due now with priority 1 (a
+// failed one gets its attempts back). A running job only gets the priority.
+func (s *Store) RequestMetadataJob(ctx context.Context, ih string) error {
+	now := Now()
+	_, err := s.W.ExecContext(ctx, `INSERT INTO metadata_jobs(infohash,status,next_at,trackers,priority,created_at,updated_at) VALUES(?, 'pending', ?, '[]', 1, ?, ?)
+		ON CONFLICT(infohash) DO UPDATE SET priority = 1, updated_at = excluded.updated_at,
+			attempts = CASE WHEN metadata_jobs.status IN ('failed','done') THEN 0 ELSE metadata_jobs.attempts END,
+			next_at = CASE WHEN metadata_jobs.status = 'running' THEN metadata_jobs.next_at ELSE excluded.next_at END,
+			status = CASE WHEN metadata_jobs.status = 'running' THEN 'running' ELSE 'pending' END`, ih, now, now, now)
+	return err
 }
 
 // ListMetadataJobs lists jobs for the admin view (unfinished first, then newest).

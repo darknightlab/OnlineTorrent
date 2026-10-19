@@ -259,4 +259,11 @@ CREATE TABLE role_excluded_tags (
 	PRIMARY KEY (role, tag_name)
 );
 `,
+	// 7: nothing is playable before its metadata is known (a new hash is resolved through the
+	// metadata queue first), so the "user magnet" floor setting is gone; interactive metadata
+	// requests (a user opening a new hash) jump the crawl backlog (priority 1).
+	`
+DELETE FROM settings WHERE key = 'policy.user_magnet_action';
+ALTER TABLE metadata_jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;
+`,
 }

@@ -38,6 +38,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 	s.route(mux, "POST", "/api/v1/torrents/hash/{ih}/play", AccessConfigurable, "播放", "打开种子（按 infohash）", []string{store.RoleGuest}, s.playHash)
 	s.route(mux, "POST", "/api/v1/torrents/moe/{id}/play", AccessConfigurable, "播放", "打开种子（按 bangumi.moe ID）", []string{store.RoleGuest}, s.playMoe)
+	s.route(mux, "GET", "/api/v1/torrents/hash/{ih}/resolve/events", AccessConfigurable, "播放", "等待新种子的元数据与判定结果（服务器推送；只获取元数据，不下载、不做种）", []string{store.RoleGuest}, s.resolveEvents)
 	s.route(mux, "POST", "/api/v1/torrents/hash/{ih}/seed", AccessConfigurable, "播放", "让服务器下载做种（消耗服务器资源）", []string{store.RoleMember}, s.seed)
 	s.route(mux, "GET", "/webseed/hash/{ih}/{path...}", AccessConfigurable, "播放", "WebSeed 文件下载（HTTP 加速，消耗服务器流量）", []string{store.RoleMember}, s.serveWebseed)
 	s.route(mux, "GET", "/api/v1/torrents/hash/{ih}/webseed/events", AccessConfigurable, "播放", "等待 WebSeed 就绪（服务器推送）", []string{store.RoleMember}, s.webseedEvents)

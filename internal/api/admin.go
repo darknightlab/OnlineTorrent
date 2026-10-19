@@ -331,13 +331,12 @@ func (s *Server) adminPolicyTest(w http.ResponseWriter, r *http.Request) error {
 		Files    []string `json:"files"`
 		Tags     []string `json:"tags"`
 		Team     string   `json:"team"`
-		Trusted  bool     `json:"trusted"`
 		Role     string   `json:"role"`
 	}
 	if err := httpx.Decode(r, &in); err != nil {
 		return err
 	}
-	d, err := s.Policy.Requirement(r.Context(), policy.Subject{Infohash: strings.ToLower(in.Infohash), Title: in.Title, Files: in.Files, Tags: in.Tags, Team: in.Team, Trusted: in.Trusted})
+	d, err := s.Policy.Requirement(r.Context(), policy.Subject{Infohash: strings.ToLower(in.Infohash), Title: in.Title, Files: in.Files, Tags: in.Tags, Team: in.Team})
 	if err != nil {
 		return err
 	}

@@ -55,20 +55,14 @@ func (s *Server) webseedAllowed(r *http.Request, ih string) (bool, error) {
 			return e.ok, nil
 		}
 	}
-	rec, err := s.St.GetTorrent(r.Context(), ih)
-	if err != nil {
-		return false, err
-	}
-	sub := policy.Subject{Infohash: ih}
-	if rec != nil {
-		sub.Title, sub.Files, sub.Team, sub.Tags, sub.Trusted = rec.Title, rec.Files, rec.Team, rec.Tags, rec.Trusted
-		if sub.Title == "" {
-			sub.Title = rec.UserTitle
+	// nothing without known metadata; then policy + content scope (playDecision)
+	sub, _, known := s.catalogSubject(r.Context(), ih)
+	d := policy.Decision{}
+	if known {
+		var err error
+		if d, err = s.playDecision(r.Context(), u, sub); err != nil {
+			return false, err
 		}
-	}
-	d, err := s.Policy.Decide(r.Context(), u, sub)
-	if err != nil {
-		return false, err
 	}
 	s.wsAllow.Store(key, wsAllowEntry{d.Allowed, time.Now().Add(time.Minute)})
 	return d.Allowed, nil

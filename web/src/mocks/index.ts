@@ -257,8 +257,35 @@ function subjectOfTorrent(t: Torrent): Subject | undefined {
   return subjects.find((a) => a.latest_torrent?.id === t.id || pastEpisodes.get(a.key)?.includes(t) || t.title.includes((a.title_cn || a.title).slice(0, 4)))
 }
 
+// ---- 新种子（本地库没有元数据）：play 返回 pending，resolve/events 推送结果 ----
+// ?mock_resolve=redirect|ready|denied|timeout（默认 ready）
+const MOCK_RESOLVE = new URLSearchParams(location.search).get("mock_resolve") || "ready"
+const resolved = new Map<string, string>()
+
+function pendingPlay(ih: string): PlayResponse {
+  return { status: "pending", access: { action: "pending", reason: "" }, infohash: ih, name: "", magnet: "", seeded_by: [], webseeds: [], meta: null }
+}
+
+function resolvedPlay(ih: string): PlayResponse | null {
+  const r = resolved.get(ih)
+  if (!r) return pendingPlay(ih)
+  if (r === "denied") throw new HttpError(451, "blocked", "该资源含有色情内容，已被屏蔽")
+  if (r === "redirect") {
+    const a = subjects[0]
+    return {
+      status: "ready", access: { action: "allow", reason: "" }, infohash: ih, name: "[Mock] 新种子 - 01", magnet: `magnet:?xt=urn:btih:${ih}`, seeded_by: [], webseeds: [],
+      meta: { subject_id: a.subject_id, subject_key: a.key, bgm_id: a.bgm_id, title: a.title_cn || a.title, episode: 1, episode_key: "1", episode_label: "第 1 话", file_index: 0 },
+    }
+  }
+  return null // ready: an ordinary unmapped torrent
+}
+
 function playOf(t: Torrent | undefined, ih: string): PlayResponse {
   requirePerm("POST /api/v1/torrents/hash/{ih}/play")
+  if (!t) {
+    const p = resolvedPlay(ih)
+    if (p) return p
+  }
   const u = currentUser()
   const action = t?.access.action ?? "allow"
   if (action === "block") throw new HttpError(451, "blocked", t?.access.reason || "该资源已被屏蔽")
@@ -270,6 +297,7 @@ function playOf(t: Torrent | undefined, ih: string): PlayResponse {
   const key = (t ? keyOf(t.title) : null) ?? (a ? String(a.episodes_aired) : null)
   const k = parseEpisodeKey(key)
   return {
+    status: "ready",
     access: { action: "allow", reason: "" },
     infohash: ih,
     name,
@@ -859,12 +887,48 @@ class MockEventSource extends EventTarget {
   }
 }
 
+/** 模拟 GET /api/v1/torrents/hash/{ih}/resolve/events：~3 秒后按 ?mock_resolve 推送结果 */
+class MockResolveSource extends EventTarget {
+  readyState = 0
+  readonly url: string
+  readonly withCredentials = true
+  onerror: ((e: Event) => void) | null = null
+  private timer = 0
+
+  constructor(url: string, ih: string) {
+    super()
+    this.url = url
+    console.info(`[mock] SSE ${url} (${MOCK_RESOLVE})`)
+    this.timer = window.setTimeout(() => {
+      if (this.readyState === 2) return
+      this.readyState = 1
+      const a = subjects[0]
+      const data: Record<string, unknown> =
+        MOCK_RESOLVE === "redirect"
+          ? { path: `/subject/${a.bgm_id ? "bgm" : "id"}/${a.bgm_id || a.subject_id}/episode/1/hash/${ih}/file/0` }
+          : MOCK_RESOLVE === "denied"
+            ? { action: "block", reason: "该资源含有色情内容，已被屏蔽" }
+            : {}
+      const type = ["redirect", "denied", "timeout"].includes(MOCK_RESOLVE) ? MOCK_RESOLVE : "ready"
+      if (type !== "timeout") resolved.set(ih, type)
+      this.dispatchEvent(new MessageEvent(type, { data: JSON.stringify(data) }))
+    }, 3000)
+  }
+
+  close() {
+    this.readyState = 2
+    window.clearTimeout(this.timer)
+  }
+}
+
 export function installMock() {
   const RealEventSource = window.EventSource
   window.EventSource = function (this: unknown, url: string | URL, init?: EventSourceInit) {
     const u = new URL(String(url), location.origin)
     const m = u.origin === location.origin && u.pathname.match(/^\/api\/v1\/torrents\/hash\/([^/]+)\/webseed\/events(?:\/file\/\d+)?$/)
     if (m) return new MockEventSource(u.href, decodeURIComponent(m[1]), init)
+    const rm = u.origin === location.origin && u.pathname.match(/^\/api\/v1\/torrents\/hash\/([^/]+)\/resolve\/events$/)
+    if (rm) return new MockResolveSource(u.href, decodeURIComponent(rm[1]))
     return new RealEventSource(url, init)
   } as unknown as typeof EventSource
   const realFetch = window.fetch.bind(window)

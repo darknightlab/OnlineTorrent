@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom"
-import { AlertTriangle, Ban, Crown, Loader2, Lock, RotateCw, WifiOff, Zap } from "lucide-react"
+import { AlertTriangle, Ban, CloudOff, Crown, Loader2, Lock, RotateCw, SearchCode } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { useUser } from "@/lib/queries"
@@ -8,14 +8,13 @@ import { cn } from "@/lib/utils"
 import type { ResolveState } from "./usePlayResolve"
 
 /**
- * 播放前的状态页（请求中 / 需登录 / 需大会员 / 已屏蔽 / 服务器不可用回退 / 错误）。
+ * 播放前的状态页（请求中 / 获取种子信息中 / 需登录 / 需大会员 / 已屏蔽（无权播放）/ 获取超时 / 错误）。
  * 播放页与单集页共用；`here` 为登录后返回的路径。
  */
 export function PlayGate({
   state,
   title,
   here,
-  skipWait,
   retry,
   docTitle = true,
   className,
@@ -23,7 +22,8 @@ export function PlayGate({
   state: Exclude<ResolveState, { status: "ready" } | { status: "idle" }>
   title?: string
   here: string
-  skipWait: () => void
+  /** 旧接口保留（不再有直连回退） */
+  skipWait?: () => void
   retry: () => void
   /** 是否用状态标题设置 document.title */
   docTitle?: boolean
@@ -33,9 +33,37 @@ export function PlayGate({
   const { user } = useUser()
   const next = encodeURIComponent(here)
   return (
-    <GateFrame className={className} subject={state.status === "loading" ? undefined : title}>
-      {state.status === "loading" && (
+    <GateFrame className={className} subject={state.status === "loading" || state.status === "redirect" ? undefined : title}>
+      {(state.status === "loading" || state.status === "redirect") && (
         <Gate docTitle={docTitle} icon={<Loader2 className="h-7 w-7 animate-spin text-primary" />} title="正在请求播放…" description={title ?? "服务器正在检查资源"} />
+      )}
+      {state.status === "pending" && (
+        <Gate
+          docTitle={docTitle}
+          icon={<SearchCode className="h-7 w-7 animate-pulse" />}
+          title="正在获取种子信息…"
+          description="本站还没有这个种子的信息，服务器正在获取文件列表并判断能否播放，通常需要十几秒。"
+        />
+      )}
+      {state.status === "timeout" && (
+        <Gate
+          docTitle={docTitle}
+          tone="warning"
+          icon={<CloudOff className="h-7 w-7" />}
+          title="暂时无法获取种子信息"
+          description="可能暂时没有节点分享这个种子。服务器会继续尝试，稍后可以重试。"
+          actions={
+            <>
+              <Button onClick={retry}>
+                <RotateCw />
+                重试
+              </Button>
+              <Button asChild variant="outline">
+                <Link to="/">返回首页</Link>
+              </Button>
+            </>
+          }
+        />
       )}
       {state.status === "login" && (
         <Gate
@@ -86,37 +114,12 @@ export function PlayGate({
           docTitle={docTitle}
           tone="destructive"
           icon={<Ban className="h-7 w-7" />}
-          title="该资源已被屏蔽"
-          description={state.message || "根据相关规定，该资源无法在本站播放。"}
+          title="无权播放"
+          description={state.message || "该资源无法在本站播放。"}
           actions={
             <Button asChild variant="outline">
               <Link to="/">返回首页</Link>
             </Button>
-          }
-        />
-      )}
-      {state.status === "fallback" && (
-        <Gate
-          docTitle={docTitle}
-          tone="warning"
-          icon={<WifiOff className="h-7 w-7" />}
-          title={`${state.reason}`}
-          description={
-            <>
-              将在 <span className="font-semibold tabular-nums text-foreground">{state.seconds}</span> 秒后直接通过 P2P 网络连接（无服务器做种时速度可能较慢）
-            </>
-          }
-          actions={
-            <>
-              <Button onClick={skipWait}>
-                <Zap />
-                立即连接
-              </Button>
-              <Button variant="outline" onClick={retry}>
-                <RotateCw />
-                重试服务器
-              </Button>
-            </>
           }
         />
       )}

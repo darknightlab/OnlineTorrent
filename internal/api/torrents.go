@@ -107,15 +107,16 @@ func (s *Server) getTorrentFile(w http.ResponseWriter, r *http.Request) error {
 	if !s.limiter.allow("torrentfile:"+ipKey(r), 30, 2*time.Second) {
 		return errRateLimited
 	}
+	// nothing is served before the metadata is known (and the policy can see it)
+	if s.Crawl == nil || s.knownTorrent(r.Context(), ih) == nil {
+		return httpx.E(404, "not_found", "没有该种子的种子文件")
+	}
 	allowed, err := s.webseedAllowed(r, ih)
 	if err != nil {
 		return err
 	}
 	if !allowed {
 		return httpx.E(http.StatusForbidden, "forbidden", "当前账号无权获取该种子")
-	}
-	if s.Crawl == nil {
-		return httpx.E(404, "not_found", "没有该种子的种子文件")
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()

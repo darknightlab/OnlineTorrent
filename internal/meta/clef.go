@@ -1174,3 +1174,12 @@ func (s *Store) queueRuleReview(ctx context.Context, ih string, idx int, path, w
 	return s.AddClefDecision(ctx, &ClefDecision{Infohash: ih, FileIndex: idx, Path: path, WorkKey: workKey, Kind: kind, Episode: ep, EpisodeKey: key,
 		Score: conf, Margin: -1, Confidence: conf, Model: "rules", Source: "rule", Status: "pending", Reason: ReasonMissingRelease})
 }
+
+// GetClefJob returns the decision-model job of ih (nil if none).
+func (s *Store) GetClefJob(ctx context.Context, ih string) (*ClefJob, error) {
+	j, err := scanClefJob(s.R.QueryRowContext(ctx, `SELECT `+clefJobCols+` FROM clef_jobs j LEFT JOIN torrents t ON t.infohash = j.infohash WHERE j.infohash = ?`, ih))
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return j, err
+}

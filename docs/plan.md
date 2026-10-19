@@ -57,7 +57,7 @@
   type Decision struct { Action Allow|RequireLogin|RequireVIP|Block; Reason string; RuleID int64 }
   func (p *Policy) Decide(ctx, user *User, t TorrentInfo) Decision
   ```
-  规则来源（按优先级）：管理员手工判定（infohash）> 屏蔽规则（关键词/正则/文件名/bangumi.moe tag/team/分类，标记 political/porn → 只要命中一律 Block，无视优先级）> 权限规则（某作品/某 tag 仅会员/大会员，按 priority）> 默认动作（后台可设）。用户自填磁力（未受信）最终动作 = max(规则结果, 用户磁力最低权限)，只有管理员裁决或 `infohash` 字段规则能降到最低权限以下。前台理由只由 action+label 生成，不暴露规则名/裁决备注。所有拒绝写审计日志；未知/可疑的进入审核队列。实现见 `internal/policy` 包注释。
+  规则来源（按优先级）：管理员手工判定（infohash）> 屏蔽规则（关键词/正则/文件名/bangumi.moe tag/team/分类，标记 political/porn → 只要命中一律 Block，无视优先级）> 权限规则（某作品/某 tag 仅会员/大会员，按 priority）> 默认动作（后台可设）。没有元数据的种子不能播放（新 hash 先经 qB 元数据队列取元数据，见 api.md「resolve/events」），判定只用真实标题 / 文件，原来的「用户自填磁力最低权限」已删除。内容范围（按角色的条目标签范围）同样限制播放：已应用映射到隐藏条目的种子对该角色不可播放。前台理由只由 action+label 生成，不暴露规则名/裁决备注。所有拒绝写审计日志；未知/可疑的进入审核队列。实现见 `internal/policy` 包注释。
 - **用户**：邮箱/用户名 + 密码（argon2id），HttpOnly 会话 Cookie；角色 guest / member / vip / admin；注册方式后台可切（开放 / 邀请码 / 关闭），Cloudflare Turnstile 防刷（可选）。
 - **设置**：全部存 `settings` 表（KV + JSON），后台编辑，无 YAML。仅保留 `-db` `-addr` 两个启动参数。
 

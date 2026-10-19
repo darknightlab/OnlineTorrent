@@ -116,7 +116,7 @@ CREATE TRIGGER works_fts_au AFTER UPDATE OF id, title, title_cn, aliases ON work
 	INSERT INTO works_fts(rowid, title, title_cn, aliases) VALUES (new.id, new.title, new.title_cn, new.aliases);
 END;
 `,
-	// every crawled torrent counts as catalogue (no user-magnet floor)
+	// every crawled torrent counts as catalogue (trusted: exempt from the push size limit)
 	`
 UPDATE torrents SET trusted = 1 WHERE source_kind IN ('rss', 'bangumi_moe');
 `,
@@ -507,7 +507,7 @@ type TorrentInput struct {
 	Source      string // crawl source name ("bangumi.moe", "Nyaa", …) or "user"
 	SourceKind  string // bangumi_moe|rss|user
 	SourceID    string // id at the source (bangumi.moe _id, feed guid)
-	Trusted     bool   // from a trusted source (policy: no user-magnet floor)
+	Trusted     bool   // from a crawl source (exempt from the push size limit)
 	Team        string
 	TeamID      string
 	PublishedAt string

@@ -9,10 +9,11 @@
 //     result is block immediately, regardless of priorities.
 //  3. Other rules: among matches the highest priority wins, ties are broken by the most
 //     restrictive action. Without a match the configured default action applies.
-//  4. Source floor: for untrusted subjects (user-pasted magnets) the result is raised to at
-//     least the configured "user magnet" level. Only a verdict (1) or a winning rule on
-//     field "infohash" may lower an untrusted subject below the floor — title/file rules
-//     can't, because those fields are attacker-controlled (dn=) until metadata is known.
+//
+// Subjects are always evaluated with their real title and file list: a hash we have no
+// metadata for is not playable at all until the metadata queue has fetched it (see api
+// resolve.go), so a forged magnet name (dn=) never reaches the policy. The per-role content
+// scope (subjects a role may see) is applied on top by the API (playDecision).
 //
 // The public reason (Decision.Reason / Access.Reason) is always derived from action and
 // label; verdict notes and rule names are kept in Note/RuleName for admin views only.
@@ -58,7 +59,6 @@ type Subject struct {
 	Files    []string
 	Team     string
 	Tags     []string
-	Trusted  bool // from a crawl source marked trusted (e.g. bangumi.moe), not a user-pasted magnet
 }
 
 // Decision is the outcome.
@@ -70,7 +70,7 @@ type Decision struct {
 	RuleID   int64  `json:"rule_id,omitempty"` // matched rule
 	RuleName string `json:"rule_name,omitempty"`
 	Note     string `json:"note,omitempty"` // verdict note (admin only)
-	Source   string `json:"source"`         // verdict|rule|source|default
+	Source   string `json:"source"`         // verdict|rule|default (scope: the API's content scope)
 }
 
 // Access is the compact form returned with torrent listings.
@@ -236,12 +236,6 @@ func (e *Engine) Requirement(ctx context.Context, s Subject) (Decision, error) {
 		d = Decision{Action: e.st.Str(store.KeyDefaultAction), Source: "default"}
 		if rank(d.Action) == 0 {
 			d.Action = Allow
-		}
-	}
-	// untrusted subjects: only an infohash rule may go below the user-magnet floor
-	if !s.Trusted && (best == nil || best.Field != "infohash") {
-		if floor := e.st.Str(store.KeyUserMagnetAction); rank(floor) > rank(d.Action) {
-			d.Action, d.Source = floor, "source"
 		}
 	}
 	d.Reason = reasonFor(d.Action, d.Label)

@@ -47,7 +47,6 @@ const (
 	KeyMaxAutoSize       = "play.max_auto_size_mb"
 	KeyMaxPushSize       = "play.max_push_size_mb"
 	KeyDefaultAction     = "policy.default_action"
-	KeyUserMagnetAction  = "policy.user_magnet_action"
 	KeyAutoReviewUnknown = "policy.review_user_magnets"
 	KeyUpstreamProxy     = "upstream.proxy"
 	KeyMoeBase           = "upstream.bangumi_moe"
@@ -191,7 +190,6 @@ func SettingsSchema() []SettingSpec {
 		{Key: KeyMaxPushSize, Group: "播放", Type: "number", Label: "可播放种子大小上限（MB）", Description: "超过此大小的种子不会推送给 qB；用户自填磁力在获取元数据后超限会被移除", Default: 8192},
 
 		{Key: KeyDefaultAction, Group: "审核", Type: "enum", Label: "默认权限", Options: []string{"allow", "login", "vip"}, Description: "没有任何规则命中时的权限要求", Default: "allow"},
-		{Key: KeyUserMagnetAction, Group: "审核", Type: "enum", Label: "用户自填磁力最低权限", Options: []string{"allow", "login", "vip"}, Description: "本站数据库里没有、由用户自行粘贴的磁力至少需要的权限（抓取源的种子不受此限制）", Default: "login"},
 		{Key: KeyAutoReviewUnknown, Group: "审核", Type: "bool", Label: "用户自填磁力进入审核队列", Description: "记录用户自行提交的种子，供管理员事后审核", Default: true},
 
 		{Key: KeyUpstreamProxy, Group: "上游", Type: "string", Label: "上游代理", Description: "访问 bangumi.moe / bgm.tv 用的代理，如 socks5://127.0.0.1:1080，留空直连", Default: ""},

@@ -52,8 +52,13 @@ function MoeWatch({ id }: { id: string }) {
   const attempt = usePlayAttempt()
   const hint = hintOf(st.torrent)
   const src: PlaySource = { kind: "moe", id }
-  const { state, skipWait, retry } = usePlayResolve(src, { hint, trackers: site.trackers, attempt })
+  const { state, retry } = usePlayResolve(src, { hint, trackers: site.trackers, attempt })
   const play = state.status === "ready" ? state.play : null
+
+  useEffect(() => {
+    if (state.status === "redirect") navigate(state.path, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state])
 
   useEffect(() => {
     if (!play) return
@@ -62,21 +67,19 @@ function MoeWatch({ id }: { id: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [play])
 
-  // 拿到结果后马上跳转，不在旧地址上启动播放器；服务器不可用时直连（direct）则就地播放
+  // 拿到结果后马上跳转，不在旧地址上启动播放器
   const shown: ResolveState = play ? { status: "loading" } : state
-  return <WatchView state={shown} skipWait={skipWait} retry={retry} hint={hint} fileIndex={null} />
+  return <WatchView state={shown} retry={retry} hint={hint} fileIndex={null} />
 }
 
 function WatchView({
   state,
-  skipWait,
   retry,
   hint,
   fileIndex,
   onFileChange,
 }: {
   state: ResolveState
-  skipWait: () => void
   retry: () => void
   hint?: PlayHint
   fileIndex: number | null
@@ -102,7 +105,7 @@ function WatchView({
         />
       ) : (
         <div className="pt-3 sm:pt-0">
-          <PlayGate state={state} title={hint?.title} here={here} skipWait={skipWait} retry={retry} />
+          <PlayGate state={state} title={hint?.title} here={here} retry={retry} />
         </div>
       )}
     </Container>

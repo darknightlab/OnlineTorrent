@@ -205,8 +205,9 @@ func TestContentScopeEndpoints(t *testing.T) {
 			SubjectID int64 `json:"subject_id"`
 		} `json:"meta"`
 	}
-	if code := scopeReq(t, h, "POST", "/api/v1/torrents/hash/"+ih7+"/play", "", "", &play); code != 200 || play.Meta != nil {
-		t.Errorf("guest play meta: %d %+v", code, play.Meta)
+	// the content scope counts for playing too: hidden for guests, visible for members → 401
+	if code := scopeReq(t, h, "POST", "/api/v1/torrents/hash/"+ih7+"/play", "", "", &play); code != 401 {
+		t.Errorf("guest play hidden subject: %d %+v", code, play.Meta)
 	}
 	if code := scopeReq(t, h, "POST", "/api/v1/torrents/hash/"+ih8+"/play", "", "", &play); code != 200 || play.Meta == nil || play.Meta.SubjectID != 8 {
 		t.Errorf("guest play visible: %d %+v", code, play.Meta)

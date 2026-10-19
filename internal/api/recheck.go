@@ -117,7 +117,7 @@ func (s *Server) checkSeeded(ctx context.Context, gen uint64, ih, name string, f
 	rec, _ := s.St.GetTorrent(ctx, ih)
 	trusted := rec != nil && rec.Trusted
 
-	sub := policy.Subject{Infohash: ih, Title: name, Files: paths, Trusted: trusted}
+	sub := policy.Subject{Infohash: ih, Title: name, Files: paths}
 	if rec != nil {
 		sub.Team, sub.Tags = rec.Team, rec.Tags
 		if trusted && rec.Title != "" {

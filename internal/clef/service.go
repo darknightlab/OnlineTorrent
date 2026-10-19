@@ -358,6 +358,46 @@ func (s *Service) Decide(ctx context.Context, c Config, ih string, all bool) (*O
 	return out, nil
 }
 
+// ProcessNow runs the pending job of ih right away (an interactive play request is waiting
+// for it) and returns when it is done. If the worker is already on it, it waits for that
+// run instead. No-op when the backend is disabled / not configured or nothing is pending.
+func (s *Service) ProcessNow(ctx context.Context, ih string) error {
+	s.init()
+	c := s.Config()
+	if !c.Enabled || !c.Configured() {
+		return nil
+	}
+	s.mu.Lock()
+	busy := s.current[ih]
+	if !busy {
+		s.current[ih] = true // reserved: the worker skips it
+	}
+	s.mu.Unlock()
+	if busy {
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(200 * time.Millisecond):
+			}
+			s.mu.Lock()
+			busy = s.current[ih]
+			s.mu.Unlock()
+			if !busy {
+				return nil
+			}
+		}
+	}
+	job, err := s.Meta.GetClefJob(ctx, ih)
+	if err != nil || job == nil || job.Status != "pending" {
+		s.mu.Lock()
+		delete(s.current, ih)
+		s.mu.Unlock()
+		return err
+	}
+	return s.Process(ctx, c, job)
+}
+
 // Process runs one queued job: decide, store every decision, apply the confident ones.
 func (s *Service) Process(ctx context.Context, c Config, job *meta.ClefJob) error {
 	s.init()

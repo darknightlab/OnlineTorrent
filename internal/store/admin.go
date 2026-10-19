@@ -334,7 +334,7 @@ type TorrentRecord struct {
 	Tags      []string
 	Source    string
 	SourceID  string
-	Trusted   bool // from a trusted crawl source (policy: no user-magnet floor)
+	Trusted   bool // from a crawl source (exempt from the push size limit; title trusted)
 }
 
 func (s *Store) UpsertTorrent(ctx context.Context, t TorrentRecord) error {
@@ -404,11 +404,12 @@ func (s *Store) AddPlay(ctx context.Context, p Play, userID *int64) {
 		p.Infohash, Trunc(p.Title, MaxTitleBytes), userID, Trunc(p.IP, 64), p.Action, p.SeededBy, Now())
 }
 
-// FirstPlay is the first allowed play of ih (the user submission of a magnet): its time and
-// user (nil for a guest). ok=false when there is none.
+// FirstPlay is the first allowed or pending play of ih (the user submission of a hash: a
+// new hash is recorded as "pending" while its metadata is fetched): its time and user (nil
+// for a guest). ok=false when there is none.
 func (s *Store) FirstPlay(ctx context.Context, ih string) (at string, userID *int64, ok bool) {
 	var uid sql.NullInt64
-	err := s.R.QueryRowContext(ctx, `SELECT created_at, user_id FROM plays WHERE infohash = ? AND action = 'allow' ORDER BY id LIMIT 1`, ih).Scan(&at, &uid)
+	err := s.R.QueryRowContext(ctx, `SELECT created_at, user_id FROM plays WHERE infohash = ? AND action IN ('allow', 'pending') ORDER BY id LIMIT 1`, ih).Scan(&at, &uid)
 	if err != nil {
 		return "", nil, false
 	}

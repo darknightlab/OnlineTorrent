@@ -33,6 +33,7 @@ import {
   SourceList,
   sourceKey,
 } from "@/pages/Episode"
+import { episodeRedirect } from "@/lib/playresolve"
 import { usePlayAttempt, usePlayResolve, type PlayHint } from "./usePlayResolve"
 import { PlayGate } from "./PlayGate"
 import { Player } from "./Player"
@@ -108,7 +109,7 @@ export default function PlaybackPage() {
     : st.torrent?.infohash === ih
       ? hintOf(st.torrent)
       : undefined
-  const { state, skipWait, retry } = usePlayResolve(ih ? { kind: "hash", ih } : null, {
+  const { state, retry } = usePlayResolve(ih ? { kind: "hash", ih } : null, {
     hint,
     trackers: site.trackers,
     attempt,
@@ -117,6 +118,15 @@ export default function PlaybackPage() {
     known: auto?.access,
     file: fileIndex,
   })
+
+  // 新种子判定后已映射（redirect），或从播放页打开一个已映射的种子：跳到对应单集页。
+  // 同一路由组件、同一 Player 实例，跳转后就地继续（redirect 时随后重新请求 play 拿磁力）
+  const redirectTo =
+    state.status === "redirect" ? state.path : !isEpisode && state.status === "ready" && ih ? episodeRedirect(state.play?.meta, ih, urlIndex) : null
+  useEffect(() => {
+    if (redirectTo) navigate(redirectTo, { replace: true, state: loc.state })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [redirectTo])
 
   // 正在播放的文件（Player 回报，含自动选择）
   const [playing, setPlaying] = useState<number | null>(null)
@@ -162,7 +172,7 @@ export default function PlaybackPage() {
           />
         ) : (
           <div className="pt-3 sm:pt-0">
-            {state.status !== "idle" && <PlayGate state={state} title={hint?.title} here={here} skipWait={skipWait} retry={retry} />}
+            {state.status !== "idle" && <PlayGate state={state} title={hint?.title} here={here} retry={retry} />}
           </div>
         )}
       </Container>
@@ -231,7 +241,7 @@ export default function PlaybackPage() {
                 state={state}
                 title={hint?.title}
                 here={here}
-                skipWait={skipWait}
+               
                 retry={retry}
                 docTitle={false}
                 className={cn(BLEED, "max-w-none rounded-none border-x-0 border-t-0 shadow-none lg:rounded-xl lg:border")}

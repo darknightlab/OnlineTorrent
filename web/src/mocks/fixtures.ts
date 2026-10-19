@@ -367,6 +367,7 @@ export const permissionSpecs: Spec[] = [
   spec("GET", "/api/v1/torrents/hash/{ih}/torrent", "configurable", "播放", "获取种子文件（HTTP 元数据，无需 P2P 节点即可显示文件列表）", ["guest"]),
   spec("POST", "/api/v1/torrents/hash/{ih}/play", "configurable", "播放", "打开种子（按 infohash）", ["guest"]),
   spec("POST", "/api/v1/torrents/moe/{id}/play", "configurable", "播放", "打开种子（按 bangumi.moe ID）", ["guest"]),
+  spec("GET", "/api/v1/torrents/hash/{ih}/resolve/events", "configurable", "播放", "等待新种子的元数据与判定结果（服务器推送；只获取元数据，不下载、不做种）", ["guest"]),
   spec("POST", "/api/v1/torrents/hash/{ih}/seed", "configurable", "播放", "让服务器下载做种（消耗服务器资源）", ["member"]),
   spec("GET", "/webseed/hash/{ih}/{path...}", "configurable", "播放", "WebSeed 文件下载（HTTP 加速，消耗服务器流量）", ["member"]),
   spec("GET", "/api/v1/torrents/hash/{ih}/webseed/events", "configurable", "播放", "等待 WebSeed 就绪（服务器推送）", ["member"]),

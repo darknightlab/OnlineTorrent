@@ -42,14 +42,14 @@ type Torrent struct {
 
 	FileList  []string `json:"-"`
 	FileSizes []int64  `json:"-"`
-	Trusted   bool     `json:"-"` // from a trusted crawl source (policy: no user-magnet floor)
+	Trusted   bool     `json:"-"` // from a crawl source (exempt from the push size limit)
 	TagIDs    []string `json:"-"` // every bangumi.moe tag id (incl. misc ones hidden from Tags)
 	PageURL   string   `json:"-"`
 }
 
 // Subject converts to a policy subject.
 func (t *Torrent) Subject() policy.Subject {
-	s := policy.Subject{Infohash: t.Infohash, Title: t.Title, Files: t.FileList, Trusted: t.Trusted}
+	s := policy.Subject{Infohash: t.Infohash, Title: t.Title, Files: t.FileList}
 	if t.Team != nil {
 		s.Team = t.Team.Name
 	}

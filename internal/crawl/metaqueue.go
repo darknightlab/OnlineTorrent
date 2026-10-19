@@ -17,29 +17,36 @@ import (
 // metadata arrives, nothing is downloaded), its file list is read and ingested, then the
 // torrent is deleted again. Jobs live in SQLite (metadata_jobs) so a restart resumes them.
 //
+// Interactive requests (a user opened a hash we have no metadata for, RequestMetadata) are
+// priority-1 jobs: they come first and have their own slots, so the crawl backlog never
+// delays them. Like every job they only fetch metadata (nothing is downloaded or seeded).
+//
 // Deletion safety: we only delete a torrent we added ourselves (job.added on that server)
 // and only while it is still in the meta category — a member's seed request in the meantime
 // moves it to the seeding category (qb.Pool.Push → adoptMeta), and torrents that were in qB
 // before (any category) are only read, never touched.
 
 const (
-	queueConcurrency = 3
-	jobTimeout       = 2 * time.Minute
-	jobMaxAttempts   = 3
-	jobPoll          = 3 * time.Second
-	queueTick        = 10 * time.Second
-	noServerDelay    = 5 * time.Minute
+	queueConcurrency       = 3
+	interactiveConcurrency = 2 // extra slots for priority-1 jobs
+	jobTimeout             = 2 * time.Minute
+	jobMaxAttempts         = 3
+	jobPoll                = 3 * time.Second
+	queueTick              = 10 * time.Second
+	noServerDelay          = 5 * time.Minute
 )
 
 type metaQueue struct {
 	wakeCh  chan struct{}
 	sem     chan struct{}
+	isem    chan struct{} // interactive slots
 	running map[string]bool
 }
 
 func (q *metaQueue) init() {
 	q.wakeCh = make(chan struct{}, 1)
 	q.sem = make(chan struct{}, queueConcurrency)
+	q.isem = make(chan struct{}, interactiveConcurrency)
 	q.running = map[string]bool{}
 }
 
@@ -48,6 +55,15 @@ func (q *metaQueue) wake() {
 	case q.wakeCh <- struct{}{}:
 	default:
 	}
+}
+
+// RequestMetadata queues an interactive metadata fetch for ih (a user is waiting for it).
+func (c *Crawler) RequestMetadata(ctx context.Context, ih string) error {
+	if err := c.St.RequestMetadataJob(ctx, ih); err != nil {
+		return err
+	}
+	c.queue.wake()
+	return nil
 }
 
 // JobActive reports whether a metadata job for ih is pending or running.
@@ -80,11 +96,11 @@ func (c *Crawler) runQueue(ctx context.Context) {
 }
 
 func (c *Crawler) dispatchJobs(ctx context.Context) {
-	free := cap(c.queue.sem) - len(c.queue.sem)
+	free := cap(c.queue.sem) - len(c.queue.sem) + cap(c.queue.isem) - len(c.queue.isem)
 	if free <= 0 {
 		return
 	}
-	jobs, err := c.St.DueMetadataJobs(ctx, free+len(c.queue.sem))
+	jobs, err := c.St.DueMetadataJobs(ctx, free+len(c.queue.sem)+len(c.queue.isem))
 	if err != nil {
 		return
 	}
@@ -98,17 +114,32 @@ func (c *Crawler) dispatchJobs(ctx context.Context) {
 		if busy {
 			continue
 		}
-		select {
-		case c.queue.sem <- struct{}{}:
-		default:
-			c.mu.Lock()
-			delete(c.queue.running, j.Infohash)
-			c.mu.Unlock()
-			return
+		// interactive jobs: own slots first, else a crawl slot; crawl jobs: crawl slots only
+		var slot chan struct{}
+		if j.Priority > 0 {
+			select {
+			case c.queue.isem <- struct{}{}:
+				slot = c.queue.isem
+			default:
+			}
+		}
+		if slot == nil {
+			select {
+			case c.queue.sem <- struct{}{}:
+				slot = c.queue.sem
+			default:
+				c.mu.Lock()
+				delete(c.queue.running, j.Infohash)
+				c.mu.Unlock()
+				if j.Priority > 0 {
+					continue
+				}
+				return
+			}
 		}
 		c.wg.Go(func() {
 			defer func() {
-				<-c.queue.sem
+				<-slot
 				c.mu.Lock()
 				delete(c.queue.running, j.Infohash)
 				c.mu.Unlock()

@@ -333,3 +333,34 @@ func (s *Store) SubjectTags(ctx context.Context, q string, limit int) ([]Subject
 	}
 	return out, rows.Err()
 }
+
+// HiddenByScope reports which of the torrents have a (non-rejected, i.e. applied) file
+// mapped to a subject outside the scope — those are not playable for the scope's role.
+// Unmapped files never hide a torrent.
+func (s *Store) HiddenByScope(ctx context.Context, ihs []string, scope *store.ScopePlan) (map[string]bool, error) {
+	out := map[string]bool{}
+	if !scope.Restricted() || len(ihs) == 0 {
+		return out, nil
+	}
+	pred, pargs := store.TorrentScopePredicate("t", scope)
+	for start := 0; start < len(ihs); start += 400 {
+		part := ihs[start:min(len(ihs), start+400)]
+		args := make([]any, 0, len(part)+len(pargs))
+		for _, ih := range part {
+			args = append(args, ih)
+		}
+		args = append(args, pargs...)
+		rows, err := s.R.QueryContext(ctx, `SELECT t.infohash FROM torrents t WHERE t.infohash IN (`+placeholders(len(part))+`) AND NOT (`+pred+`)`, args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var ih string
+			if rows.Scan(&ih) == nil {
+				out[ih] = true
+			}
+		}
+		rows.Close()
+	}
+	return out, nil
+}

@@ -307,7 +307,10 @@ export interface PlayMeta {
 }
 
 export interface PlayResponse {
-  access: Access
+  /** ready：已判定（allow 时带磁力）；pending：新种子，服务器正在获取元数据（无磁力，订阅 resolve/events） */
+  status?: "ready" | "pending"
+  /** pending 时 action 为 "pending" */
+  access: Omit<Access, "action"> & { action: AccessAction | "pending" }
   infohash: string
   name: string
   magnet: string

@@ -201,3 +201,56 @@ func TestFirstPlay(t *testing.T) {
 		t.Errorf("first play %s %v %v", at, by, ok)
 	}
 }
+
+// TestUserMagnetSettingRemoved: policy.user_magnet_action is gone from the schema and its
+// stored row is deleted by migration 7.
+func TestUserMagnetSettingRemoved(t *testing.T) {
+	st := newStore(t)
+	for _, sp := range SettingsSchema() {
+		if sp.Key == "policy.user_magnet_action" {
+			t.Fatal("still in the schema")
+		}
+	}
+	var n int
+	_ = st.R.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = 'policy.user_magnet_action'`).Scan(&n)
+	if n != 0 {
+		t.Errorf("stored row left: %d", n)
+	}
+	// an older database (migrations 1–6) with the row: migration 7 deletes it
+	ctx := context.Background()
+	st.W.Exec(`PRAGMA user_version = 6`)
+	st.W.Exec(`ALTER TABLE metadata_jobs DROP COLUMN priority`)
+	if _, err := st.W.Exec(`INSERT INTO settings(key, value) VALUES('policy.user_magnet_action', '"login"')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(ctx, st.W, migrations); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.R.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = 'policy.user_magnet_action'`).Scan(&n)
+	if n != 0 {
+		t.Errorf("migration 7 left the row: %d", n)
+	}
+}
+
+func TestRequestMetadataJobPriority(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	if _, err := st.EnqueueMetadataJob(ctx, "aa", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.RequestMetadataJob(ctx, "bb"); err != nil {
+		t.Fatal(err)
+	}
+	jobs, _ := st.DueMetadataJobs(ctx, 10)
+	if len(jobs) != 2 || jobs[0].Infohash != "bb" || jobs[0].Priority != 1 {
+		t.Fatalf("interactive first: %+v", jobs)
+	}
+	// a failed crawl job is revived with priority
+	_ = st.FinishMetadataJob(ctx, "aa", errors.New("x"), 0, 1)
+	if err := st.RequestMetadataJob(ctx, "aa"); err != nil {
+		t.Fatal(err)
+	}
+	if j, _ := st.GetMetadataJob(ctx, "aa"); j.Status != "pending" || j.Priority != 1 || j.Attempts != 0 {
+		t.Errorf("revived %+v", j)
+	}
+}
