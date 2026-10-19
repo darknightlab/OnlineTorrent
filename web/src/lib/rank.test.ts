@@ -62,6 +62,10 @@ test("log curve: coefficient × log2(1 + n), capped", () => {
   assert.equal(seederScore(3, 2, 6, "log"), 4)
   assert.equal(seederScore(7, 2, 6, "log"), 6)
   assert.equal(seederScore(500, 2, 6, "log"), 6)
+  // default BT: ~1000 seeders reach the cap of 10; 100 vs 500 differ by ~2.3
+  assert.equal(seederScore(100, 1, 10, "log"), 6.7)
+  assert.equal(seederScore(500, 1, 10, "log"), 9)
+  assert.equal(seederScore(1023, 1, 10, "log"), 10)
   assert.equal(seederScore(0, 2, 6, "log"), 0)
   assert.equal(seederScore(4, 2, 100, "linear"), 8)
   // rules saved before `curve` existed behave linearly
@@ -71,10 +75,12 @@ test("log curve: coefficient × log2(1 + n), capped", () => {
 
 test("size bonus: full below, zero above, linear between; unknown size 0", () => {
   const s = R.size
-  assert.equal(sizeScore(100 * MB, s), 6)
-  assert.equal(sizeScore(300 * MB, s), 6)
-  assert.equal(sizeScore(900 * MB, s), 3)
-  assert.equal(sizeScore(1500 * MB, s), 0)
+  assert.equal(sizeScore(100 * MB, s), 16)
+  assert.equal(sizeScore(200 * MB, s), 16)
+  assert.equal(sizeScore(400 * MB, s), 12)
+  assert.equal(sizeScore(500 * MB, s), 10, "2 points per 100 MB")
+  assert.equal(sizeScore(900 * MB, s), 2)
+  assert.equal(sizeScore(1000 * MB, s), 0)
   assert.equal(sizeScore(5 * GB, s), 0)
   assert.equal(sizeScore(0, s), 0)
   assert.equal(sizeScore(100 * MB, { max: 0, full_below_mb: 300, zero_above_mb: 1500 }), 0)
@@ -106,11 +112,11 @@ test("unknown stats score 0", () => {
 
 test("keyword groups: only the best match per group counts", () => {
   const kw = (title: string) => scoreFile(file({ torrent_title: title, path: "a.mp4" }), R, MEMBER, 0)
-  // 简繁 → 简体 25 only (not 25 + 12)
+  // 简繁 → 简体 25 only (not 25 + 20)
   assert.equal(kw("[Team] Show - 02 [简繁内封]").score, 25)
-  assert.equal(kw("[Team] Show - 02 [CHT]").score, 12)
-  assert.equal(kw("[Team] Show - 02 [1080p][HEVC][CHS]").score, 37)
-  assert.equal(kw("Show 2160p 1080p").score, 10, "resolution group: max")
+  assert.equal(kw("[Team] Show - 02 [CHT]").score, 20)
+  assert.equal(kw("[Team] Show - 02 [1080p][HEVC][CHS]").score, 42)
+  assert.equal(kw("Show 2160p 1080p").score, 15, "resolution group: max")
   assert.equal(kw("Screen [A1080F2E]").score, 0, "no false matches inside words / CRCs")
   const parts = kw("[Team] Show [简繁内封][1080p]").parts.map((p) => p.label)
   assert.deepEqual(parts, ["简体中文", "1080p"])

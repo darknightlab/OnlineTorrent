@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -74,7 +75,7 @@ func TestAdminClefEndpoints(t *testing.T) {
 	_, _ = s.Meta.W.Exec(`INSERT INTO work_ids VALUES('bgm','700','bgm:700')`)
 	ih := "8d044029c825a9b881e3f6753f7093f8d256a85d"
 	// no exact title match: uncertain, queued
-	if err := s.Meta.Match(ctx, meta.TorrentInput{Infohash: ih, Title: "[G] Original Show Extra Cut - 05 [1080p]", Source: "Nyaa", SourceKind: "rss", Trusted: true,
+	if err := s.Meta.Match(ctx, meta.TorrentInput{Infohash: ih, PublishedAt: "2023-11-05T00:00:00Z", Title: "[G] Original Show Extra Cut - 05 [1080p]", Source: "Nyaa", SourceKind: "rss", Trusted: true,
 		Files: []meta.FileInput{{Index: 0, Path: "[G] Original Show Extra Cut - 05 [1080p].mkv", Size: 1}}}); err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +104,7 @@ func TestAdminClefEndpoints(t *testing.T) {
 		t.Errorf("guest: %d", code)
 	}
 	var st clef.StatusView
-	if code := do("GET", "/api/v1/admin/clef", nil, &st); code != 200 || st.Enabled || st.Configured || st.Jobs["pending"] != 1 || st.Model != "clef-flash" {
+	if code := do("GET", "/api/v1/admin/clef", nil, &st); code != 200 || st.Enabled || st.Configured || st.Jobs["pending"] != 1 || st.Provider != "openai" || st.Model != "gpt-6-luna" {
 		t.Fatalf("status %d %+v", code, st)
 	}
 	// not configured: the test endpoint says so
@@ -112,7 +113,7 @@ func TestAdminClefEndpoints(t *testing.T) {
 	}
 	// the token is a secret: never returned by GET /admin/settings
 	if code := do("PUT", "/api/v1/admin/settings", map[string]any{"values": map[string]any{
-		store.KeyClefAccountID: "acc", store.KeyClefToken: "tok", store.KeyClefBaseURL: fake.URL, store.KeyClefRate: 300}}, nil); code != 200 {
+		store.KeyClefAccountID: "acc", store.KeyClefToken: "tok", store.KeyClefBaseURL: fake.URL, store.KeyClefRate: 300, store.KeyClefProvider: "clef"}}, nil); code != 200 {
 		t.Fatalf("settings: %d", code)
 	}
 	var settings struct {
@@ -172,8 +173,53 @@ func TestAdminClefEndpoints(t *testing.T) {
 	if code := do("POST", "/api/v1/admin/clef/jobs/hash/"+ih+"/run", nil, &st); code != 202 || st.Jobs["pending"] != 1 {
 		t.Errorf("requeue %d %+v", code, st.Jobs)
 	}
+	// 重新判断异常映射: a mapped episode outside the official list (1–3) is listed and queued
+	for i := 1; i <= 3; i++ {
+		_, _ = s.Meta.W.Exec(`INSERT INTO episodes(bgm_id,work_key,type,sort) VALUES(?, 'bgm:700', 0, ?)`, 9000+i, i)
+	}
+	_, _ = s.Meta.W.Exec(`UPDATE torrent_files SET work_key='bgm:700', episode=1080, status='auto', method='title+name' WHERE infohash=?`, ih)
+	var an struct {
+		Items    []meta.AnomalousTorrent `json:"items"`
+		Torrents int                     `json:"torrents"`
+		Files    int                     `json:"files"`
+	}
+	if code := do("GET", "/api/v1/admin/clef/anomalies", nil, &an); code != 200 || an.Torrents != 1 || an.Files != 1 || an.Items[0].Files[0].Range != "1–3" {
+		t.Fatalf("anomalies %d %+v", code, an)
+	}
+	var q struct {
+		Queued int `json:"queued"`
+	}
+	if code := do("POST", "/api/v1/admin/clef/anomalies/run", map[string]any{}, &q); code != 202 || q.Queued != 1 {
+		t.Errorf("anomalies run %d %+v", code, q)
+	}
+	if task, _ := s.Meta.BuildClefTask(ctx, ih, false); len(task.Files) != 1 || task.Files[0].Hint != "bgm:700" {
+		t.Errorf("anomaly task %+v", task)
+	}
 	if calls != 4 { // dry run + job: subject request + episode request each
 		t.Errorf("API calls %d", calls)
+	}
+
+	// a user submission without a release time: the certain rule mapping waits for review,
+	// listed with its submitter; accepting maps it (verified)
+	u, _ := s.St.SessionUser(ctx, admin)
+	uih := "9d044029c825a9b881e3f6753f7093f8d256a85d"
+	if err := s.Meta.Match(ctx, meta.TorrentInput{Infohash: uih, Title: "[G] オリジナル - 02 [1080p]", Source: "user", SourceKind: "user",
+		Files: []meta.FileInput{{Index: 0, Path: "[G] オリジナル - 02 [1080p].mkv", Size: 1}}}); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = s.Meta.W.Exec(`UPDATE torrents SET submitted_by = ? WHERE infohash = ?`, u.ID, uih)
+	var ul struct {
+		Items []meta.ClefDecision `json:"items"`
+	}
+	if code := do("GET", "/api/v1/admin/clef/decisions?ih="+uih, nil, &ul); code != 200 || len(ul.Items) != 1 || ul.Items[0].Source != "rule" ||
+		ul.Items[0].Reason != meta.ReasonMissingRelease || ul.Items[0].Submitter != "root" {
+		t.Fatalf("rule decision %d %+v", code, ul.Items)
+	}
+	if code := do("POST", "/api/v1/admin/clef/decisions/id/"+strconv.FormatInt(ul.Items[0].ID, 10)+"/accept", nil, nil); code != 200 {
+		t.Errorf("accept rule decision %d", code)
+	}
+	if tm, _ := s.Meta.GetTorrentMap(ctx, uih); tm.Files[0].Work == nil || tm.Files[0].Status != "verified" || tm.Files[0].Method != meta.MethodReview {
+		t.Errorf("accepted %+v", tm.Files[0])
 	}
 }
 

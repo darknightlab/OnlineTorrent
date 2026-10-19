@@ -300,6 +300,7 @@ func (s *Store) UpsertExternalWork(ctx context.Context, e ExternalWork) (*Work, 
 	s.aliasMu.Lock()
 	s.aliases = nil // new work: rebuild the alias index on next match
 	s.aliasMu.Unlock()
+	s.resetCandidateIndex()
 	return s.GetWork(ctx, key)
 }
 

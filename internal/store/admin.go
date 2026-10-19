@@ -404,6 +404,21 @@ func (s *Store) AddPlay(ctx context.Context, p Play, userID *int64) {
 		p.Infohash, Trunc(p.Title, MaxTitleBytes), userID, Trunc(p.IP, 64), p.Action, p.SeededBy, Now())
 }
 
+// FirstPlay is the first allowed play of ih (the user submission of a magnet): its time and
+// user (nil for a guest). ok=false when there is none.
+func (s *Store) FirstPlay(ctx context.Context, ih string) (at string, userID *int64, ok bool) {
+	var uid sql.NullInt64
+	err := s.R.QueryRowContext(ctx, `SELECT created_at, user_id FROM plays WHERE infohash = ? AND action = 'allow' ORDER BY id LIMIT 1`, ih).Scan(&at, &uid)
+	if err != nil {
+		return "", nil, false
+	}
+	if uid.Valid {
+		v := uid.Int64
+		userID = &v
+	}
+	return at, userID, true
+}
+
 func (s *Store) ListPlays(ctx context.Context, page, size int) ([]Play, int, error) {
 	var total int
 	if err := s.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM plays`).Scan(&total); err != nil {

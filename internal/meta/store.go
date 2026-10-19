@@ -238,6 +238,20 @@ CREATE TABLE clef_decisions (
 );
 CREATE INDEX clef_decisions_status ON clef_decisions(status, id);
 CREATE INDEX clef_decisions_ih ON clef_decisions(infohash, file_index);
+`,
+	// 10: files of a job to decide again although mapped (anomalous mappings: the episode is
+	// not in the work's official list), comma-separated file indexes
+	`
+ALTER TABLE clef_jobs ADD COLUMN files TEXT NOT NULL DEFAULT '';
+`,
+	// 11: release time of user submissions (submitted_at / submitted_by: set once when a
+	// user first submitted the torrent; never for crawled ones; submitted_by = app user id,
+	// no FK — users live in otd.db) and review decisions from the rules (source rule: a
+	// certain rule mapping of a torrent without any release time goes to human review)
+	`
+ALTER TABLE torrents ADD COLUMN submitted_at TEXT NOT NULL DEFAULT '';
+ALTER TABLE torrents ADD COLUMN submitted_by INTEGER;
+ALTER TABLE clef_decisions ADD COLUMN source TEXT NOT NULL DEFAULT 'model';
 `}
 
 // Store is the meta database.
@@ -247,6 +261,9 @@ type Store struct {
 	aliasMu sync.Mutex
 	aliases []aliasEntry
 	aliasAt time.Time
+
+	candMu sync.Mutex // decision-model candidate retrieval index (retrieve.go)
+	cand   *candIndex
 }
 
 // Open opens meta.db.
@@ -255,7 +272,9 @@ func Open(path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Store{W: w, R: r}, nil
+	st := &Store{W: w, R: r}
+	st.resetEpisodeOffsets() // the split-cour cache is per process; another store (tests) may have filled it
+	return st, nil
 }
 
 func (s *Store) Close() { s.R.Close(); s.W.Close() }
@@ -492,6 +511,10 @@ type TorrentInput struct {
 	Team        string
 	TeamID      string
 	PublishedAt string
+	// SubmittedAt / SubmittedBy: first user submission (user torrents only; stored when the
+	// row is created, never overwritten)
+	SubmittedAt string
+	SubmittedBy *int64
 	PageURL     string
 	Size        int64
 	Tags        []TagRef // display tags (bangumi.moe)

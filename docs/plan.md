@@ -219,8 +219,8 @@ GitHub release 支持 Range（不支持后缀式 `bytes=-N`，要用绝对区间
 - 结构已满足（`torrent_files` 按文件存 `work_key` + 集）。
 - ✅ 已实现（`internal/meta/route.go`）：种子级匹配（bangumi.moe 标签 → 近期别名 → 标题片段精确匹配任意年代条目，片段里的年份须与开播年相符）得到锚点条目；每个视频文件从文件名到外层文件夹逐级判断：剧场版/OVA 关键词 → 关联条目中同类型的（多个时按独有标题、年份区分）；季号 → 沿 前传/续集（2/3）排出的 TV/WEB 季链第 N 个（锚点自身标题含季号时按它定位）；关联条目的独有标题 → 该条目；否则锚点。分组后按（条目, 类型, 集）做冲突检测；剧场版/OVA 文件转为正片，剧场版唯一视频为第 1 集，无集号的按官方章节标题/播出日期对上；非锚点分组用官方章节数核对，不合理则不映射。一次性重刮标志 `reclassify_match_v3`。
 
-### 规则收紧 + 决策模型 Clef（2026-10）
-规则只在**确定**时直接映射，其余文件留空并交给 Cloudflare Workers AI 的决策模型 Clef（`@cf/cloudflare/clef-flash`，只输出我们给定选项的概率，不生成文本）。数据库里已有的映射不重新处理（`Reclassify` 只用确定的结果改写旧行，不确定时保留原值；一次性重刮标志未升级）。
+### 规则收紧 + 决策模型（2026-10）
+规则只在**确定**时直接映射，其余文件留空并交给决策模型。后端可选（设置 `clef.provider`）：**`openai`（默认）** = 兼容 OpenAI 的大模型 + 结构化输出（`gpt-6-luna`，主人的网关 `https://sub2api.projectk.org/v1`）；`clef` = Cloudflare Workers AI 的 Clef（`@cf/cloudflare/clef-flash`，只输出我们给定选项的概率，不生成文本；免费额度小、准确率较低，保留作备选）。数据库里已有的映射不重新处理（`Reclassify` 只用确定的结果改写旧行，不确定时保留原值；一次性重刮标志未升级）。
 
 **确定**（`internal/meta`：`resolveWork` → `route` → `mapFiles`）= 同时满足：
 1. 锚点确定：bangumi.moe 标签；或标题片段（normName 后）**精确等于**恰好一个条目的标题 / 中文名 / 别名（得分最高且有只属于它的片段，年份须相符），且标题里的季号与该条目自身标题的季号一致（S1 也可对无季号条目）。
@@ -237,12 +237,23 @@ GitHub release 支持 Range（不支持后缀式 `bytes=-N`，要用绝对区间
 | `parse.go` | 裸数字（`Show 03`）、括号双数字取小者（`[03_51]`）、单视频取种子标题的集号、唯一无编号特别篇 → 1、同键冲突（本来就不映射） |
 | `episodes_bgm.go` | 分割放送换算（文件 01 → 官方 13）：规则只接受原样在官方列表中的键；模型的答案按 `CanonicalKey` 换算后校验 |
 
-**决策模型**（`internal/clef`，worker 在 otd 内；映射库迁移 9：`clef_jobs`、`clef_decisions`）：
+**LLM 后端**（`internal/clef/llm.go`，默认）：
+- 每个种子一次 chat completions（temperature 0，`reasoning_effort` 默认 medium（设置 `llm.reasoning_effort`），`response_format` json_schema strict；超过 60 个视频文件时分块，候选相同）。输入 JSON：种子标题、**发布时间**（released）、视频文件（index + path）、候选（id、日文 / 中文标题、最多 8 个别名（英 / 罗马字 / 中文）、无罗马字别名时日文标题假名的离线罗马字转写、类型、季、开播 / 完结日期、话数、官方正片 sort 区间如 `13–24`、特别篇如 `sp1–2, ncop1`）。输出：每个文件 `{index, subject_id（候选 id 枚举 | null）, episode（文件名里写的数字 | null）, kind, confidence, reason}` + `suggested_title`。系统提示很短（主人决定：给信息而不是规则）。
+- 候选检索（`internal/meta/retrieve.go`）：所有条目名称（标题、中文名、全部别名、罗马字转写）的内存索引（30 分钟 / 目录变动后重建），统一规范化（小写、去标点空格、长音 ou/oo→o、uu→u、wo→o、去掉季 / Part 标记）；按片段完全匹配、包含、词 / 汉字二元组覆盖打分，发布时间前后在播的条目加分；取前 12 个 + 前 3 个的关联条目。召回（634 个已标注种子）：生产候选列表 100%，仅用文件名 91.5% → 97.2%。
+- 有文件没选到条目且模型给出 `suggested_title` 时，用它在本地库检索（同一索引 + 前几名的关联条目），找到新候选就**再问一次**（只问这些文件）。
+- 校验与 Clef 相同（候选 id、数字必须出现在文件名里、分割放送换算后在官方章节里、季数一致）。**直接应用**另需：自报置信度 ≥ 0.9（几乎所有回答都是 0.98+，不能单独用）、**标题 / 路径里出现该条目的名字**（`meta.NameEvidence`，去掉季 / Part 标记后比较）、不与文件名解析的集数 / 明确的特别篇类型矛盾、未列入官方章节的特别篇须同一种子里有同条目的已应用正片；否则进审核。
+- **日期闸门**（两种后端都有，`clef.GateRelease`）：发布时间晚于所选集的官方播出日期（分割放送换算后）超过 30 天、或早于它 7 天以上 → 人工审核，原因「日期不符」；该集无播出日期时用条目的播出区间（开播 − 7 天 … 完结 + 30 天，无完结日期则不设上限）。BD / 合集进审核是预期的。
+- **发布时间**：抓取源的 `published_at`；用户提交的种子用 `torrents.submitted_at`（迁移 11，第一次有用户提交 / 播放该种子时记录一次，同时记 `submitted_by` = 应用库的用户 id（无外键），之后不改；抓取的种子不设）。用户行的 `published_at` 不算发布时间，.torrent 的 creation date 也不用。之后被抓取到时抓取的 `published_at` 优先。**两者都没有** → 「缺少发布时间」：决策模型的结果进审核，**规则**也不自动映射——确定的规则映射写成待审核的决策记录（`clef_decisions.source = rule`），接受后写入映射（`method = review`、`status = verified`），重新分类也跳过这类种子。目的：防止有人提交伪造成正式发布名的种子来获得映射。
+- 校准 v2（240 个种子，medium，候选来自不借助规则的真实检索，负样本主要是「真实条目不在库中」时的真实检索结果）：模型单独 94.3% 精度 / 98.9% 覆盖（正样本中候选里有正确条目时从未选错条目）；加上全部闸门 244/244 正确、覆盖 91.4%；中位延迟 4.4 秒、约 1.2k + 0.13k token / 种子；见 [research/decision-model-calibration.md](research/decision-model-calibration.md)。
+- 并发（默认 2）、每分钟请求数、每日上限、超时都可在后台设置；API Key 为 secret。
+- **重新判断异常映射**：后台按钮列出自动映射中「集数（分割放送换算后）不在官方正片列表里」的文件（只检查有官方列表的条目、整数集数），把这些种子连同这些文件（`clef_jobs.files`，迁移 10）交给决策模型；原映射保留，直到有新判断替换（`ApplyClef` 允许覆盖这些文件）。生产环境未执行。
+
+**Clef 后端 / 共用部分**（`internal/clef`，worker 在 otd 内；映射库迁移 9：`clef_jobs`、`clef_decisions`）：
 - 入队：`Match` 发现不确定的视频文件 → `clef_jobs`（每个种子一个）；worker 取最新的到期任务，只处理 3 天内入队的（停用期间的积压过期）。
 - 每个种子：候选条目 ≤ 20（规则锚点与推测、标题 / 文件名 FTS 命中、前几名的 前传/续集/关联条目），选项 id `bgm_624085`，criteria = `{title, cn, aliases, air_date, eps, type, season}` + `none`；**条目请求**：`subject`（choice）+ 每个候选一个是/否问题 `v_bgm_…`（「正是这个条目吗」）；**集数请求**：每个文件 `f{i}_ep`（文件名中的数字 `n_03`、`n_1080`… + none）与 `f{i}_kind`（main/sp/op/ed/pv/cm/other）；多季合集等文件属于不同条目时改为逐文件 `f{i}_subject`。state = `{a_torrent, b_files, c_published}`。超过 64 个问题或 token 预算时拆分。
 - 校验：条目必须是候选；类型 + 数字 → 集的键，经 `CanonicalKey`（分割放送换算）后必须在官方章节里；与文件名季号不符的候选概率置 0 后重新归一化（条件化）。
-- 判定（阈值后台可改，校准见 [research/clef-calibration.md](research/clef-calibration.md)）：指标 = 各问题概率的最小值（条目取是/否问题的「是」概率），≥ 0.8 且概率差 ≥ 0.3 → 直接写入（`torrent_files.method = 'clef'`，之后的自动匹配不覆盖）；≥ 0.5 → 审核队列；以下不映射。条目早已完结（完结 > 1 年 / 无完结日期且开播 > 2 年）一律进审核（同名重制 / 新作可能尚未收录）。
+- 判定（阈值后台可改，校准见 [research/decision-model-calibration.md](research/decision-model-calibration.md)）：指标 = 各问题概率的最小值（条目取是/否问题的「是」概率），≥ 0.8 且概率差 ≥ 0.3 → 直接写入（`torrent_files.method = 'clef'`，之后的自动匹配不覆盖）；≥ 0.5 → 审核队列；以下不映射。条目早已完结（完结 > 1 年 / 无完结日期且开播 > 2 年）一律进审核（同名重制 / 新作可能尚未收录）。
 - 每个文件一条 `clef_decisions`（选择、前几名概率、指标、模型、状态 applied/pending/rejected/discarded、原因）；后台可接受 / 拒绝 / 撤销（撤销 = 文件改为未映射且 verified）。
 - 限流（每分钟请求数）、每日上限（UTC），失败指数退避（5/10/20/40 分钟，最多 5 次）；免费额度用尽（4006）与每日上限一样顺延到次日。
-- 后台页 `/admin/clef`：状态、设置（「决策模型」组）、试运行、决策记录 / 审核队列、最近任务。
+- 后台页 `/admin/clef`：状态、设置（「决策模型」组，按所选后端只显示相应字段）、试运行（两种后端都可）、异常映射、决策记录 / 审核队列、最近任务。
 - 待改进：官方章节滞后（每周 dump）时，最新一集会被校验拒绝（discarded，不会自动重试）；独立部署的 metad 没有 worker（任务只入队）；多季合集的逐文件条目问题没有是/否确认，校准样本少。

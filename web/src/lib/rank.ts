@@ -3,17 +3,17 @@
 import type { Access, RankRules, SwarmStats } from "./types"
 
 export const DEFAULT_RANK_RULES: RankRules = {
-  availability: { server_complete: 2, wt_seeder: 2, wt_cap: 6, bt_seeder: 1, bt_cap: 4, curve: "log", dead: -100 },
+  availability: { server_complete: 2, wt_seeder: 2, wt_cap: 6, bt_seeder: 1, bt_cap: 10, curve: "log", dead: -100 },
   keywords: [
     { label: "简体中文", pattern: String.raw`简|chs|\bsc\b|\bgb\b|zh-?hans`, score: 25, group: "字幕" },
-    { label: "繁体中文", pattern: String.raw`繁|cht|\btc\b|big5|zh-?hant`, score: 12, group: "字幕" },
-    { label: "1080p", pattern: String.raw`1080[pi]?\b|1920x1080`, score: 10, group: "分辨率" },
-    { label: "4K", pattern: String.raw`2160p?\b|3840x2160|\b4k\b`, score: 5, group: "分辨率" },
-    { label: "720p", pattern: String.raw`720p\b|1280x720`, score: 4, group: "分辨率" },
+    { label: "繁体中文", pattern: String.raw`繁|cht|\btc\b|big5|zh-?hant`, score: 20, group: "字幕" },
+    { label: "1080p", pattern: String.raw`1080[pi]?\b|1920x1080`, score: 15, group: "分辨率" },
+    { label: "4K", pattern: String.raw`2160p?\b|3840x2160|\b4k\b`, score: 8, group: "分辨率" },
+    { label: "720p", pattern: String.raw`720p\b|1280x720`, score: 5, group: "分辨率" },
     { label: "HEVC", pattern: String.raw`hevc|[hx]\.?265`, score: 2, group: "" },
   ],
   teams: [],
-  size: { max: 6, full_below_mb: 300, zero_above_mb: 1500 },
+  size: { max: 16, full_below_mb: 200, zero_above_mb: 1000 },
   oversize: -10,
 }
 

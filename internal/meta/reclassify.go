@@ -105,6 +105,9 @@ func (s *Store) Reclassify(ctx context.Context) (int, error) {
 }
 
 func (s *Store) reclassifyTorrent(ctx context.Context, ih, title string) (int, error) {
+	if rt, _ := s.ReleaseTime(ctx, ih); rt.IsZero() {
+		return 0, nil // no release time: never mapped automatically (Match queued a review)
+	}
 	rows, err := s.R.QueryContext(ctx, `SELECT file_index, path, kind, work_key, episode, status, method FROM torrent_files WHERE infohash = ? ORDER BY file_index`, ih)
 	if err != nil {
 		return 0, err

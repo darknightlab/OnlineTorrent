@@ -75,23 +75,49 @@ const (
 	KeyClefReview    = "clef.review_threshold"
 	KeyClefRate      = "clef.rate_per_min"
 	KeyClefDailyCap  = "clef.daily_cap"
+	KeyClefProvider  = "clef.provider" // openai (LLM, default) | clef
+
+	// LLM backend (OpenAI-compatible chat completions with structured output)
+	KeyLLMBaseURL     = "llm.base_url"
+	KeyLLMAPIKey      = "llm.api_key"
+	KeyLLMModel       = "llm.model"
+	KeyLLMTimeoutSec  = "llm.timeout_sec"
+	KeyLLMConcurrency = "llm.concurrency"
+	KeyLLMRate        = "llm.rate_per_min"
+	KeyLLMDailyCap    = "llm.daily_cap"
+	KeyLLMApply       = "llm.apply_threshold"
+	KeyLLMReview      = "llm.review_threshold"
+	KeyLLMAgreement   = "llm.require_agreement"
+	KeyLLMEffort      = "llm.reasoning_effort"
 )
 
-// clefSettings: group 决策模型 (defaults calibrated, docs/research/clef-calibration.md).
+// clefSettings: group 决策模型 (defaults calibrated, docs/research/decision-model-calibration.md).
 func clefSettings() []SettingSpec {
 	const g = "决策模型"
 	return []SettingSpec{
-		{Key: KeyClefEnabled, Group: g, Type: "bool", Label: "启用决策模型", Description: "规则无法确定的新收录种子文件，由 Cloudflare Workers AI 的 Clef 决策模型在候选条目 / 文件名中的数字里选择（后台队列，只处理最近 3 天入队的种子）；关闭后「测试」仍可用", Default: false},
-		{Key: KeyClefAccountID, Group: g, Type: "string", Label: "Cloudflare Account ID", Default: ""},
-		{Key: KeyClefToken, Group: g, Type: "secret", Label: "API Token", Description: "需要 Workers AI 权限", Default: ""},
-		{Key: KeyClefModel, Group: g, Type: "enum", Label: "模型", Options: []string{"clef-flash", "clef"}, Description: "clef-flash（9B，$0.038 / 百万输入 token）或 clef（27B，$0.24 / 百万）", Default: "clef-flash"},
-		{Key: KeyClefBaseURL, Group: g, Type: "string", Label: "API 地址", Description: "默认 Cloudflare API；可指向本地模拟服务测试", Default: "https://api.cloudflare.com/client/v4"},
-		{Key: KeyClefMetric, Group: g, Type: "enum", Label: "判定指标", Options: []string{"prob", "confidence"}, Description: "prob（推荐，已校准）= 概率：条目取「是否正是该条目」是/否问题的「是」概率，类型与集数取所选选项的概率；confidence = Clef 返回的 confidence（偏低，不推荐）。取该文件各问题的最小值", Default: "prob"},
-		{Key: KeyClefApply, Group: g, Type: "number", Label: "直接应用阈值", Description: "指标 ≥ 此值且概率差 ≥ 下方「最小概率差」时直接写入映射（来源 clef）；早已完结的条目（完结超过 1 年，或无完结日期且开播超过 2 年）一律进入审核", Default: 0.8},
-		{Key: KeyClefMargin, Group: g, Type: "number", Label: "最小概率差", Description: "第一与第二选项的概率差（取各问题最小值）", Default: 0.3},
-		{Key: KeyClefReview, Group: g, Type: "number", Label: "人工审核阈值", Description: "介于此值与直接应用之间的进入审核队列，低于此值不映射", Default: 0.5},
-		{Key: KeyClefRate, Group: g, Type: "number", Label: "每分钟请求数", Default: 60},
-		{Key: KeyClefDailyCap, Group: g, Type: "number", Label: "每日请求上限", Description: "含后台测试；按 UTC 日期计", Default: 2000},
+		{Key: KeyClefEnabled, Group: g, Type: "bool", Label: "启用决策模型", Description: "规则无法确定的新收录种子文件，由决策模型在候选条目里选择（后台队列，只处理最近 3 天入队的种子）；关闭后「测试」仍可用", Default: false},
+		{Key: KeyClefProvider, Group: g, Type: "enum", Label: "决策后端", Options: []string{"openai", "clef"}, Description: "openai = 兼容 OpenAI 的大模型（结构化输出，推荐）；clef = Cloudflare Workers AI 的 Clef", Default: "openai"},
+		{Key: KeyLLMBaseURL, Group: g, Type: "string", Label: "LLM：API 地址", Description: "OpenAI 兼容接口（/chat/completions，需要 json_schema 结构化输出）", Default: "https://sub2api.projectk.org/v1"},
+		{Key: KeyLLMAPIKey, Group: g, Type: "secret", Label: "LLM：API Key", Default: ""},
+		{Key: KeyLLMModel, Group: g, Type: "string", Label: "LLM：模型", Default: "gpt-6-luna"},
+		{Key: KeyLLMEffort, Group: g, Type: "enum", Label: "LLM：推理强度", Options: []string{"default", "minimal", "low", "medium", "high"}, Description: "reasoning_effort；default = 不发送（模型默认）。medium 在缺少正确候选时更愿意回答 null", Default: "medium"},
+		{Key: KeyLLMTimeoutSec, Group: g, Type: "number", Label: "LLM：超时（秒）", Default: 120},
+		{Key: KeyLLMConcurrency, Group: g, Type: "number", Label: "LLM：并发数", Description: "同时处理的种子数（1–8）", Default: 2},
+		{Key: KeyLLMRate, Group: g, Type: "number", Label: "LLM：每分钟请求数", Default: 30},
+		{Key: KeyLLMDailyCap, Group: g, Type: "number", Label: "LLM：每日请求上限", Description: "含后台测试；按 UTC 日期计", Default: 5000},
+		{Key: KeyLLMApply, Group: g, Type: "number", Label: "LLM：直接应用阈值", Description: "模型自报置信度 ≥ 此值、校验通过（条目在候选中、集数在官方章节里、季数一致）、标题里有该条目的名字且与规则解析出的集数一致时直接写入映射；发布时间与本集播出日期不符（晚 30 天以上 / 早 7 天以上）或缺少发布时间的一律进入审核", Default: 0.9},
+		{Key: KeyLLMReview, Group: g, Type: "number", Label: "LLM：人工审核阈值", Description: "校验通过但置信度介于此值与直接应用之间（或与解析的集数不一致）的进入审核队列；低于此值不映射", Default: 0.5},
+		{Key: KeyLLMAgreement, Group: g, Type: "bool", Label: "LLM：要求与解析的集数一致", Description: "文件名解析出了集数而模型给出别的数字时只进审核", Default: true},
+		{Key: KeyClefAccountID, Group: g, Type: "string", Label: "Clef：Cloudflare Account ID", Default: ""},
+		{Key: KeyClefToken, Group: g, Type: "secret", Label: "Clef：API Token", Description: "需要 Workers AI 权限", Default: ""},
+		{Key: KeyClefModel, Group: g, Type: "enum", Label: "Clef：模型", Options: []string{"clef-flash", "clef"}, Description: "clef-flash（9B，$0.038 / 百万输入 token）或 clef（27B，$0.24 / 百万）", Default: "clef-flash"},
+		{Key: KeyClefBaseURL, Group: g, Type: "string", Label: "Clef：API 地址", Description: "默认 Cloudflare API；可指向本地模拟服务测试", Default: "https://api.cloudflare.com/client/v4"},
+		{Key: KeyClefMetric, Group: g, Type: "enum", Label: "Clef：判定指标", Options: []string{"prob", "confidence"}, Description: "prob（推荐，已校准）= 概率：条目取「是否正是该条目」是/否问题的「是」概率，类型与集数取所选选项的概率；confidence = Clef 返回的 confidence（偏低，不推荐）。取该文件各问题的最小值", Default: "prob"},
+		{Key: KeyClefApply, Group: g, Type: "number", Label: "Clef：直接应用阈值", Description: "指标 ≥ 此值且概率差 ≥ 下方「最小概率差」时直接写入映射（来源 clef）；早已完结的条目（完结超过 1 年，或无完结日期且开播超过 2 年）一律进入审核", Default: 0.8},
+		{Key: KeyClefMargin, Group: g, Type: "number", Label: "Clef：最小概率差", Description: "第一与第二选项的概率差（取各问题最小值）", Default: 0.3},
+		{Key: KeyClefReview, Group: g, Type: "number", Label: "Clef：人工审核阈值", Description: "介于此值与直接应用之间的进入审核队列，低于此值不映射", Default: 0.5},
+		{Key: KeyClefRate, Group: g, Type: "number", Label: "Clef：每分钟请求数", Default: 60},
+		{Key: KeyClefDailyCap, Group: g, Type: "number", Label: "Clef：每日请求上限", Description: "含后台测试；按 UTC 日期计", Default: 2000},
 	}
 }
 

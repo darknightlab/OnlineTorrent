@@ -57,9 +57,20 @@ func (s *Store) Match(ctx context.Context, t TorrentInput) error {
 		paths[i] = f.Path
 	}
 	res := s.mapFiles(ctx, paths, t.Title, work, method, wconf, sure)
+	// without any release time (no crawl publish date, no user submission time) nothing is
+	// mapped automatically: certain rule mappings go to the review queue instead (a forged
+	// torrent named like an official release must not get mapped)
+	rt, _ := s.ReleaseTime(ctx, t.Infohash)
+	noRelease := rt.IsZero()
 	queue := false
 	for i, f := range t.Files {
 		kind, wk, ep, conf, m := res[i].kind, res[i].work, res[i].ep, res[i].conf, res[i].method
+		if wkey, ok := wk.(string); ok && noRelease && !res[i].queue {
+			if err := s.queueRuleReview(ctx, t.Infohash, f.Index, f.Path, wkey, kind, ep, conf); err != nil {
+				return err
+			}
+			wk, conf, m = nil, 0, ""
+		}
 		// automatic rows are rewritten, except decision-model mappings (method clef) and, for
 		// an uncertain result, rows that are already mapped: existing mappings stay as they
 		// are (a re-delivered torrent is not re-decided)
@@ -127,15 +138,18 @@ func (s *Store) upsertTorrentRow(ctx context.Context, t TorrentInput, status str
 		b, _ := json.Marshal(t.Tags)
 		tags = string(b)
 	}
-	_, err := s.W.ExecContext(ctx, `INSERT INTO torrents(infohash,seq,title,source,source_id,team,team_id,published_at,size_bytes,file_count,tags,trusted,source_kind,page_url,status,updated_at)
-		VALUES(?,(SELECT COALESCE(MAX(seq),0)+1 FROM torrents),?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	if t.Source != "user" && t.SourceKind != "user" {
+		t.SubmittedAt, t.SubmittedBy = "", nil // only user submissions carry them
+	}
+	_, err := s.W.ExecContext(ctx, `INSERT INTO torrents(infohash,seq,title,source,source_id,team,team_id,published_at,size_bytes,file_count,tags,trusted,source_kind,page_url,status,updated_at,submitted_at,submitted_by)
+		VALUES(?,(SELECT COALESCE(MAX(seq),0)+1 FROM torrents),?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(infohash) DO UPDATE SET title=CASE WHEN excluded.title!='' AND (title='' OR `+takeSource+`) THEN excluded.title ELSE title END,
 		source=CASE WHEN `+takeSource+` THEN excluded.source ELSE source END,
 		source_kind=CASE WHEN `+takeSource+` THEN excluded.source_kind ELSE source_kind END,
 		source_id=CASE WHEN `+takeSource+` THEN excluded.source_id ELSE source_id END,
 		team=CASE WHEN excluded.team!='' THEN excluded.team ELSE team END,
 		team_id=CASE WHEN excluded.team_id!='' THEN excluded.team_id ELSE team_id END,
-		published_at=CASE WHEN excluded.published_at!='' AND (published_at='' OR excluded.trusted > trusted) THEN excluded.published_at ELSE published_at END,
+		published_at=CASE WHEN excluded.published_at!='' AND (published_at='' OR excluded.trusted > trusted OR (source IN ('', 'user') AND excluded.source NOT IN ('', 'user'))) THEN excluded.published_at ELSE published_at END,
 		size_bytes=CASE WHEN excluded.size_bytes>0 THEN excluded.size_bytes ELSE size_bytes END,
 		file_count=CASE WHEN excluded.file_count>0 THEN excluded.file_count ELSE file_count END,
 		tags=CASE WHEN excluded.tags!='[]' THEN excluded.tags ELSE tags END,
@@ -145,7 +159,7 @@ func (s *Store) upsertTorrentRow(ctx context.Context, t TorrentInput, status str
 		seq=COALESCE(seq, excluded.seq),
 		updated_at=excluded.updated_at`,
 		t.Infohash, t.Title, t.Source, store.Trunc(t.SourceID, 200), t.Team, store.Trunc(t.TeamID, 64), t.PublishedAt, size, files, tags,
-		boolInt(t.Trusted), t.SourceKind, store.Trunc(t.PageURL, 500), status, now)
+		boolInt(t.Trusted), t.SourceKind, store.Trunc(t.PageURL, 500), status, now, t.SubmittedAt, t.SubmittedBy)
 	return err
 }
 

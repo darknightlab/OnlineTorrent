@@ -159,6 +159,7 @@ func (s *Store) SyncArchive(ctx context.Context, hc *http.Client, ua string, for
 		return st, false, fmt.Errorf("relations: %w", err)
 	}
 	s.resetEpisodeOffsets()
+	s.resetCandidateIndex()
 	st = ArchiveStatus{Dump: latest.Name, DumpAt: latest.CreatedAt, Digest: latest.Digest, SyncedAt: store.Now(), CheckedAt: st.CheckedAt,
 		Subjects: len(anime), Episodes: nEp, Relations: nRel, DurationSec: time.Since(started).Round(time.Second).Seconds()}
 	return st, false, nil

@@ -246,21 +246,21 @@ qB 拿到元数据后，后端把文件列表写入本地库并刮削（每个 i
 - tracker 状态是**被动**的：只记录每个已配置 tracker 最后一次实际使用（上述按需查询）时的结果，从不为检测主动发请求；保存在内存（重启后为「尚未使用」）。
 
 ## 推荐规则
-`/site.rank_rules`（后台「推荐规则」编辑，设置键 `rank.rules`，不在 `/admin/settings` 中；`/site` 返回规范化后的完整对象）。单集页在浏览器里给每个文件打分（`web/src/lib/rank.ts`，纯函数），按「当前用户可播放（策略 allow）→ 总分 → 发布时间新 → 原顺序」排序，自动播放第一个；策略不允许的始终排最后、不会被自动播放。自动选中后在本页固定（做种人数刷新导致重新排序时不切换）。默认值的依据与 39 个场景见 [research/rank-rules.md](research/rank-rules.md)。
+`/site.rank_rules`（后台「推荐规则」编辑，设置键 `rank.rules`，不在 `/admin/settings` 中；`/site` 返回规范化后的完整对象）。单集页在浏览器里给每个文件打分（`web/src/lib/rank.ts`，纯函数），按「当前用户可播放（策略 allow）→ 总分 → 发布时间新 → 原顺序」排序，自动播放第一个；策略不允许的始终排最后、不会被自动播放。自动选中后在本页固定（做种人数刷新导致重新排序时不切换）。默认值的依据与 41 个场景见 [research/rank-rules.md](research/rank-rules.md)。
 ```json
 { "availability": { "server_complete": 2,            // 服务器已缓存（小加分）
                     "wt_seeder": 2, "wt_cap": 6,     // WebTorrent 做种：系数、上限
-                    "bt_seeder": 1, "bt_cap": 4,     // BT 做种（只对有做种权限 POST …/seed 的用户）
+                    "bt_seeder": 1, "bt_cap": 10,    // BT 做种（只对有做种权限 POST …/seed 的用户）
                     "curve": "log",                  // log：系数 × log2(1+人数)；linear：每人 系数 分（缺省 = linear）
                     "dead": -100 },                  // 无人做种，见下
   "keywords": [ {"label": "简体中文", "pattern": "简|chs|\\bsc\\b|\\bgb\\b|zh-?hans", "score": 25, "group": "字幕"},  // 不区分大小写，匹配 种子标题 + 文件路径
-                {"label": "繁体中文", "pattern": "繁|cht|\\btc\\b|big5|zh-?hant", "score": 12, "group": "字幕"},       // 同一 group 只取命中的最高分
-                {"label": "1080p", "pattern": "1080[pi]?\\b|1920x1080", "score": 10, "group": "分辨率"},
-                {"label": "4K", "pattern": "2160p?\\b|3840x2160|\\b4k\\b", "score": 5, "group": "分辨率"},
-                {"label": "720p", "pattern": "720p\\b|1280x720", "score": 4, "group": "分辨率"},
+                {"label": "繁体中文", "pattern": "繁|cht|\\btc\\b|big5|zh-?hant", "score": 20, "group": "字幕"},       // 同一 group 只取命中的最高分
+                {"label": "1080p", "pattern": "1080[pi]?\\b|1920x1080", "score": 15, "group": "分辨率"},
+                {"label": "4K", "pattern": "2160p?\\b|3840x2160|\\b4k\\b", "score": 8, "group": "分辨率"},
+                {"label": "720p", "pattern": "720p\\b|1280x720", "score": 5, "group": "分辨率"},
                 {"label": "HEVC", "pattern": "hevc|[hx]\\.?265", "score": 2, "group": ""} ],
   "teams": [ {"name": "字幕组名（精确匹配）", "score": 5} ],   // 默认 []
-  "size": { "max": 6, "full_below_mb": 300, "zero_above_mb": 1500 },  // 小文件加分：≤300 MB 满分，≥1500 MB 0，中间线性；大小未知不加
+  "size": { "max": 16, "full_below_mb": 200, "zero_above_mb": 1000 },  // 小文件加分：≤200 MB 满分，≥1000 MB 0，中间线性（每 100 MB 2 分）；大小未知不加
   "oversize": -10 }   // 文件大于 play.max_auto_size_mb
 ```
 - 分数可为小数（显示取整，tooltip 给明细）。
@@ -301,13 +301,15 @@ qB 拿到元数据后，后端把文件列表写入本地库并刮削（每个 i
     "stats":{torrents, scraped, known, dead}, "lists":{"webtorrent":[…],"bt":[…]}}`。
   状态为最后一次实际使用时的结果（被动记录，启动以来；未使用为 `unused`），计数为启动以来。两个列表在该页编辑，经 `PUT /admin/settings` 保存（`webtorrent.trackers` 只接受 ws/wss，`bt.trackers` 只接受 udp（需端口）/ http(s)，各 ≤ 50 个，去空白去重）。
 - 推荐规则（后台页 `/admin/rank-rules`）：`GET /admin/rank-rules` → `{rules, defaults}`；`PUT /admin/rank-rules` body = 规则对象 → `{rules（规范化后）, defaults}`，记审计日志 `rank_rules.update`。
-- 决策模型（Cloudflare Workers AI · Clef，后台页 `/admin/clef`；设计见 plan.md「规则收紧 + 决策模型 Clef」，阈值校准见 research/clef-calibration.md）：
-  - `GET /admin/clef` → `{enabled, configured, model, base_url, thresholds:{metric,apply,margin,review}, rate_per_min, daily_cap, today, jobs:{pending,done,failed,expired}, decisions:{applied,pending,rejected,discarded}, recent_jobs:[ClefJob], current?, last_error?, last_error_at?, last_ok_at?, session:{requests,input_tokens}}`。`today` = 今天（UTC）已发请求数（含试运行）。ClefJob：`{infohash, title, status: pending|done|failed|expired, attempts, requests, next_at, last_error, created_at, updated_at}`。
-  - `POST /admin/clef/test` `{infohash}` → `{rules:[{index,path,kind,work_key?,episode?,queue,hint?}], outcome:{task:{title,published,files,candidates,per_file}, model, requests, answers, decisions:[{file, candidate?, kind, episode?, episode_key?, score, margin, confidence, answers, status, reason?}], usage, sent}, error?}`：试运行（不写库，计入每日上限；结果里的 `status` = 会发生什么），对本地库中的种子全部视频（extra 除外）请求一次；`rules` 是当前规则的结果。infohash 无效 400；不在本地库 404；未配置 Account ID / Token 400 `not_configured`；调用失败时 200 并带 `error`。
-  - `GET /admin/clef/decisions?status=applied|pending|rejected|discarded&ih=&page=` → 分页 `{items:[ClefDecision], page, page_count, total}`（每页 30，新的在前）。ClefDecision：`{id, infohash, file_index, path, torrent_title, work_key?, subject_id?, title?, title_cn?, kind, episode, episode_key?, score, margin, confidence, answers:{问题 id: {choice, confidence, top:[{id,p}], conditioned?}}, model, status, reason, created_at, decided_at?, decided_by?}`。`reason`：`none`（模型选「无」）、`invalid_subject`、`not_episode`、`no_number`、`invalid_number`、`episode_not_official`、`season_mismatch`、`low_confidence`、`old_entry`（pending：条目早已完结，不自动应用）、`conflict`、`no_answer`。`answers.verify` = 各候选「正是该条目」的「是」概率。
-  - `POST /admin/clef/decisions/id/{id}/accept`：pending → 重新校验并写入映射（`method = clef`），状态 applied；`POST …/reject`：pending → rejected；applied → **撤销**（文件改为未映射、`status = verified`、`method = manual`，之后自动匹配不再动它），状态 rejected。状态不允许或文件已被改动 409 `conflict`。均记审计日志（`clef.accept` / `clef.reject`）。
+- 决策模型（后端 `openai` = 兼容 OpenAI 的大模型结构化输出（默认）或 `clef` = Cloudflare Workers AI Clef；后台页 `/admin/clef`；设计见 plan.md「规则收紧 + 决策模型」，阈值校准见 research/decision-model-calibration.md）：
+  - `GET /admin/clef` → `{enabled, configured, provider: openai|clef, model, base_url, thresholds:{metric,apply,margin,review}（Clef）, llm_thresholds:{apply,review,require_agreement}（LLM）, concurrency, rate_per_min, daily_cap, today, jobs:{pending,done,failed,expired}, decisions:{applied,pending,rejected,discarded}, recent_jobs:[ClefJob], current?（处理中的 infohash，逗号分隔）, last_error?, last_error_at?, last_ok_at?, session:{requests,input_tokens}}`。`today` = 今天（UTC）已发请求数（含试运行）。ClefJob：`{infohash, title, status: pending|done|failed|expired, attempts, requests, next_at, last_error, created_at, updated_at}`。
+  - `POST /admin/clef/test` `{infohash}` → `{rules:[{index,path,kind,work_key?,episode?,queue,hint?}], outcome:{provider, task:{title,published,files,candidates,per_file}, model, requests?, answers?（Clef）, llm?:{model, rounds, requests, prompt_tokens, completion_tokens, latency_ms, suggested_title?, added_candidates?, answers}（LLM）, decisions:[{file, candidate?, kind, episode?, episode_key?, score, margin, confidence, answers, status, reason?}], usage, sent}, release:{time?, by?: published|submitted, submitted_by?, submitter?}, error?}`：试运行（不写库，计入每日上限；结果里的 `status` = 会发生什么），对本地库中的种子全部视频（extra 除外）请求一次；`rules` 是当前规则的结果。infohash 无效 400；不在本地库 404；未配置 Account ID / Token 400 `not_configured`；调用失败时 200 并带 `error`。
+  - `GET /admin/clef/decisions?status=applied|pending|rejected|discarded&ih=&page=` → 分页 `{items:[ClefDecision], page, page_count, total}`（每页 30，新的在前）。ClefDecision：`{id, infohash, file_index, path, torrent_title, work_key?, subject_id?, title?, title_cn?, kind, episode, episode_key?, score, margin, confidence, answers:{问题 id: {choice, confidence, top:[{id,p}], conditioned?}}, model, status, reason, created_at, decided_at?, decided_by?}`。`reason`：`none`（模型选「无」）、`invalid_subject`、`not_episode`、`no_number`、`invalid_number`、`episode_not_official`、`season_mismatch`、`low_confidence`、`old_entry`（pending：Clef 后端，条目早已完结）、`conflict`、`no_answer`；pending 原因另有 `date_mismatch: <说明>`（日期不符：发布时间晚于本集播出 30 天以上 / 早 7 天以上，无播出日期时按条目播出区间；两种后端）、`missing_release_time`（缺少发布时间：没有抓取发布时间也没有用户提交时间；决策模型与规则）、`no_name_evidence`（LLM：标题 / 路径里没有该条目的名字）、`parser_disagrees`（LLM：与文件名解析的集数 / 特别篇类型不一致）、`unlisted_special`。另有字段 `source`（`model` | `rule`：规则映射因缺少发布时间而待审核）、`submitted_at?` / `submitted_by?` / `submitter?`（用户提交的种子：提交时间、应用库用户 id、用户名；已删除的用户显示为 `#id`）。`answers.verify` = 各候选「正是该条目」的「是」概率（Clef）；`answers.llm` = `{choice: "subject kind episode", confidence, note}`（LLM，`margin` 为 -1）。
+  - `POST /admin/clef/decisions/id/{id}/accept`：pending → 重新校验并写入映射（模型决策 `method = clef`；规则决策 `method = review`、`status = verified`），状态 applied；`POST …/reject`：pending → rejected；applied → **撤销**（文件改为未映射、`status = verified`、`method = manual`，之后自动匹配不再动它），状态 rejected。状态不允许或文件已被改动 409 `conflict`。均记审计日志（`clef.accept` / `clef.reject`）。
   - `POST /admin/clef/jobs/hash/{ih}/run` → 202 + `GET /admin/clef` 结构：把种子（重新）加入队列并唤醒 worker（只处理其中未映射的自动行）。
-  - 设置（`GET/PUT /admin/settings`，组「决策模型」）：`clef.enabled`（bool，默认 false，控制后台 worker）、`clef.account_id`、`clef.api_token`（secret：GET 只返回 `is_set`，空串表示不修改；需要 Workers AI 权限）、`clef.model`（`clef-flash` 默认 / `clef`）、`clef.base_url`（默认 `https://api.cloudflare.com/client/v4`，可指向本地模拟服务）、`clef.metric`（`prob` 默认 / `confidence`）、`clef.apply_threshold`（0.8）、`clef.apply_margin`（0.3）、`clef.review_threshold`（0.5）、`clef.rate_per_min`（60，1…300）、`clef.daily_cap`（2000，UTC 日）。
+  - `GET /admin/clef/anomalies` → `{items:[{infohash, title, files:[{index, path, work_key, title, episode, official}]}], torrents, files}`：自动映射（非 clef、status auto、整数正片）中集数经分割放送换算后不在条目官方正片列表里的文件（只看有官方列表的条目；`official` = 官方正片区间）。
+  - `POST /admin/clef/anomalies/run` `{infohashes?}` → 202 `{queued}`：重新判断异常映射——把这些种子（省略 = 全部）连同其异常文件加入决策模型队列；原映射保留，直到新判断应用时覆盖（判断为不映射时不动）。记审计日志 `clef.anomalies`。
+  - 设置（`GET/PUT /admin/settings`，组「决策模型」）：`clef.enabled`（bool，默认 false，控制后台 worker）、`clef.provider`（`openai` 默认 / `clef`）；LLM：`llm.base_url`（默认 `https://sub2api.projectk.org/v1`）、`llm.api_key`（secret）、`llm.model`（`gpt-6-luna`）、`llm.reasoning_effort`（`default`（不发送）/ `minimal` / `low` / `medium` 默认 / `high`）、`llm.timeout_sec`（120）、`llm.concurrency`（2，1–8）、`llm.rate_per_min`（30）、`llm.daily_cap`（5000）、`llm.apply_threshold`（0.9）、`llm.review_threshold`（0.5）、`llm.require_agreement`（true）；Clef：`clef.account_id`、`clef.api_token`（secret：GET 只返回 `is_set`，空串表示不修改；需要 Workers AI 权限）、`clef.model`（`clef-flash` 默认 / `clef`）、`clef.base_url`（默认 `https://api.cloudflare.com/client/v4`，可指向本地模拟服务）、`clef.metric`（`prob` 默认 / `confidence`）、`clef.apply_threshold`（0.8）、`clef.apply_margin`（0.3）、`clef.review_threshold`（0.5）、`clef.rate_per_min`（60，1…600）、`clef.daily_cap`（2000，UTC 日）。
 - `GET /admin/plays?page=`：播放/推送记录
 - `GET /admin/audit?page=`
 - `GET /admin/stats`：`{users, plays_24h, qb_online, qb_total, pending_reviews}`
@@ -347,6 +349,8 @@ Source：
 ## 映射服务 `/meta/v1/*`（metad，可独立部署；默认与 otd 同进程挂载）
 映射粒度是**文件级**：`(infohash, file_index)` → 作品 + 集。种子的每个文件一行（含字幕、字体等，`kind=other`）。`episode`（正片）与特别篇 `sp`/`op`(NCOP)/`ed`(NCED)/`pv`/`cm` 映射到作品 + 集，`episode` 列存正片集数或特别篇编号（没有编号的特别篇为 1；如 `NCOP2` → `kind=op, episode=2`）；Menu/Sample/Preview/特典（`extra`）与非视频（`other`）不映射。集的键由 `kind` + `episode` 得出（`op` → `ncop`，`ed` → `nced`）。
 - 迁移 5（2026-10）：`meta_state` 表 + 一次性重新分类：otd / metad 启动时在后台对已存储的文件路径重跑 `ClassifyFile`（只改 `status=auto` 的行；作品沿用该种子已映射的作品，种子原来没有作品且有文件新变为可映射时重新匹配），完成后标记 `reclassify_specials_v1=done`，之后不再执行。
+- 迁移 11（2026-10）：`torrents.submitted_at`（用户提交的种子第一次被提交 / 播放的时间，之后不改；抓取的种子为空）、`torrents.submitted_by`（提交者在应用库中的用户 id，游客 / 抓取为 NULL，无外键）；`clef_decisions.source`（`model` | `rule`）。
+- 迁移 10（2026-10）：`clef_jobs.files`（重新判断异常映射时要重新判断的已映射文件序号，逗号分隔）。
 - 迁移 9（2026-10）：决策模型 `clef_jobs(infohash PK, status, attempts, requests, next_at, last_error, created_at, updated_at)`、`clef_decisions(id, infohash, file_index, path, work_key, kind, episode, episode_key, score, margin, confidence, answers JSON, model, status, reason, created_at, decided_at, decided_by)`。
 - 迁移 7（2026-10）：`torrent_metainfo(infohash PK, data BLOB, source crawl|qb|bangumi.moe, created_at)`：种子文件原文（写入前校验 bencode、≤ 5 MB、v1 infohash 一致），见 `GET /api/v1/torrents/hash/{ih}/torrent`。
 

@@ -85,17 +85,17 @@ const (
 // DEFAULT_RANK_RULES in web/src/lib/rank.ts.
 func Default() Rules {
 	return Rules{
-		Availability: Availability{ServerComplete: 2, WTSeeder: 2, WTCap: 6, BTSeeder: 1, BTCap: 4, Curve: CurveLog, Dead: -100},
+		Availability: Availability{ServerComplete: 2, WTSeeder: 2, WTCap: 6, BTSeeder: 1, BTCap: 10, Curve: CurveLog, Dead: -100},
 		Keywords: []Keyword{
 			{Label: "简体中文", Pattern: `简|chs|\bsc\b|\bgb\b|zh-?hans`, Score: 25, Group: "字幕"},
-			{Label: "繁体中文", Pattern: `繁|cht|\btc\b|big5|zh-?hant`, Score: 12, Group: "字幕"},
-			{Label: "1080p", Pattern: `1080[pi]?\b|1920x1080`, Score: 10, Group: "分辨率"},
-			{Label: "4K", Pattern: `2160p?\b|3840x2160|\b4k\b`, Score: 5, Group: "分辨率"},
-			{Label: "720p", Pattern: `720p\b|1280x720`, Score: 4, Group: "分辨率"},
+			{Label: "繁体中文", Pattern: `繁|cht|\btc\b|big5|zh-?hant`, Score: 20, Group: "字幕"},
+			{Label: "1080p", Pattern: `1080[pi]?\b|1920x1080`, Score: 15, Group: "分辨率"},
+			{Label: "4K", Pattern: `2160p?\b|3840x2160|\b4k\b`, Score: 8, Group: "分辨率"},
+			{Label: "720p", Pattern: `720p\b|1280x720`, Score: 5, Group: "分辨率"},
 			{Label: "HEVC", Pattern: `hevc|[hx]\.?265`, Score: 2},
 		},
 		Teams:    []Team{},
-		Size:     SizeBonus{Max: 6, FullBelowMB: 300, ZeroAboveMB: 1500},
+		Size:     SizeBonus{Max: 16, FullBelowMB: 200, ZeroAboveMB: 1000},
 		Oversize: -10,
 	}
 }
@@ -105,6 +105,8 @@ func Default() Rules {
 var legacyDefaults = []string{
 	// v1 (2026-10, 7d2effb): server_complete +30 dominated, no size bonus
 	`{"availability":{"server_complete":30,"wt_seeder":5,"wt_cap":30,"bt_seeder":1,"bt_cap":20,"dead":-100},"keywords":[{"label":"HEVC","pattern":"hevc|[hx]\\.?265","score":3},{"label":"1080p","pattern":"1080|1920","score":3},{"label":"4K","pattern":"2160|\\b4k\\b","score":1},{"label":"简体","pattern":"简|chs|\\bsc\\b|\\bgb\\b","score":2},{"label":"繁体","pattern":"繁|cht|\\btc\\b|big5","score":1}],"teams":[],"oversize":-10}`,
+	// v2 (2026-10, e23a33a): BT cap 4, 繁体 12, size bonus 6 over 300–1500 MB
+	`{"availability":{"server_complete":2,"wt_seeder":2,"wt_cap":6,"bt_seeder":1,"bt_cap":4,"curve":"log","dead":-100},"keywords":[{"label":"简体中文","pattern":"简|chs|\\bsc\\b|\\bgb\\b|zh-?hans","score":25,"group":"字幕"},{"label":"繁体中文","pattern":"繁|cht|\\btc\\b|big5|zh-?hant","score":12,"group":"字幕"},{"label":"1080p","pattern":"1080[pi]?\\b|1920x1080","score":10,"group":"分辨率"},{"label":"4K","pattern":"2160p?\\b|3840x2160|\\b4k\\b","score":5,"group":"分辨率"},{"label":"720p","pattern":"720p\\b|1280x720","score":4,"group":"分辨率"},{"label":"HEVC","pattern":"hevc|[hx]\\.?265","score":2,"group":""}],"teams":[],"size":{"max":6,"full_below_mb":300,"zero_above_mb":1500},"oversize":-10}`,
 }
 
 // IsLegacyDefault reports whether raw equals (as JSON) an earlier built-in default.

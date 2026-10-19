@@ -14,7 +14,7 @@ func TestDefaultValid(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := r.Availability
-	if a.ServerComplete != 2 || a.Dead != -100 || a.Curve != CurveLog || len(r.Keywords) != 6 || r.Oversize != -10 || r.Size.Max != 6 {
+	if a.ServerComplete != 2 || a.BTCap != 10 || a.Dead != -100 || a.Curve != CurveLog || len(r.Keywords) != 6 || r.Oversize != -10 || r.Size.Max != 16 {
 		t.Fatalf("%+v", r)
 	}
 	// the dead penalty stays decisive: more than every bonus together
@@ -33,9 +33,14 @@ func TestDefaultValid(t *testing.T) {
 	if -a.Dead <= sum {
 		t.Fatalf("dead %v not decisive vs max bonus %v", a.Dead, sum)
 	}
-	// subtitle preference beats every availability bonus (scenario 25 / 38)
-	if 25-12 <= a.ServerComplete+a.WTCap+a.BTCap-1 {
-		t.Fatal("简/繁 gap must exceed the availability margin")
+	// 1080p beats 720p unless the 720p file is ≥ 500 MB smaller (size: 2 points / 100 MB)
+	res := map[string]float64{}
+	for _, k := range r.Keywords {
+		res[k.Label] = k.Score
+	}
+	slope := r.Size.Max / float64(r.Size.ZeroAboveMB-r.Size.FullBelowMB) * 100
+	if slope < 2 || res["1080p"]-res["720p"] < 5*slope {
+		t.Fatalf("size slope %.2f/100MB, 1080p−720p %.0f", slope, res["1080p"]-res["720p"])
 	}
 }
 
@@ -57,8 +62,13 @@ func TestDefaultGolden(t *testing.T) {
 }
 
 func TestLegacyDefault(t *testing.T) {
-	if !IsLegacyDefault([]byte(legacyDefaults[0])) {
-		t.Fatal("v1 literal")
+	for i, l := range legacyDefaults {
+		if !IsLegacyDefault([]byte(l)) {
+			t.Fatalf("legacy %d literal", i+1)
+		}
+		if _, err := Parse([]byte(l)); err != nil {
+			t.Fatalf("legacy %d: %v", i+1, err)
+		}
 	}
 	if IsLegacyDefault(DefaultJSON()) {
 		t.Fatal("current default is not legacy")

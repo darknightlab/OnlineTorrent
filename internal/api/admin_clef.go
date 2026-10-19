@@ -26,6 +26,64 @@ func (s *Server) adminClefRoutes(mux *http.ServeMux) {
 	adm("POST", "/api/v1/admin/clef/decisions/id/{id}/accept", "决策模型 · 审核", s.adminClefAccept)
 	adm("POST", "/api/v1/admin/clef/decisions/id/{id}/reject", "决策模型 · 审核", s.adminClefReject)
 	adm("POST", "/api/v1/admin/clef/jobs/hash/{ih}/run", "决策模型 · 测试", s.adminClefRequeue)
+	adm("GET", "/api/v1/admin/clef/anomalies", "决策模型 · 查看", s.adminClefAnomalies)
+	adm("POST", "/api/v1/admin/clef/anomalies/run", "决策模型 · 重新判断异常映射", s.adminClefAnomaliesRun)
+}
+
+// GET /api/v1/admin/clef/anomalies — automatic mappings whose episode (after the split-cour
+// shift) is not in the work's official list
+func (s *Server) adminClefAnomalies(w http.ResponseWriter, r *http.Request) error {
+	list, err := s.Meta.AnomalousMappings(r.Context())
+	if err != nil {
+		return err
+	}
+	files := 0
+	for _, t := range list {
+		files += len(t.Files)
+	}
+	if list == nil {
+		list = []meta.AnomalousTorrent{}
+	}
+	httpx.JSON(w, 200, map[string]any{"items": list, "torrents": len(list), "files": files})
+	return nil
+}
+
+// POST /api/v1/admin/clef/anomalies/run {infohashes?} — queue those torrents (default: all)
+// with their anomalous files for the decision model (重新判断异常映射)
+func (s *Server) adminClefAnomaliesRun(w http.ResponseWriter, r *http.Request) error {
+	var in struct {
+		Infohashes []string `json:"infohashes"`
+	}
+	if err := httpx.Decode(r, &in); err != nil {
+		return err
+	}
+	list, err := s.Meta.AnomalousMappings(r.Context())
+	if err != nil {
+		return err
+	}
+	if len(in.Infohashes) > 0 {
+		want := map[string]bool{}
+		for _, ih := range in.Infohashes {
+			want[strings.ToLower(ih)] = true
+		}
+		var sel []meta.AnomalousTorrent
+		for _, t := range list {
+			if want[t.Infohash] {
+				sel = append(sel, t)
+			}
+		}
+		list = sel
+	}
+	n, err := s.Meta.QueueAnomalies(r.Context(), list)
+	if err != nil {
+		return err
+	}
+	if s.Clef != nil {
+		s.Clef.Wake()
+	}
+	s.audit(r, "clef.anomalies", "", strconv.Itoa(n)+" torrents")
+	httpx.JSON(w, 202, map[string]any{"queued": n})
+	return nil
 }
 
 func (s *Server) clefSvc() (*clef.Service, error) {
@@ -90,6 +148,15 @@ func (s *Server) adminClefTest(w http.ResponseWriter, r *http.Request) error {
 	defer cancel()
 	out, err := c.Decide(ctx, c.Config(), ih, true)
 	resp := map[string]any{"rules": rules, "outcome": out}
+	// release time / submitter of the torrent (user submissions)
+	rel := map[string]any{}
+	if rt, by := s.Meta.ReleaseTime(ctx, ih); !rt.IsZero() {
+		rel["time"], rel["by"] = rt.UTC().Format(time.RFC3339), by
+	}
+	if _, uid := s.Meta.Submitter(ctx, ih); uid != nil {
+		rel["submitted_by"], rel["submitter"] = *uid, s.submitterName(ctx, uid, map[int64]string{})
+	}
+	resp["release"] = rel
 	if err != nil {
 		resp["error"] = err.Error()
 		if errors.Is(err, clef.ErrNotConfigured) {
@@ -123,6 +190,10 @@ func (s *Server) adminClefDecisions(w http.ResponseWriter, r *http.Request) erro
 	items, total, err := s.Meta.ListClefDecisions(r.Context(), status, ih, (page-1)*size, size)
 	if err != nil {
 		return err
+	}
+	names := map[int64]string{}
+	for i := range items {
+		items[i].Submitter = s.submitterName(r.Context(), items[i].SubmittedBy, names)
 	}
 	paged(w, items, page, total, size)
 	return nil
@@ -194,4 +265,21 @@ func (s *Server) adminClefRequeue(w http.ResponseWriter, r *http.Request) error 
 	}
 	httpx.JSON(w, 202, v)
 	return nil
+}
+
+// submitterName resolves an app user id (users live in otd.db; meta stores the plain id).
+// Deleted users show as "#id". cache avoids repeated lookups within a page.
+func (s *Server) submitterName(ctx context.Context, id *int64, cache map[int64]string) string {
+	if id == nil {
+		return ""
+	}
+	if n, ok := cache[*id]; ok {
+		return n
+	}
+	n := "#" + strconv.FormatInt(*id, 10)
+	if u, err := s.St.GetUser(ctx, *id); err == nil && u != nil {
+		n = u.Username
+	}
+	cache[*id] = n
+	return n
 }

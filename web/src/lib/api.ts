@@ -52,6 +52,7 @@ import type {
   ClefStatus,
   ClefDecision,
   ClefTestResponse,
+  ClefAnomalies,
   Paged,
 } from "./types"
 
@@ -249,6 +250,9 @@ export const api = {
     /** pending → rejected；applied → 撤销映射（文件改为未映射、已人工确认） */
     clefReject: (id: number) => post<ClefDecision>(`/admin/clef/decisions/id/${id}/reject`),
     clefRequeue: (ih: string) => post<ClefStatus>(`/admin/clef/jobs/hash/${seg(ih)}/run`),
+    clefAnomalies: () => get<ClefAnomalies>("/admin/clef/anomalies"),
+    /** 重新判断异常映射：把这些种子（默认全部）的异常文件交给决策模型 */
+    clefAnomaliesRun: (infohashes?: string[]) => post<{ queued: number }>("/admin/clef/anomalies/run", { infohashes }),
 
     plays: (page: number) => get<ListLike<PlayRecord>>(`/admin/plays${qs({ page })}`),
     audit: (page: number) => get<ListLike<AuditEntry>>(`/admin/audit${qs({ page })}`),

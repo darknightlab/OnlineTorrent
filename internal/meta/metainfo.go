@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/darknightlab/onlinetorrent/internal/store"
 	"github.com/darknightlab/onlinetorrent/internal/torrentfile"
@@ -122,4 +123,36 @@ func (s *Store) GetMetainfo(ctx context.Context, ih string) ([]byte, error) {
 func (s *Store) HasMetainfo(ctx context.Context, ih string) bool {
 	var one int
 	return s.R.QueryRowContext(ctx, `SELECT 1 FROM torrent_metainfo WHERE infohash = ?`, ih).Scan(&one) == nil
+}
+
+// ReleaseTime is when a torrent was released: the crawl source's publish date (RSS /
+// bangumi.moe published_at); for a user submission its submission time (submitted_at, set
+// once when a user first submitted it — published_at of a user row is not a release date).
+// by says which ("published" | "submitted"); zero time when neither is known. A user
+// torrent that is crawled later becomes a crawl row and its published_at takes precedence.
+func (s *Store) ReleaseTime(ctx context.Context, ih string) (t time.Time, by string) {
+	var pub, src, kind, sub string
+	if err := s.R.QueryRowContext(ctx, `SELECT published_at, source, source_kind, submitted_at FROM torrents WHERE infohash = ?`, ih).Scan(&pub, &src, &kind, &sub); err != nil {
+		return time.Time{}, ""
+	}
+	if src != "user" && kind != "user" {
+		if pt, err := time.Parse(time.RFC3339, pub); err == nil {
+			return pt, "published"
+		}
+	}
+	if st, err := time.Parse(time.RFC3339, sub); err == nil {
+		return st, "submitted"
+	}
+	return time.Time{}, ""
+}
+
+// Submitter returns who submitted a user torrent (app user id; nil for guests / crawled).
+func (s *Store) Submitter(ctx context.Context, ih string) (at string, by *int64) {
+	var b sql.NullInt64
+	_ = s.R.QueryRowContext(ctx, `SELECT submitted_at, submitted_by FROM torrents WHERE infohash = ?`, ih).Scan(&at, &b)
+	if b.Valid {
+		v := b.Int64
+		by = &v
+	}
+	return at, by
 }

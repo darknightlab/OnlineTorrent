@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { AlertTriangle, BrainCircuit, Check, FlaskConical, Loader2, RefreshCw, RotateCcw, Save, Undo2, X } from "lucide-react"
+import { AlertTriangle, BrainCircuit, Check, FlaskConical, Loader2, RefreshCw, RotateCcw, Save, SearchCheck, Undo2, X } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -12,7 +12,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
 import { EmptyState, ErrorState, Pager, Spinner, errorMessage } from "@/components/states"
 import { api } from "@/lib/api"
-import type { ClefAnswerSummary, ClefDecision, ClefFileDecision, ClefStatus, ClefStatusName, ClefTestResponse, SettingItem, SettingValue } from "@/lib/types"
+import type { ClefAnomalies, ClefAnswerSummary, ClefDecision, ClefFileDecision, ClefStatus, ClefStatusName, ClefTestResponse, SettingItem, SettingValue } from "@/lib/types"
 import { formatDateTime, timeAgo } from "@/lib/format"
 import { useNow } from "@/lib/hooks"
 import { cn, watchHref } from "@/lib/utils"
@@ -41,9 +41,22 @@ const REASON_LABEL: Record<string, string> = {
   conflict: "文件已被修改",
   no_answer: "缺少回答",
   old_entry: "条目早已完结，不自动应用",
+  parser_disagrees: "与文件名解析的集数 / 类型不一致",
+  no_name_evidence: "标题 / 路径里没有该条目的名字",
+  unlisted_special: "特别篇不在官方列表且无同条目正片",
+  missing_release_time: "缺少发布时间",
+  date_mismatch: "日期不符",
+}
+
+/** reason label; date_mismatch carries its detail after ": " */
+function reasonLabel(r: string) {
+  const i = r.indexOf(": ")
+  const code = i < 0 ? r : r.slice(0, i)
+  const label = REASON_LABEL[code] ?? code
+  return i < 0 ? label : `${label}：${r.slice(i + 2)}`
 }
 const KIND_LABEL: Record<string, string> = { episode: "正片", sp: "SP", op: "NCOP", ed: "NCED", pv: "PV", cm: "CM" }
-const WHY_LABEL: Record<string, string> = { anchor: "规则锚点", hint: "规则推测", search: "搜索", related: "关联条目" }
+const WHY_LABEL: Record<string, string> = { anchor: "规则锚点", hint: "规则推测", search: "搜索", related: "关联条目", suggested: "按模型建议的标题搜索" }
 
 const pct = (p: number) => `${Math.round(p * 1000) / 10}%`
 
@@ -54,7 +67,7 @@ export default function ClefPage() {
     <div>
       <AdminHeader
         title="决策模型"
-        description="规则无法确定的新收录文件，由 Cloudflare Clef 在候选条目与文件名中的数字里选择；高置信直接写入映射（来源 clef），中等进入审核队列，其余不映射"
+        description="规则无法确定的新收录文件，由决策模型（大模型结构化输出或 Cloudflare Clef）在候选条目里选择；高置信且校验通过的直接写入映射（来源 clef），中等进入审核队列，其余不映射"
         actions={
           <Button variant="outline" size="sm" onClick={() => void qc.invalidateQueries({ queryKey: ["admin", "clef"] })}>
             <RefreshCw />
@@ -75,6 +88,7 @@ export default function ClefPage() {
         </div>
         <div className="min-w-0 space-y-4">
           <TestBox />
+          <AnomaliesCard />
           <SettingsCard />
           <JobsCard s={q.data} />
         </div>
@@ -105,19 +119,22 @@ function StatusCard({ s }: { s?: ClefStatus }) {
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b px-4 py-2.5 text-[13px]">
         <span className="flex items-center gap-1.5 font-semibold">
           <BrainCircuit className="h-4 w-4 text-primary-text" />
-          Clef
+          {s.provider === "clef" ? "Clef" : "LLM"}
         </span>
         <StatusDot ok={s.enabled && s.configured ? true : s.enabled ? false : null} label={s.enabled ? (s.configured ? "已启用" : "已启用 · 未配置") : "未启用"} />
         <Badge variant="outline" className="font-mono">
           {s.model}
         </Badge>
         <span className="text-xs text-muted-foreground">
-          {th.metric === "prob" ? "概率" : "confidence"} ≥ {th.apply} 且差 ≥ {th.margin} 直接应用 · ≥ {th.review} 审核 · {s.rate_per_min} 次/分钟
+          {s.provider === "clef"
+            ? `${th.metric === "prob" ? "概率" : "confidence"} ≥ ${th.apply} 且差 ≥ ${th.margin} 直接应用 · ≥ ${th.review} 审核`
+            : `置信度 ≥ ${s.llm_thresholds.apply}${s.llm_thresholds.require_agreement ? " 且与解析的集数一致" : ""} 直接应用 · ≥ ${s.llm_thresholds.review} 审核 · 并发 ${s.concurrency}`}{" "}
+          · {s.rate_per_min} 次/分钟
         </span>
         {s.current && (
           <span className="inline-flex items-center gap-1 text-xs text-primary-text">
             <Loader2 className="h-3 w-3 animate-spin" />
-            处理中 <Mono>{s.current.slice(0, 10)}…</Mono>
+            处理中 <Mono>{s.current.split(",").length} 个</Mono>
           </span>
         )}
       </div>
@@ -218,7 +235,15 @@ function DecisionCard({ d }: { d: ClefDecision }) {
             <a href={watchHref(d.infohash, d.file_index)} target="_blank" rel="noreferrer" className="wrap-anywhere text-sm font-medium hover:text-primary-text hover:underline">
               {base}
             </a>
-            <p className="mt-0.5 wrap-anywhere text-xs text-muted-foreground">{d.torrent_title}</p>
+            <p className="mt-0.5 wrap-anywhere text-xs text-muted-foreground">
+              {d.torrent_title}
+              {d.source === "rule" && <Badge variant="outline" className="ml-1.5">规则</Badge>}
+              {d.submitted_at && (
+                <span className="ml-1.5">
+                  · 用户提交{d.submitter ? `（${d.submitter}）` : "（游客）"} {formatDateTime(d.submitted_at)}
+                </span>
+              )}
+            </p>
           </div>
           <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
             <Badge variant={STATUS_VARIANT[d.status]}>{STATUS_LABEL[d.status]}</Badge>
@@ -241,9 +266,9 @@ function DecisionCard({ d }: { d: ClefDecision }) {
             <span className="text-muted-foreground">无条目</span>
           )}
           <span className="tabular-nums text-xs text-muted-foreground">
-            指标 {pct(d.score)} · 差 {pct(d.margin)} · conf {pct(d.confidence)} · <span className="font-mono">{d.model}</span>
+            {d.margin < 0 ? `置信度 ${pct(d.score)}` : `指标 ${pct(d.score)} · 差 ${pct(d.margin)} · conf ${pct(d.confidence)}`} · <span className="font-mono">{d.model}</span>
           </span>
-          {d.reason && <span className="text-xs text-warning-text">{REASON_LABEL[d.reason] ?? d.reason}</span>}
+          {d.reason && <span className="text-xs text-warning-text">{reasonLabel(d.reason)}</span>}
         </div>
         <AnswerDetails answers={d.answers} />
         <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
@@ -293,6 +318,7 @@ function AnswerDetails({ answers, open }: { answers: Record<string, ClefAnswerSu
 }
 
 function order(id: string) {
+  if (id === "llm") return -1
   if (id.endsWith("subject")) return 0
   if (id === "verify") return 0.5
   if (id.endsWith("_kind")) return 1
@@ -300,6 +326,7 @@ function order(id: string) {
 }
 
 function questionLabel(id: string) {
+  if (id === "llm") return "大模型回答"
   if (id.endsWith("subject")) return "条目"
   if (id === "verify") return "条目确认（是 / 否）"
   if (id.endsWith("_kind")) return "类型"
@@ -308,6 +335,17 @@ function questionLabel(id: string) {
 }
 
 function AnswerBox({ id, a }: { id: string; a: ClefAnswerSummary }) {
+  if (!a.top?.length)
+    return (
+      <div className="rounded-md border px-2.5 py-2 sm:col-span-2">
+        <div className="mb-1 flex items-center justify-between gap-2 text-xs">
+          <span className="font-medium">{questionLabel(id)}</span>
+          <span className="tabular-nums text-muted-foreground">置信度 {pct(a.confidence)}</span>
+        </div>
+        <p className="font-mono text-xs">{a.choice || "none"}</p>
+        {a.note && <p className="mt-1 text-xs text-muted-foreground">{a.note}</p>}
+      </div>
+    )
   const list = a.conditioned?.length ? a.conditioned : a.top
   return (
     <div className="rounded-md border px-2.5 py-2">
@@ -380,7 +418,12 @@ function TestResult({ r }: { r: ClefTestResponse }) {
       {r.error && <p className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive-text">{r.error}</p>}
       {o && (
         <p className="text-xs text-muted-foreground">
-          {o.task.title} · {o.sent} 次请求 · {o.usage.input_tokens.toLocaleString("zh-CN")} tokens · {o.task.per_file ? "逐文件判断条目" : "整个种子一个条目问题"}
+          {o.task.title}
+          {r.release?.time ? ` · ${r.release.by === "submitted" ? "提交" : "发布"}于 ${formatDateTime(r.release.time)}` : " · 缺少发布时间"}
+          {r.release?.submitted_by ? `（${r.release.submitter}）` : ""} · {o.sent} 次请求 · {o.usage.input_tokens.toLocaleString("zh-CN")} tokens
+          {o.llm
+            ? ` · ${(o.llm.latency_ms / 1000).toFixed(1)} 秒${o.llm.rounds > 1 ? ` · 第二轮（按「${o.llm.suggested_title}」补充 ${o.llm.added_candidates?.length ?? 0} 个候选）` : o.llm.suggested_title ? ` · 建议标题「${o.llm.suggested_title}」未找到新候选` : ""}`
+            : ` · ${o.task.per_file ? "逐文件判断条目" : "整个种子一个条目问题"}`}
         </p>
       )}
       <div>
@@ -440,9 +483,9 @@ function FileOutcome({ d }: { d: ClefFileDecision }) {
         {d.candidate && <span className="font-medium">{d.candidate.cn || d.candidate.title}</span>}
         {d.episode_key && <Badge variant="outline">{d.episode_key}</Badge>}
         <span className="tabular-nums text-muted-foreground">
-          {pct(d.score)} · 差 {pct(d.margin)}
+          {d.margin < 0 ? `置信度 ${pct(d.score)}` : `${pct(d.score)} · 差 ${pct(d.margin)}`}
         </span>
-        {d.reason && <span className="text-warning-text">{REASON_LABEL[d.reason] ?? d.reason}</span>}
+        {d.reason && <span className="text-warning-text">{reasonLabel(d.reason)}</span>}
       </p>
       <AnswerDetails answers={d.answers} />
     </div>
@@ -454,11 +497,14 @@ function FileOutcome({ d }: { d: ClefFileDecision }) {
 function SettingsCard() {
   const qc = useQueryClient()
   const q = useQuery({ queryKey: ["admin", "settings"], queryFn: api.admin.settings })
-  const items = useMemo(() => (q.data?.items ?? []).filter((i) => i.group === GROUP), [q.data])
-  const base = useMemo(() => Object.fromEntries(items.map((i) => [i.key, i.type === "secret" ? "" : i.value])) as Record<string, SettingValue>, [items])
+  const all = useMemo(() => (q.data?.items ?? []).filter((i) => i.group === GROUP), [q.data])
+  const base = useMemo(() => Object.fromEntries(all.map((i) => [i.key, i.type === "secret" ? "" : i.value])) as Record<string, SettingValue>, [all])
   const [draft, setDraft] = useState<Record<string, SettingValue>>({})
   useEffect(() => setDraft(base), [base])
-  const dirty = items.filter((i) => JSON.stringify(draft[i.key]) !== JSON.stringify(base[i.key])).map((i) => i.key)
+  // only the fields of the selected backend (plus the switches)
+  const provider = (draft["clef.provider"] ?? base["clef.provider"]) === "clef" ? "clef" : "openai"
+  const items = all.filter((i) => i.key === "clef.enabled" || i.key === "clef.provider" || (provider === "clef" ? i.key.startsWith("clef.") : i.key.startsWith("llm.")))
+  const dirty = all.filter((i) => JSON.stringify(draft[i.key]) !== JSON.stringify(base[i.key])).map((i) => i.key)
   const save = useMutation({
     mutationFn: () => api.admin.saveSettings({ values: Object.fromEntries(dirty.map((k) => [k, draft[k]])) }),
     onSuccess: (data) => {
@@ -545,6 +591,76 @@ function JobsCard({ s }: { s?: ClefStatus }) {
             </li>
           ))}
         </ul>
+      )}
+    </Card>
+  )
+}
+
+// ---- anomalous mappings (episode not in the official list) ----
+
+function AnomaliesCard() {
+  const qc = useQueryClient()
+  const [data, setData] = useState<ClefAnomalies | null>(null)
+  const check = useMutation({ mutationFn: api.admin.clefAnomalies, onSuccess: setData, onError: (e) => toast.error(errorMessage(e)) })
+  const run = useMutation({
+    mutationFn: () => api.admin.clefAnomaliesRun(),
+    onSuccess: (r) => {
+      toast.success(`已加入队列：${r.queued} 个种子`)
+      setData(null)
+      void qc.invalidateQueries({ queryKey: KEY })
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  })
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex items-start justify-between gap-2 border-b px-4 py-2.5">
+        <div className="min-w-0">
+          <h2 className="flex items-center gap-1.5 text-sm font-semibold">
+            <SearchCheck className="h-4 w-4 text-primary-text" />
+            异常映射
+          </h2>
+          <p className="text-xs text-muted-foreground">自动映射的集数不在条目官方章节列表中（已考虑分割放送换算）</p>
+        </div>
+        <Button variant="outline" size="xs" onClick={() => check.mutate()} disabled={check.isPending}>
+          {check.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+          检查
+        </Button>
+      </div>
+      {data && (
+        <div className="space-y-2 px-4 py-3 text-xs">
+          <p>
+            {data.torrents} 个种子 · {data.files} 个文件
+          </p>
+          {data.items.length > 0 && (
+            <ul className="max-h-64 space-y-1.5 overflow-y-auto">
+              {data.items.slice(0, 50).map((t) =>
+                t.files.map((f) => (
+                  <li key={`${t.infohash}/${f.index}`} className="rounded-md bg-muted/60 px-2 py-1.5">
+                    <p className="truncate font-mono text-[11px]" title={f.path}>
+                      {f.path.split("/").pop()}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {f.title} · 映射为第 {f.episode} 话 · 官方 {f.official || "-"}
+                    </p>
+                  </li>
+                )),
+              )}
+            </ul>
+          )}
+          {data.torrents > 0 && (
+            <Button
+              size="sm"
+              className="w-full"
+              disabled={run.isPending}
+              onClick={() => {
+                if (window.confirm(`把 ${data.torrents} 个种子的异常文件交给决策模型重新判断？（原映射保留到有新判断为止）`)) run.mutate()
+              }}
+            >
+              {run.isPending ? <Loader2 className="animate-spin" /> : <BrainCircuit />}
+              重新判断异常映射
+            </Button>
+          )}
+        </div>
       )}
     </Card>
   )

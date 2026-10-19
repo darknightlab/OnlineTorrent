@@ -1,10 +1,10 @@
 // Package clef maps torrent files the rules cannot map with certainty (internal/meta,
-// route.go) using Cloudflare's decision model Clef (Workers AI @cf/cloudflare/clef-flash or
-// @cf/cloudflare/clef). Clef outputs no text, only a probability for every option of every
-// question we ask, so every answer is one of our own option ids (candidate subjects, number
-// tokens of the file name, kinds, or "none"), validated against the official episode list,
-// and applied / queued for review / discarded by calibrated thresholds
-// (docs/research/clef-calibration.md).
+// route.go) with a decision model. Two backends: an OpenAI-compatible LLM with structured
+// output (llm.go, default) and Cloudflare's Clef (Workers AI clef-flash / clef: no text, only
+// a probability for every option we offer). Every answer is one of our own options (candidate
+// subjects, numbers written in the file name, kinds, or none), validated against the
+// official episode list, and applied / queued for review / discarded by calibrated rules
+// (docs/research/decision-model-calibration.md).
 package clef
 
 import (

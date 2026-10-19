@@ -8,7 +8,7 @@ import (
 	"github.com/darknightlab/onlinetorrent/internal/meta"
 )
 
-// Decision metrics (see docs/research/clef-calibration.md).
+// Decision metrics (see docs/research/decision-model-calibration.md).
 const (
 	MetricProb       = "prob"       // probability of the chosen option
 	MetricConfidence = "confidence" // Clef's own confidence value
@@ -31,7 +31,7 @@ type Thresholds struct {
 	IgnoreAge bool `json:"-"`
 }
 
-// DefaultThresholds are the calibrated defaults (docs/research/clef-calibration.md).
+// DefaultThresholds are the calibrated defaults (docs/research/decision-model-calibration.md).
 var DefaultThresholds = Thresholds{Metric: MetricProb, Apply: 0.8, Margin: 0.3, Review: 0.5}
 
 // Validator checks an episode key of a work and returns its canonical form
@@ -51,6 +51,8 @@ type AnswerSummary struct {
 	Top        []OptionP `json:"top"`
 	// Conditioned: subject probabilities after dropping candidates without the episode
 	Conditioned []OptionP `json:"conditioned,omitempty"`
+	// Note: the LLM's short reason
+	Note string `json:"note,omitempty"`
 }
 
 // Summarize keeps the top 4 options of an answer.

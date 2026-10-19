@@ -181,3 +181,23 @@ func TestResolveReview(t *testing.T) {
 		t.Errorf("verdict=%+v pending=%d", v, pending)
 	}
 }
+
+func TestFirstPlay(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	ih := "8d044029c825a9b881e3f6753f7093f8d256a85d"
+	if _, _, ok := st.FirstPlay(ctx, ih); ok {
+		t.Fatal("no plays yet")
+	}
+	u, err := st.CreateUser(ctx, CreateUserParams{Username: "alice", Email: "a@example.com", Password: "password-123", Role: RoleMember})
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.AddPlay(ctx, Play{Infohash: ih, Action: "login"}, nil) // denied: not a submission
+	st.AddPlay(ctx, Play{Infohash: ih, Action: "allow"}, &u.ID)
+	st.AddPlay(ctx, Play{Infohash: ih, Action: "allow"}, nil)
+	at, by, ok := st.FirstPlay(ctx, ih)
+	if !ok || at == "" || by == nil || *by != u.ID {
+		t.Errorf("first play %s %v %v", at, by, ok)
+	}
+}

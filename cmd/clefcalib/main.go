@@ -1,5 +1,5 @@
 // Command clefcalib calibrates the decision-model thresholds against the real Cloudflare
-// Clef API (docs/research/clef-calibration.md). Run it on a COPY of a mapping database:
+// Clef API (docs/research/decision-model-calibration.md). Run it on a COPY of a mapping database:
 //
 //	source ~/.config/onlinetorrent/cloudflare.env; source ~/.config/onlinetorrent/clef.env
 //	clefcalib run -meta-db /tmp/calib/meta.db -out /tmp/calib/flash.jsonl -model clef-flash -pos 200 -neg 100
@@ -51,6 +51,12 @@ type record struct {
 	Requests int                    `json:"requests"`
 	EstTok   int                    `json:"est_tokens"`
 	Err      string                 `json:"err,omitempty"`
+	// LLM backend
+	Provider string       `json:"provider,omitempty"`
+	LLM      *clef.LLMRun `json:"llm,omitempty"`
+	WallMS   int64        `json:"wall_ms,omitempty"`
+	Removed  []string     `json:"removed,omitempty"` // neg: the true subjects taken out of the candidates
+	Effort   string       `json:"effort,omitempty"`
 }
 
 func main() {
@@ -62,6 +68,10 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		err = run(os.Args[2:])
+	case "recall":
+		err = recall(os.Args[2:])
+	case "llm":
+		err = runLLM(os.Args[2:])
 	case "analyze":
 		err = analyze(os.Args[2:])
 	default:
@@ -192,7 +202,7 @@ type sampleT struct {
 }
 
 // record builds the request task of a sample (neg: the true subjects removed).
-func (s *sampleT) record(set string) *record {
+func (s *sampleT) record(set string) (rec *record) {
 	t := *s.task
 	t.Candidates = append([]meta.ClefCandidate(nil), s.task.Candidates...)
 	tr := map[int]truth{}
@@ -216,12 +226,18 @@ func (s *sampleT) record(set string) *record {
 			return nil
 		}
 		t.Candidates = keep
+		removed := []string{}
+		for k := range drop {
+			removed = append(removed, k)
+		}
+		defer func() { rec.Removed = removed }()
 		for k, v := range tr {
 			v.Subject, v.Key = "", ""
 			tr[k] = v
 		}
 	}
-	return &record{Set: set, Stratum: s.stratum, Task: &t, Truth: tr}
+	rec = &record{Set: set, Stratum: s.stratum, Task: &t, Truth: tr}
+	return rec
 }
 
 // sample lists candidate torrents (shuffled): stored mappings + the current rules' view.
@@ -370,7 +386,7 @@ func buildSample(ctx context.Context, ms *meta.Store, ih string) (*sampleT, erro
 			p := pick[0].Path[:i] + syn.marker + pick[0].Path[i+len(txt):]
 			idx := 100000 + pick[0].Index
 			task.Videos = append(task.Videos, p)
-			pick = append(pick, meta.ClefFile{Index: idx, Path: p, Numbers: meta.NumberOptions(p, task.Title, false), Group: pick[0].Group})
+			pick = append(pick, meta.ClefFile{Index: idx, Path: p, Kind: meta.ParseEpisode(p).Kind, Numbers: meta.NumberOptions(p, task.Title, false), Group: pick[0].Group})
 			t := truth{Subject: t0.Subject, Kind: syn.kind}
 			if syn.kind != "" {
 				one := syn.num
@@ -415,6 +431,7 @@ func analyze(args []string) error {
 	bApply := fs.Float64("apply", 0.8, "band table: apply threshold")
 	bMargin := fs.Float64("margin", 0.3, "band table: margin")
 	bReview := fs.Float64("review", 0.5, "band table: review threshold")
+	fs.BoolVar(dumpLLM, "llm-dump", false, "print wrong valid LLM decisions (stderr)")
 	dump := fs.Float64("dump", 0, "print wrong valid decisions with score ≥ this (stderr)")
 	fs.BoolVar(&ignoreAge, "ignore-age", false, "count old entries as applied too")
 	refresh := fs.Bool("refresh-seasons", false, "recompute candidate / stated seasons (records made before they existed)")
@@ -429,6 +446,10 @@ func analyze(args []string) error {
 		recs, err := readRecs(path)
 		if err != nil {
 			return err
+		}
+		if len(recs) > 0 && recs[0].Provider == "openai" {
+			analyzeLLM(ctx, ms, path, recs)
+			continue
 		}
 		var obsl []obs
 		variants := map[string][]fileRes{}

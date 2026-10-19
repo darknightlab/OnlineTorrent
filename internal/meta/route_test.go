@@ -102,7 +102,7 @@ func matchFiles(t *testing.T, s *Store, ih, title string, tags []string, want []
 	for i, w := range want {
 		files = append(files, FileInput{Index: i, Path: w.path, Size: 100})
 	}
-	if err := s.Match(context.Background(), TorrentInput{Infohash: ih, Title: title, MoeTagIDs: tags, Files: files}); err != nil {
+	if err := s.Match(context.Background(), TorrentInput{Infohash: ih, PublishedAt: "2026-01-10T00:00:00Z", Title: title, MoeTagIDs: tags, Files: files}); err != nil {
 		t.Fatal(err)
 	}
 	checkMap(t, s, ih, want)
@@ -369,5 +369,28 @@ func TestUncertainAnchorsQueue(t *testing.T) {
 	}
 	if task, _ := s.BuildClefTask(ctx, "season", false); task.Files[0].Season != 2 || task.Candidates[0].Season != 1 || task.Candidates[0].SeasonFits(2) {
 		t.Errorf("season task %+v", task)
+	}
+}
+
+func TestNameEvidence(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	seedFamily(t, s, []testWork{
+		{id: 60, title: "ホテル・インヒューマンズ(第2期)", cn: "杀手旅店 第二季", typ: "tv", begin: "2026-10-04T15:00:00Z", eps: 13, aliases: `["HOTEL INHUMANS Season 2"]`},
+		{id: 61, title: "とある暗部の少女共棲", cn: "某暗部的少女共生", typ: "tv", begin: "2026-10-09T15:00:00Z", eps: 12, aliases: `["Toaru Anbu no Item"]`},
+	}, nil)
+	for _, c := range []struct {
+		work int
+		text string
+		want bool
+	}{
+		{60, "[LoliHouse] 杀手旅店 / HOTEL INHUMANS - 16 [WebRip 1080p]", true}, // season words stripped
+		{60, "[Dynamis One] Hotel Inhumans 2nd Season - 15 (CR 1920x1080)", true},
+		{61, "[Dynamis One] Tempal: Item no Chikara - 03 (ABEMA 1920x1080 AVC AAC MKV)", false},
+		{61, "[G] Toaru Anbu no Item - 03", true},
+	} {
+		if got := s.NameEvidence(ctx, fmt.Sprintf("bgm:%d", c.work), []string{c.text}); got != c.want {
+			t.Errorf("%d %q: %v", c.work, c.text, got)
+		}
 	}
 }

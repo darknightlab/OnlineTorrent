@@ -149,7 +149,7 @@ func TestPlayMagnetXS(t *testing.T) {
 	}
 	data, ih := testTorrent("Foo - 01.mkv")
 	_, ih2 := testTorrent("Unknown - 01.mkv")
-	if err := s.Meta.Match(ctx, meta.TorrentInput{Infohash: ih, Title: "Foo - 01", Source: "Nyaa", SourceKind: "rss", Trusted: true,
+	if err := s.Meta.Match(ctx, meta.TorrentInput{Infohash: ih, PublishedAt: "2026-01-10T00:00:00Z", Title: "Foo - 01", Source: "Nyaa", SourceKind: "rss", Trusted: true,
 		Files: []meta.FileInput{{Index: 0, Path: "Foo - 01.mkv", Size: 12345}}}); err != nil {
 		t.Fatal(err)
 	}

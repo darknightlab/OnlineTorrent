@@ -314,18 +314,18 @@ func TestServiceQueueApplyReviewRevert(t *testing.T) {
 	}
 	_, _ = ms.W.Exec(`INSERT INTO work_ids VALUES('bgm','100','bgm:100'),('bgm','101','bgm:101')`)
 	// "Show S2" with an exact title match to season 1 only: season ambiguity → queued
-	if err := ms.Match(ctx, meta.TorrentInput{Infohash: "aa", Title: "[G] Show S2 - 03 [1080p]", Source: "Nyaa", SourceKind: "rss", Trusted: true,
+	if err := ms.Match(ctx, meta.TorrentInput{Infohash: "aa", PublishedAt: "2025-02-01T00:00:00Z", Title: "[G] Show S2 - 03 [1080p]", Source: "Nyaa", SourceKind: "rss", Trusted: true,
 		Files: []meta.FileInput{{Index: 0, Path: "[G] Show S2 - 03 [1080p].mkv", Size: 1}, {Index: 1, Path: "[G] Show S2 - 03 [1080p].ass", Size: 1}}}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ms.Match(ctx, meta.TorrentInput{Infohash: "bb", Title: "[G] Show S2 - 04 [1080p]", Source: "Nyaa", SourceKind: "rss", Trusted: true,
+	if err := ms.Match(ctx, meta.TorrentInput{Infohash: "bb", PublishedAt: "2025-02-01T00:00:00Z", Title: "[G] Show S2 - 04 [1080p]", Source: "Nyaa", SourceKind: "rss", Trusted: true,
 		Files: []meta.FileInput{{Index: 0, Path: "[G] Show S2 - 04 [1080p].mkv", Size: 1}}}); err != nil {
 		t.Fatal(err)
 	}
 	if tm, _ := ms.GetTorrentMap(ctx, "aa"); tm.Files[0].Work != nil {
 		t.Fatalf("rules mapped an uncertain file: %+v", tm.Files[0])
 	}
-	_ = st.UpdateSettings(ctx, map[string]json.RawMessage{store.KeyClefAccountID: json.RawMessage(`"acc"`), store.KeyClefToken: json.RawMessage(`"tok"`), store.KeyClefEnabled: json.RawMessage(`true`), store.KeyClefRate: json.RawMessage(`300`)})
+	_ = st.UpdateSettings(ctx, map[string]json.RawMessage{store.KeyClefAccountID: json.RawMessage(`"acc"`), store.KeyClefToken: json.RawMessage(`"tok"`), store.KeyClefEnabled: json.RawMessage(`true`), store.KeyClefRate: json.RawMessage(`300`), store.KeyClefProvider: json.RawMessage(`"clef"`)})
 	subjP := 0.97
 	fc := &fakeClient{answer: func(id string, q Question) map[string]float64 {
 		switch {
@@ -399,7 +399,7 @@ func TestServiceQueueApplyReviewRevert(t *testing.T) {
 		t.Errorf("reverted: %+v", tm.Files[0])
 	}
 	// a clef mapping survives a re-delivery of the torrent (Match does not overwrite it)
-	if err := ms.Match(ctx, meta.TorrentInput{Infohash: "bb", Title: "[G] Show S2 - 04 [1080p]", Files: []meta.FileInput{{Index: 0, Path: "[G] Show S2 - 04 [1080p].mkv", Size: 1}}}); err != nil {
+	if err := ms.Match(ctx, meta.TorrentInput{Infohash: "bb", PublishedAt: "2025-02-01T00:00:00Z", Title: "[G] Show S2 - 04 [1080p]", Files: []meta.FileInput{{Index: 0, Path: "[G] Show S2 - 04 [1080p].mkv", Size: 1}}}); err != nil {
 		t.Fatal(err)
 	}
 	if tm, _ := ms.GetTorrentMap(ctx, "bb"); tm.Files[0].Work == nil || tm.Files[0].Method != meta.MethodClef {

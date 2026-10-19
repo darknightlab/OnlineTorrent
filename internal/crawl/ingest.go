@@ -173,6 +173,11 @@ func (c *Crawler) IngestQBMetadata(ctx context.Context, ih, name string, files [
 		}
 	} else {
 		in = meta.TorrentInput{Infohash: ih, Title: name, Source: "user", SourceKind: "user"}
+		// a new user submission: its release time is when a user first played (submitted)
+		// it; stored once with the new row, never overwritten
+		if at, by, ok := c.St.FirstPlay(ctx, ih); ok {
+			in.SubmittedAt, in.SubmittedBy = at, by
+		}
 	}
 	if in.Title == "" {
 		in.Title = name

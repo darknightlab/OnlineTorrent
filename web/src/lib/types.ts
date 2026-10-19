@@ -747,9 +747,13 @@ export interface ClefJob {
 export interface ClefStatus {
   enabled: boolean
   configured: boolean
+  /** openai = LLM（结构化输出）；clef = Cloudflare Clef */
+  provider: "openai" | "clef"
   model: string
   base_url: string
   thresholds: ClefThresholds
+  llm_thresholds: { apply: number; review: number; require_agreement: boolean }
+  concurrency: number
   rate_per_min: number
   daily_cap: number
   /** 今日（UTC）已发请求数 */
@@ -775,6 +779,8 @@ export interface ClefAnswerSummary {
   top: ClefOptionP[]
   /** 条目问题：去掉没有该集 / 季数不符的候选后重新归一化的概率 */
   conditioned?: ClefOptionP[]
+  /** LLM 的简短理由 */
+  note?: string
 }
 
 /** 一条决策（GET /admin/clef/decisions） */
@@ -796,11 +802,18 @@ export interface ClefDecision {
   confidence: number
   answers: Record<string, ClefAnswerSummary>
   model: string
+  /** model = 决策模型；rule = 规则映射（缺少发布时间，待人工确认） */
+  source: "model" | "rule"
   status: ClefStatusName
+  /** 原因代码；date_mismatch 后跟「: 说明」 */
   reason: string
   created_at: string
   decided_at?: string
   decided_by?: string
+  /** 用户提交的种子：提交时间与提交者 */
+  submitted_at?: string
+  submitted_by?: number
+  submitter?: string
 }
 
 export interface ClefCandidate {
@@ -859,7 +872,11 @@ export interface ClefRuleFile {
 /** POST /admin/clef/test */
 export interface ClefTestResponse {
   rules: ClefRuleFile[]
+  /** 发布时间（by: published = 抓取源发布时间；submitted = 用户提交时间）；空 = 缺少 */
+  release?: { time?: string; by?: "published" | "submitted"; submitted_by?: number; submitter?: string }
   outcome: {
+    provider?: "openai" | "clef"
+    llm?: { model: string; rounds: number; requests: number; prompt_tokens: number; completion_tokens: number; latency_ms: number; suggested_title?: string; added_candidates?: string[] }
     task: { infohash: string; title: string; published?: string; files: ClefFile[]; candidates: ClefCandidate[]; per_file: boolean }
     model: string
     requests: { Files: number[]; EstTokens: number }[] | null
@@ -868,4 +885,11 @@ export interface ClefTestResponse {
     sent: number
   } | null
   error?: string
+}
+
+/** GET /admin/clef/anomalies：映射的集数不在官方章节列表中（已考虑分割放送换算） */
+export interface ClefAnomalies {
+  items: { infohash: string; title: string; files: { index: number; path: string; work_key: string; title: string; episode: number; official: string }[] }[]
+  torrents: number
+  files: number
 }

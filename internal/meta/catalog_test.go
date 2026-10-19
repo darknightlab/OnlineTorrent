@@ -182,7 +182,7 @@ func TestReclassifyAndEpisodeKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	// rows as written before specials kept their number: op/extra unmapped, sp without number
-	if _, err := s.W.ExecContext(ctx, `INSERT INTO torrents(infohash,seq,title,status,updated_at) VALUES ('aa',1,'[Team] Show [BD]','ready','x')`); err != nil {
+	if _, err := s.W.ExecContext(ctx, `INSERT INTO torrents(infohash,seq,title,status,published_at,updated_at) VALUES ('aa',1,'[Team] Show [BD]','ready','2026-02-01T00:00:00Z','x')`); err != nil {
 		t.Fatal(err)
 	}
 	rows := []struct {
