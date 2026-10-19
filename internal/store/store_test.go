@@ -291,3 +291,25 @@ func TestQBServerEdgeFields(t *testing.T) {
 		t.Fatalf("list = %+v", ls)
 	}
 }
+
+func TestWebseedProgressiveSettingRemoved(t *testing.T) {
+	st := newStore(t)
+	for _, sp := range SettingsSchema() {
+		if sp.Key == "webseed.progressive" {
+			t.Fatal("still in the schema")
+		}
+	}
+	ctx := context.Background()
+	st.W.Exec(`PRAGMA user_version = 8`)
+	if _, err := st.W.Exec(`INSERT INTO settings(key, value) VALUES('webseed.progressive', 'false')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(ctx, st.W, migrations); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	_ = st.R.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = 'webseed.progressive'`).Scan(&n)
+	if n != 0 {
+		t.Errorf("migration 9 left the row: %d", n)
+	}
+}

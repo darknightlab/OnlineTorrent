@@ -40,7 +40,10 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.route(mux, "POST", "/api/v1/torrents/moe/{id}/play", AccessConfigurable, "播放", "打开种子（按 bangumi.moe ID）", []string{store.RoleGuest}, s.playMoe)
 	s.route(mux, "GET", "/api/v1/torrents/hash/{ih}/resolve/events", AccessConfigurable, "播放", "等待新种子的元数据与判定结果（服务器推送；只获取元数据，不下载、不做种）", []string{store.RoleGuest}, s.resolveEvents)
 	s.route(mux, "POST", "/api/v1/torrents/hash/{ih}/seed", AccessConfigurable, "播放", "让服务器下载做种（消耗服务器资源）", []string{store.RoleMember}, s.seed)
-	s.route(mux, "GET", "/webseed/hash/{ih}/{path...}", AccessConfigurable, "播放", "WebSeed 文件下载（HTTP 加速，消耗服务器流量）", []string{store.RoleMember}, s.serveWebseed)
+	// WebSeed data is served only by edge nodes: permission only (gates their access tokens);
+	// /webseed/… on the main server is a plain 404 (not the SPA)
+	s.permOnly("GET", "/webseed/hash/{ih}/{path...}", AccessConfigurable, "播放", "WebSeed 文件下载（边缘节点）", []string{store.RoleMember})
+	mux.HandleFunc("/webseed/", http.NotFound)
 	s.route(mux, "GET", "/api/v1/torrents/hash/{ih}/webseed/events", AccessConfigurable, "播放", "等待 WebSeed 就绪（服务器推送）", []string{store.RoleMember}, s.webseedEvents)
 	s.route(mux, "GET", "/api/v1/torrents/hash/{ih}/webseed/events/file/{idx}", AccessConfigurable, "播放", "等待指定文件的 WebSeed 就绪（服务器推送）", []string{store.RoleMember}, s.webseedEvents)
 	s.route(mux, "POST", "/api/v1/torrents/hash/{ih}/report", AccessUser, "播放", "举报种子", []string{store.RoleMember}, s.report)

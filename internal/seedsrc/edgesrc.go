@@ -2,9 +2,10 @@ package seedsrc
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
+	"sync"
+
+	"github.com/darknightlab/onlinetorrent/internal/qb"
 )
 
 // EdgeClient is the main server's view of a connected edge node (internal/edge.Conn). The
@@ -15,10 +16,6 @@ type EdgeClient interface {
 	// doesn't hold the torrent with metadata.
 	Have(ctx context.Context, ih string, numPieces int) (bits *Bits, known bool, err error)
 }
-
-// ErrServedByEdge: data of edge-backed servers is served by the edge directly, never
-// relayed through the main server.
-var ErrServedByEdge = errors.New("seedsrc: served by the edge node directly")
 
 // Edge is a qB server with a connected edge node. It only reports availability (the
 // browser fetches from the edge's own URL, BaseURL).
@@ -44,7 +41,34 @@ func (e *Edge) Have(ctx context.Context, l *Layout) (Avail, error) {
 	return Avail{Known: true, Pieces: bits}, nil
 }
 
-// ReadRange implements Source: never used for data (see ErrServedByEdge).
-func (e *Edge) ReadRange(context.Context, *Layout, int, int64, int64, *Bits) (io.ReadCloser, error) {
-	return nil, ErrServedByEdge
+// PoolSources adapts the qB pool: every enabled server whose edge node is connected (edges
+// returns non-nil) and has a public URL is a Source. Servers without an edge offer no
+// webseed. Source values are reused while unchanged.
+func PoolSources(pool *qb.Pool, edges func(serverID int64) EdgeClient) func() []Source {
+	var mu sync.Mutex
+	known := map[EdgeClient]*Edge{}
+	return func() []Source {
+		servers := pool.Servers()
+		mu.Lock()
+		defer mu.Unlock()
+		next := map[EdgeClient]*Edge{}
+		var out []Source
+		for _, s := range servers {
+			if !s.Cfg.Enabled || s.Cfg.EdgeURL == "" || edges == nil {
+				continue
+			}
+			ec := edges(s.Cfg.ID)
+			if ec == nil {
+				continue
+			}
+			e, ok := known[ec]
+			if !ok || e.BaseURL != s.Cfg.EdgeURL || e.ServerName != s.Cfg.Name {
+				e = &Edge{ServerID: s.Cfg.ID, ServerName: s.Cfg.Name, Client: ec, BaseURL: s.Cfg.EdgeURL}
+			}
+			next[ec] = e
+			out = append(out, e)
+		}
+		known = next
+		return out
+	}
 }

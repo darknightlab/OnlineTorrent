@@ -3,8 +3,6 @@ package seedsrc
 import (
 	"context"
 	"crypto/sha1"
-	"errors"
-	"io"
 	"math/rand"
 	"reflect"
 	"strings"
@@ -104,17 +102,6 @@ func TestBitsRanges(t *testing.T) {
 	}
 }
 
-func TestCompleteFiles(t *testing.T) {
-	// a: pieces 0-1 (shares piece 1 with b), b: 1-3, c: 4 ; pad between nothing
-	l, _ := testTorrent(t, 100, []torrentfile.TorrentFile{{Path: "T/a", Size: 150}, {Path: "T/b", Size: 250}, {Path: "T/c", Size: 50}})
-	have := FromStates([]int{2, 2, 2, 0, 2}) // a complete, b missing piece 3, c complete
-	got := CompleteFiles(l, have).Ranges()
-	// piece 1 is verified but also covers b (incomplete) → not servable over HTTP
-	if !reflect.DeepEqual(got, []int{0, 0, 4, 4}) {
-		t.Fatalf("CompleteFiles = %v", got)
-	}
-}
-
 type fakeSource struct {
 	id    string
 	avail Avail
@@ -127,48 +114,19 @@ func (f *fakeSource) Have(context.Context, *Layout) (Avail, error) {
 	f.calls.Add(1)
 	return f.avail, nil
 }
-func (f *fakeSource) ReadRange(context.Context, *Layout, int, int64, int64, *Bits) (io.ReadCloser, error) {
-	return io.NopCloser(strings.NewReader(f.id)), nil
-}
-
-func TestSetChooseAndCache(t *testing.T) {
+func TestSetCache(t *testing.T) {
 	l, _ := testTorrent(t, 100, []torrentfile.TorrentFile{{Path: "T/a", Size: 300}, {Path: "T/b", Size: 200}})
 	partial := &fakeSource{id: "partial", avail: Avail{Known: true, Pieces: FromStates([]int{2, 2, 0, 2, 2})}}
 	fullA := &fakeSource{id: "fullA", avail: Avail{Known: true, Pieces: FromStates([]int{2, 2, 2, 0, 0})}}
 	none := &fakeSource{id: "none"}
 	set := &Set{Sources: func() []Source { return []Source{partial, none, fullA} }, TTL: time.Hour}
 	ctx := context.Background()
-	// range in piece 0 of file a: both have it; fullA has the whole file → preferred
-	src, _, err := set.Choose(ctx, l, 0, 0, 50, nil)
-	if err != nil || src.ID() != "fullA" {
-		t.Fatalf("Choose a[0..50] = %v %v", src, err)
-	}
-	// file b (pieces 3-4): only partial
-	if src, _, err := set.Choose(ctx, l, 1, 0, 199, nil); err != nil || src.ID() != "partial" {
-		t.Fatalf("Choose b = %v %v", src, err)
-	}
-	// piece 2 only on fullA; a range spanning 1..3 is on nobody
-	if _, _, err := set.Choose(ctx, l, 0, 150, 299, nil); err != nil {
-		t.Fatalf("Choose a[150..299]: %v", err)
-	}
-	if _, _, err := set.Choose(ctx, l, 0, 250, 299, nil); err != nil {
-		t.Fatal(err)
-	}
-	l2, _ := testTorrent(t, 100, []torrentfile.TorrentFile{{Path: "T/a", Size: 500}})
-	_ = l2
-	if _, _, err := set.Choose(ctx, l, 1, 0, 0, nil); err != nil { // b piece 3
-		t.Fatal(err)
+	if all := set.All(ctx, l); len(all) != 3 || !all[0].Avail.Known || all[1].Avail.Known {
+		t.Fatalf("All = %+v", all)
 	}
 	u, known := set.Union(ctx, l)
 	if !known || !u.Full() {
 		t.Fatalf("Union = %v %v", u.Ranges(), known)
-	}
-	// unavailable range → ErrUnavailable
-	partial.avail.Pieces = FromStates([]int{2, 2, 0, 0, 2})
-	set.TTL = time.Nanosecond
-	time.Sleep(time.Millisecond)
-	if _, _, err := set.Choose(ctx, l, 1, 0, 50, nil); !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("want ErrUnavailable, got %v", err)
 	}
 	// cache: concurrent callers share one Have call per source
 	set2 := &Set{Sources: func() []Source { return []Source{partial} }, TTL: time.Hour}
@@ -184,16 +142,29 @@ func TestSetChooseAndCache(t *testing.T) {
 	}
 }
 
-func TestSetChooseAccept(t *testing.T) {
-	l, _ := testTorrent(t, 100, []torrentfile.TorrentFile{{Path: "T/a", Size: 300}})
-	edge := &fakeSource{id: "edge", avail: Avail{Known: true, Pieces: FromStates([]int{2, 2, 2})}}
-	plain := &fakeSource{id: "qb", avail: Avail{Known: true, Pieces: FromStates([]int{2, 0, 0})}}
-	set := &Set{Sources: func() []Source { return []Source{edge, plain} }, TTL: time.Hour}
-	notEdge := func(s Source) bool { return s.ID() != "edge" }
-	if src, _, err := set.Choose(context.Background(), l, 0, 0, 50, notEdge); err != nil || src.ID() != "qb" {
-		t.Fatalf("Choose = %v %v", src, err)
+func TestParseRange(t *testing.T) {
+	cases := []struct {
+		h       string
+		n       int64
+		s, e    int64
+		partial bool
+		ok      bool
+	}{
+		{"", 100, 0, 99, false, true},
+		{"bytes=0-9", 100, 0, 9, true, true},
+		{"bytes=90-", 100, 90, 99, true, true},
+		{"bytes=90-500", 100, 90, 99, true, true},
+		{"bytes=-10", 100, 90, 99, true, true},
+		{"bytes=-500", 100, 0, 99, true, true},
+		{"bytes=100-", 100, 0, 0, false, false},
+		{"bytes=5-2", 100, 0, 0, false, false},
+		{"bytes=0-1,5-6", 100, 0, 0, false, false},
+		{"items=0-1", 100, 0, 0, false, false},
 	}
-	if _, _, err := set.Choose(context.Background(), l, 0, 150, 160, notEdge); !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("edge-only range: %v", err)
+	for _, c := range cases {
+		s, e, p, ok := ParseRange(c.h, c.n)
+		if ok != c.ok || (ok && (s != c.s || e != c.e || p != c.partial)) {
+			t.Errorf("parseRange(%q,%d) = %d,%d,%v,%v", c.h, c.n, s, e, p, ok)
+		}
 	}
 }

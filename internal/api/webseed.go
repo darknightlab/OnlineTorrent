@@ -11,31 +11,14 @@ import (
 	"time"
 
 	"github.com/darknightlab/onlinetorrent/internal/httpx"
-	"github.com/darknightlab/onlinetorrent/internal/magnet"
 	"github.com/darknightlab/onlinetorrent/internal/policy"
 	"github.com/darknightlab/onlinetorrent/internal/store"
 )
 
-// HTTP WebSeed (BEP 19) backed by qBittorrent's torrents/downloadFile (qB ≥ 5.3).
-//
-//	/webseed/hash/{infohash}/              single-file torrent (webtorrent requests the URL as-is)
-//	/webseed/hash/{infohash}/{file path}   multi-file torrent (webtorrent appends "root/sub/file")
-//
-// The URL is fixed (no signature / expiry). Every request is authorised with the login cookie
-// (same origin, so webtorrent's fetches carry it): the route permission
-// "GET /webseed/hash/{ih}/" (admin-editable, default members) plus the per-torrent policy.
-// This URL serves complete files of qB servers without an edge node (torrents/downloadFile;
-// 503 + Retry-After when no such server has every piece of the range). Servers with an edge
-// node are served by the edge itself at its own URL (edge.go, webseed_progressive.go).
-// Responses are not cacheable.
-
-// webseedURLs returns the webseed URL for a torrent, or nil if webseeds are disabled.
-func (s *Server) webseedURLs(r *http.Request, ih string) []string {
-	if !s.St.Bool(store.KeyWebseedEnabled) {
-		return nil
-	}
-	return []string{s.siteBase(r) + "/webseed/hash/" + ih + "/"}
-}
+// HTTP WebSeed (BEP 19) is served only by edge nodes (internal/edge), at their own public URLs
+// with per-edge access tokens; the main server has no webseed data path. It decides who may
+// use the webseed (permission "GET /webseed/hash/{ih}/{path...}", registered handler-less in
+// public.go, + per-torrent policy) and streams availability (webseedEvents).
 
 // siteBase is the absolute site origin for URLs handed to webtorrent (webseed, xs=): the
 // configured site URL, else https://{Host}.
@@ -81,66 +64,13 @@ type wsAllowEntry struct {
 	exp time.Time
 }
 
-// serveWebseed handles GET/HEAD /webseed/hash/{ih}/{path...} (permission already checked).
-func (s *Server) serveWebseed(w http.ResponseWriter, r *http.Request) error {
-	fail := func(code int, msg string) error { http.Error(w, msg, code); return nil }
-	if !s.St.Bool(store.KeyWebseedEnabled) {
-		return fail(http.StatusNotFound, "webseed disabled")
-	}
-	ih, ok := magnet.NormalizeInfohash(r.PathValue("ih"))
-	if !ok {
-		return fail(http.StatusNotFound, "invalid infohash")
-	}
-	if !s.limiter.allow("webseed:"+ipKey(r), 600, 50*time.Millisecond) {
-		return fail(http.StatusTooManyRequests, "rate limited")
-	}
-	allowed, err := s.webseedAllowed(r, ih)
-	if err != nil {
-		return err
-	}
-	if !allowed {
-		return fail(http.StatusForbidden, "forbidden")
-	}
-	if s.serveWebseedProgressive(w, r, ih) {
-		return nil
-	}
-	// no .torrent layout available: whole-file lookup by name (complete files only)
-	srv, f, found := s.Pool.FindFile(r.Context(), ih, r.PathValue("path"))
-	if !found {
-		return fail(http.StatusNotFound, "file not available on any seed server yet")
-	}
-	resp, err := srv.Client.DownloadFile(r.Context(), ih, f.Index, r.Header.Get("Range"))
-	if err != nil {
-		return fail(http.StatusBadGateway, "upstream error")
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
-		return fail(http.StatusBadGateway, "upstream status "+strconv.Itoa(resp.StatusCode))
-	}
-	for _, h := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "Last-Modified", "ETag"} {
-		if v := resp.Header.Get(h); v != "" {
-			w.Header().Set(h, v)
-		}
-	}
-	w.Header().Set("Cache-Control", "private, no-store")
-	w.WriteHeader(resp.StatusCode)
-	if r.Method == http.MethodHead {
-		return nil
-	}
-	_, _ = io.Copy(w, resp.Body)
-	return nil
-}
-
 // webseedEvents streams Server-Sent Events about webseed availability (replaces client-side
 // probing, which made webtorrent hammer errors while qB was still downloading).
 //
 //	GET /api/v1/torrents/hash/{ih}/webseed/events[/file/{idx}]
 //
-// Events: waiting {progress} (no seed server has the metadata yet), ready {webseeds, pieces,
-// have, complete} (as soon as one has), have {ranges} / lost {ranges} (servable pieces
-// changed, ≤ 1/s), complete {} (end), unavailable {reason}. There is no overall deadline; a
-// comment heartbeat is sent every 25s (Cloudflare closes idle streams after ~100s).
-// See webseedStream.
+// Events: see webseedStream. There is no overall deadline; a comment heartbeat is sent every
+// 25s (Cloudflare closes idle streams after ~100s).
 func (s *Server) webseedEvents(w http.ResponseWriter, r *http.Request) error {
 	if _, _, err := s.recordedSubject(r); err != nil {
 		return err

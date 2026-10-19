@@ -27,7 +27,8 @@ import (
 // (internal/edgetoken, Ed25519, verified offline by the edge) — issued only after the same
 // route permission + policy + content-scope check as its own webseed.
 
-// webseedRouteKey is the permission key of the webseed (main server and edges).
+// webseedRouteKey is the "may use WebSeed" permission (handler-less on the main server; the
+// edges serve the data).
 const webseedRouteKey = "GET /webseed/hash/{ih}/{path...}"
 
 // NewEdgeHub creates the hub for edge connections, wired to this server (call before Handler).

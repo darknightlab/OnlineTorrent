@@ -5,8 +5,8 @@ import { WebseedSubscription, type EventSourceLike, type SubState } from "@/lib/
 import type { LogLevel, Session } from "@/player/types"
 
 /**
- * 服务器通过 SSE 推送 WebSeed 可用性（internal/api/webseed_progressive.go），按 WebSeed 地址分别处理：
- * 主站自己的地址（只有下载完成的文件）和各边缘节点的地址（直接从 qB 的下载目录提供，边下边供）。
+ * 服务器通过 SSE 推送 WebSeed 可用性（internal/api/webseed_stream.go），按 WebSeed 地址分别处理：
+ * WebSeed 只由边缘节点提供（直接从 qB 的下载目录读取，边下边供）；没有边缘节点的服务器不提供 WebSeed。
  * - ready / seed：某个地址可用 → 加入 WebSeed，只宣告该地址已有的分块；边缘节点带访问令牌；
  * - have / lost：该地址可提供的分块增减 → 更新宣告；
  * - token：边缘节点的新令牌（到期前推送），换上即可（URL 不变）；
@@ -69,9 +69,8 @@ export function useWebseedEvents({
           st.urls.add(url)
           if (token) st.edges++
           const info = session.webSeedPieces?.(url)
-          const where = token ? "边缘节点" : "本站"
           const pct = info && info.have < info.of ? `，已有 ${Math.floor((info.have / Math.max(1, info.of)) * 100)}% 的数据，随下载进度增加` : ""
-          say("info", `已启用 HTTP WebSeed 加速（${where}${pct}）`, `enabled:${url}`)
+          say("info", `已启用 HTTP WebSeed 加速（边缘节点${pct}）`, `enabled:${url}`)
         },
         have: (url, r) => session.updateWebSeed?.(url, { have: r }),
         lost: (url, r) => session.updateWebSeed?.(url, { lost: r }),

@@ -866,7 +866,7 @@ class MockEventSource extends EventTarget {
       at(3000, () => this.emit("waiting", { progress: 0.8 }))
       if (mode === "timeout") at(4800, () => this.emit("timeout", { reason: "mock timeout" }))
       else if (mode === "unavailable") at(4800, () => this.emit("unavailable", { reason: "mock: 服务器无此种子" }))
-      else at(4800, () => this.emit("ready", { webseeds: [`${location.origin}/webseed/hash/${ih}/`] }))
+      else at(4800, () => this.emit("ready", { pieces: null, seeds: [{ url: `https://edge-mock.invalid/webseed/hash/${ih}/`, have: null, complete: true, token: "mock-token", exp: Math.floor(Date.now() / 1000) + 600 }] }))
     })
   }
 

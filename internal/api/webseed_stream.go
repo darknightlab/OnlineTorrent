@@ -3,13 +3,8 @@ package api
 import (
 	"context"
 	"errors"
-	"fmt"
-	"io"
-	"mime"
 	"net/http"
-	"path"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/darknightlab/onlinetorrent/internal/crawl"
@@ -18,21 +13,13 @@ import (
 	"github.com/darknightlab/onlinetorrent/internal/torrentfile"
 )
 
-// WebSeed availability and the main server's own webseed.
-//
-// Servers with a connected edge node (internal/edge) serve browsers directly from qB's
-// download directory — partial files included — at the edge's public URL; the main server
-// never relays that data. Servers without an edge are served by the main server itself,
-// complete files only (torrents/downloadFile). The SSE stream tells the browser, per webseed
-// URL, which pieces are servable so webtorrent only requests those. The SSE stream tells the browser which pieces are servable (ready / have /
-// lost / complete) so webtorrent only requests those; anything else gets 503 + Retry-After.
+// WebSeed availability. Only qB servers with a connected edge node (internal/edge) offer a
+// webseed: the edge serves browsers directly from qB's download directory — partial files
+// included — at its public URL; the main server never relays data. The SSE stream tells the
+// browser, per edge URL, which pieces are servable so webtorrent only requests those.
 
-// webseedRetryAfter is sent with 503 (range not available yet).
-const webseedRetryAfter = "5"
-
-// seeds returns the seed-source set (created on first use from the qB pool: a server with a
-// connected edge node is read through the edge, partial files included; other servers only
-// serve complete files through torrents/downloadFile).
+// seeds returns the seed-source set (created on first use from the qB pool: one source per
+// connected edge node).
 func (s *Server) seeds() *seedsrc.Set {
 	s.seedsOnce.Do(func() {
 		if s.SeedSources != nil {
@@ -76,80 +63,6 @@ func (s *Server) webseedLayout(ctx context.Context, ih string) *seedsrc.Layout {
 	return l
 }
 
-// serveWebseedProgressive serves one file range from a seed source holding all its pieces.
-// handled=false: no layout (metadata unknown) — the caller falls back to whole-file lookup.
-func (s *Server) serveWebseedProgressive(w http.ResponseWriter, r *http.Request, ih string) (handled bool) {
-	ctx := r.Context()
-	l := s.webseedLayout(ctx, ih)
-	if l == nil {
-		return false
-	}
-	fi, ok := l.Match(r.PathValue("path"))
-	if !ok {
-		http.Error(w, "no such file in torrent", http.StatusNotFound)
-		return true
-	}
-	f := l.Files[fi]
-	h := w.Header()
-	h.Set("Accept-Ranges", "bytes")
-	h.Set("Cache-Control", "private, no-store")
-	ct := mime.TypeByExtension(path.Ext(f.Path))
-	if ct == "" {
-		ct = "application/octet-stream"
-	}
-	h.Set("Content-Type", ct)
-	if f.Size == 0 {
-		h.Set("Content-Length", "0")
-		w.WriteHeader(http.StatusOK)
-		return true
-	}
-	start, end, partial, ok := seedsrc.ParseRange(r.Header.Get("Range"), f.Size)
-	if !ok {
-		h.Set("Content-Range", fmt.Sprintf("bytes */%d", f.Size))
-		http.Error(w, "range not satisfiable", http.StatusRequestedRangeNotSatisfiable)
-		return true
-	}
-	var body io.ReadCloser
-	if f.Pad {
-		body = io.NopCloser(io.LimitReader(zeroReader{}, end-start+1)) // BEP 47 padding: zeros
-	} else {
-		cs, ce := start, end
-		if !s.St.Bool(store.KeyWebseedProgressive) {
-			cs, ce = 0, f.Size-1 // whole file must be available (old behaviour)
-		}
-		// only servers without an edge node: edge-backed data is served by the edge itself
-		src, have, err := s.seeds().Choose(ctx, l, fi, cs, ce, isMainSource)
-		if err != nil {
-			h.Del("Content-Type")
-			h.Set("Retry-After", webseedRetryAfter)
-			http.Error(w, "pieces not available on the seed server yet", http.StatusServiceUnavailable)
-			return true
-		}
-		body, err = src.ReadRange(ctx, l, fi, start, end, have)
-		if err != nil {
-			if ctx.Err() == nil {
-				s.Log.Info("webseed read failed", "hash", ih, "file", f.Path, "source", src.Name(), "err", err)
-			}
-			h.Del("Content-Type")
-			h.Set("Retry-After", webseedRetryAfter)
-			http.Error(w, "seed server read failed", http.StatusServiceUnavailable)
-			return true
-		}
-	}
-	defer body.Close()
-	h.Set("Content-Length", strconv.FormatInt(end-start+1, 10))
-	if partial {
-		h.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, f.Size))
-		w.WriteHeader(http.StatusPartialContent)
-	} else {
-		w.WriteHeader(http.StatusOK)
-	}
-	if r.Method != http.MethodHead {
-		_, _ = io.Copy(w, body)
-	}
-	return true
-}
-
 func (s *Server) poolFileProgress(ctx context.Context, ih string, idx int) (bool, float64, bool) {
 	if s.Pool == nil {
 		return false, 0, false
@@ -157,26 +70,13 @@ func (s *Server) poolFileProgress(ctx context.Context, ih string, idx int) (bool
 	return s.Pool.FileProgress(ctx, ih, idx)
 }
 
-// isMainSource: sources whose data the main server serves (not edge-backed).
-func isMainSource(src seedsrc.Source) bool {
-	_, edge := src.(*seedsrc.Edge)
-	return !edge
-}
-
-type zeroReader struct{}
-
-func (zeroReader) Read(p []byte) (int, error) {
-	clear(p)
-	return len(p), nil
-}
-
 // webseedStream runs the availability stream once the layout is known. Availability is per
-// webseed URL: the main server's own URL (servers without an edge, complete files) and the
-// public URL of every connected edge node. Edge URLs come with a short-lived access token
-// (Authorization: Bearer) that is refreshed over the stream before it expires.
+// webseed URL = the public URL of every connected edge node holding the torrent; each comes
+// with a short-lived access token (Authorization: Bearer) refreshed before it expires.
+// Servers without an edge offer nothing (the client keeps waiting / retrying).
 //
-//	ready    {pieces, seeds: [{url, have, complete, token?, exp?}]}   first availability
-//	seed     {url, have, complete, token?, exp?}   another webseed URL became available
+//	ready    {pieces, seeds: [{url, have, complete, token, exp}]}   first availability
+//	seed     {url, have, complete, token, exp}   another edge URL became available
 //	have     {url, ranges}   newly servable pieces (≤ 1/s)
 //	lost     {url, ranges}   pieces no longer servable (e.g. the edge node disconnected)
 //	complete {url}           that URL can serve every piece
@@ -241,7 +141,7 @@ func (s *Server) webseedStream(ctx context.Context, r *http.Request, send func(s
 				send("unavailable", map[string]string{"reason": "forbidden"})
 				return
 			}
-			cur := s.webseedAvailability(ctx, r, l)
+			cur := s.webseedAvailability(ctx, l)
 			if len(cur) == 0 && !started {
 				_, _, found := s.poolFileProgress(ctx, ih, idx)
 				if !found {
@@ -265,14 +165,11 @@ func (s *Server) webseedStream(ctx context.Context, r *http.Request, send func(s
 					continue
 				}
 				a := cur[url]
-				seed := map[string]any{"url": url, "have": a.bits.Ranges(), "complete": a.bits.Full()}
-				if a.edge != 0 {
-					t := token(url, a.edge)
-					if t == nil {
-						continue
-					}
-					seed["token"], seed["exp"] = t["token"], t["exp"]
+				t := token(url, a.edge) // every webseed URL is an edge: never offered without a token
+				if t == nil {
+					continue
 				}
+				seed := map[string]any{"url": url, "have": a.bits.Ranges(), "complete": a.bits.Full(), "token": t["token"], "exp": t["exp"]}
 				fresh = append(fresh, seed)
 				order = append(order, url)
 				last[url] = nil
@@ -295,7 +192,7 @@ func (s *Server) webseedStream(ctx context.Context, r *http.Request, send func(s
 			for _, url := range order {
 				if exp, ok := tokExp[url]; ok && time.Until(exp) < margin {
 					a := cur[url]
-					if a == nil || a.edge == 0 {
+					if a == nil {
 						continue // edge gone: refreshed when it comes back
 					}
 					if t := token(url, a.edge); t != nil && !send("token", map[string]any{"url": url, "token": t["token"], "exp": t["exp"]}) {
@@ -345,28 +242,18 @@ func (s *Server) webseedStream(ctx context.Context, r *http.Request, send func(s
 
 type urlAvail struct {
 	bits *seedsrc.Bits
-	edge int64 // edge id (qB server id) for edge URLs, 0 for the main server's URL
+	edge int64 // edge id (qB server id)
 }
 
-// webseedAvailability groups the sources by webseed URL: the main server's own URL (union of
-// servers without an edge) and each edge's public URL.
-func (s *Server) webseedAvailability(ctx context.Context, r *http.Request, l *seedsrc.Layout) map[string]*urlAvail {
+// webseedAvailability groups the edge sources by webseed URL (each edge's public URL).
+func (s *Server) webseedAvailability(ctx context.Context, l *seedsrc.Layout) map[string]*urlAvail {
 	out := map[string]*urlAvail{}
-	mainURL := ""
-	if urls := s.webseedURLs(r, l.Infohash); len(urls) > 0 {
-		mainURL = urls[0]
-	}
 	for _, sa := range s.seeds().All(ctx, l) {
-		if !sa.Avail.Known {
+		e, ok := sa.Source.(*seedsrc.Edge)
+		if !ok || !sa.Avail.Known {
 			continue
 		}
-		u, edgeID := mainURL, int64(0)
-		if e, ok := sa.Source.(*seedsrc.Edge); ok {
-			u, edgeID = e.BaseURL+"/webseed/hash/"+l.Infohash+"/", e.ServerID
-		}
-		if u == "" {
-			continue
-		}
+		u, edgeID := e.BaseURL+"/webseed/hash/"+l.Infohash+"/", e.ServerID
 		if out[u] == nil {
 			out[u] = &urlAvail{bits: seedsrc.NewBits(l.NumPieces), edge: edgeID}
 		}

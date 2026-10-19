@@ -4,10 +4,11 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
-	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/darknightlab/onlinetorrent/internal/edge"
@@ -113,21 +114,69 @@ func TestAdminEdgeTokenFlow(t *testing.T) {
 
 type edgetokenKey = ed25519.PublicKey
 
-func TestMainWebseedSkipsEdgeSources(t *testing.T) {
-	files := []torrentfile.TorrentFile{{Path: "T/a.mkv", Size: 300}}
-	data := make([]byte, 300)
-	main := &memSource{id: "qb:1", data: data}
-	edgeQB := &memSource{id: "qb:5", data: data}
-	edgeSrc := &seedsrc.Edge{ServerID: 5, BaseURL: "https://edge.test", Client: fakeEdge{edgeQB}}
-	s, _, ih := progressiveServer(t, files, 100, main, edgeSrc)
-	main.set(2, 0, 0)
-	edgeQB.set(2, 2, 2)
-	// piece 0: the main server's own source has it
-	if w := webseedReq(s, ih, "T/a.mkv", "bytes=0-99"); w.Code != 206 {
-		t.Fatalf("main piece: %d", w.Code)
+// The main server has no webseed data path: /webseed/… is 404 for everybody (not the SPA),
+// while the permission still exists, sits in the webseed bundle and gates token issuance.
+func TestMainServerHasNoWebseed(t *testing.T) {
+	s, _ := testServer(t)
+	s.WebFS = fstest.MapFS{"index.html": {Data: []byte("<!doctype html><html>spa</html>")}} // unknown paths fall to the SPA
+	h := s.Handler()
+	if rec := doReq(h, "GET", "/some/page", ""); rec.Code != 200 || !strings.Contains(rec.Body.String(), "spa") {
+		t.Fatalf("SPA fallback not active: %d", rec.Code)
 	}
-	// pieces 1-2 only on the edge: the main server never relays edge data
-	if w := webseedReq(s, ih, "T/a.mkv", "bytes=100-199"); w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("edge-only piece served by the main server: %d", w.Code)
+	admin := loginAs(t, s, "boss", store.RoleAdmin)
+	ih := strings.Repeat("ab", 20)
+	for _, p := range []string{"/webseed/hash/" + ih + "/", "/webseed/hash/" + ih + "/T/a.mkv", "/webseed/x"} {
+		for _, m := range []string{"GET", "HEAD"} {
+			for _, c := range []string{"", admin} {
+				rec := doReq(h, m, p, c)
+				if rec.Code != 404 || strings.Contains(rec.Body.String(), "<html") || strings.Contains(rec.Body.String(), "<!doctype") {
+					t.Fatalf("%s %s (cookie %v): %d %.80s", m, p, c != "", rec.Code, rec.Body.String())
+				}
+			}
+		}
+	}
+	// the permission spec exists (handler-less), configurable, in the webseed bundle
+	s.perms.mu.RLock()
+	spec := s.perms.byKey[webseedRouteKey]
+	s.perms.mu.RUnlock()
+	if spec == nil || spec.Access != AccessConfigurable || spec.Bundle != "webseed" || !strings.Contains(spec.Label, "边缘节点") {
+		t.Fatalf("spec = %+v", spec)
+	}
+	if !s.allowed(store.RoleMember, webseedRouteKey) || s.allowed(store.RoleGuest, webseedRouteKey) {
+		t.Fatal("default grants changed")
+	}
+}
+
+func TestWebseedPermissionGatesTokens(t *testing.T) {
+	files := []torrentfile.TorrentFile{{Path: "T/a.mkv", Size: 100}}
+	src := &memSource{id: "qb:5"}
+	src.set(2)
+	s, _, ih := webseedTestServer(t, files, 100, &seedsrc.Edge{ServerID: 5, BaseURL: "https://edge.test", Client: fakeEdge{src}})
+	// guests: policy allows this torrent, but they lack the route permission → no seeds, no token
+	s.wsAllow.Store(store.RoleGuest+"|"+ih+"|"+strconv.FormatUint(s.Policy.Generation(), 10), wsAllowEntry{true, time.Now().Add(time.Hour)})
+	run := func() []string {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		var got []string
+		s.webseedStream(ctx, httptest.NewRequest("GET", "http://x/", nil), func(name string, d any) bool {
+			b, _ := json.Marshal(d)
+			got = append(got, name+" "+string(b))
+			return name != "ready"
+		}, func() bool { return true }, ih, 0)
+		return got
+	}
+	if got := run(); len(got) != 1 || !strings.Contains(got[0], "forbidden") {
+		t.Fatalf("guest without permission: %v", got)
+	}
+	// grant the permission to guests → the edge URL comes with a token
+	s.perms.mu.Lock()
+	if s.perms.grants[store.RoleGuest] == nil {
+		s.perms.grants[store.RoleGuest] = map[string]bool{}
+	}
+	s.perms.grants[store.RoleGuest][webseedRouteKey] = true
+	s.perms.mu.Unlock()
+	got := run()
+	if len(got) == 0 || !strings.HasPrefix(got[len(got)-1], "ready ") || !strings.Contains(got[len(got)-1], `"token":"`) {
+		t.Fatalf("guest with permission: %v", got)
 	}
 }

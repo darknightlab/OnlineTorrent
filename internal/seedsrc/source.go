@@ -2,9 +2,6 @@ package seedsrc
 
 import (
 	"context"
-	"errors"
-	"io"
-	"sort"
 	"sync"
 	"time"
 )
@@ -17,7 +14,8 @@ type Avail struct {
 	Pieces *Bits
 }
 
-// Source is a server holding torrent data. Implementations must be safe for concurrent use.
+// Source is a server holding torrent data (today: a qB server's connected edge node; the
+// browser fetches the data from the edge itself, the main server only reports availability). Implementations must be safe for concurrent use.
 type Source interface {
 	// ID is stable for the process lifetime (e.g. "qb:3"); Name is for logs / UI.
 	ID() string
@@ -25,14 +23,7 @@ type Source interface {
 	// Have reports the verified pieces of torrent l (numPieces = l.NumPieces). It may be
 	// called often; the Set caches it for a second.
 	Have(ctx context.Context, l *Layout) (Avail, error)
-	// ReadRange returns bytes [start, end] (inclusive) of file fi. have is the source's
-	// current availability (the caller checked that it covers the range). Errors before
-	// the first byte are returned; later ones surface from Read.
-	ReadRange(ctx context.Context, l *Layout, fi int, start, end int64, have *Bits) (io.ReadCloser, error)
 }
-
-// ErrUnavailable: no source has every piece of the requested range.
-var ErrUnavailable = errors.New("seedsrc: range not available on any source")
 
 // Set is the list of sources plus a short-lived availability cache shared by every
 // request and SSE stream (so N viewers of a torrent cost one pieceStates call per source
@@ -142,31 +133,4 @@ func (s *Set) Union(ctx context.Context, l *Layout) (union *Bits, known bool) {
 		}
 	}
 	return union, known
-}
-
-// Choose picks a source accepted by accept (nil = any) that has every piece of [start, end]
-// of file fi. Sources holding the whole file are preferred, then the most complete one.
-func (s *Set) Choose(ctx context.Context, l *Layout, fi int, start, end int64, accept func(Source) bool) (Source, *Bits, error) {
-	first, last := l.Pieces(fi, start, end)
-	ff, fl, _ := l.FilePieces(fi)
-	var cands []SourceAvail
-	for _, sa := range s.All(ctx, l) {
-		if accept != nil && !accept(sa.Source) {
-			continue
-		}
-		if sa.Avail.Known && sa.Avail.Pieces.All(first, last) {
-			cands = append(cands, sa)
-		}
-	}
-	if len(cands) == 0 {
-		return nil, nil, ErrUnavailable
-	}
-	sort.SliceStable(cands, func(i, j int) bool {
-		ci, cj := cands[i].Avail.Pieces.All(ff, fl), cands[j].Avail.Pieces.All(ff, fl)
-		if ci != cj {
-			return ci
-		}
-		return cands[i].Avail.Pieces.Count() > cands[j].Avail.Pieces.Count()
-	})
-	return cands[0].Source, cands[0].Avail.Pieces, nil
 }

@@ -278,15 +278,26 @@ func TestResolveNewHash(t *testing.T) {
 		t.Errorf("seed before metadata: %d", rec.Code)
 	}
 
-	// metadata fetches were removed from qB again (nothing downloaded / seeded)
-	time.Sleep(200 * time.Millisecond)
-	fq.mu.Lock()
-	for ih, cat := range fq.added {
-		if ih != ihDead {
-			t.Errorf("left in qB: %s (%s)", ih, cat)
+	// metadata fetches were removed from qB again (nothing downloaded / seeded); the queue
+	// removes them asynchronously, so poll instead of a fixed sleep (slow under load)
+	var left []string
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		left = left[:0]
+		fq.mu.Lock()
+		for ih, cat := range fq.added {
+			if ih != ihDead {
+				left = append(left, ih+" ("+cat+")")
+			}
 		}
+		fq.mu.Unlock()
+		if len(left) == 0 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
-	fq.mu.Unlock()
+	for _, l := range left {
+		t.Errorf("left in qB: %s", l)
+	}
 }
 
 // The content scope counts for playing: a torrent with a file mapped to a subject hidden for

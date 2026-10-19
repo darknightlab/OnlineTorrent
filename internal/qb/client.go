@@ -171,16 +171,6 @@ func (c *Client) do(ctx context.Context, method, path string, form url.Values) (
 	return b, resp.StatusCode, nil
 }
 
-// DownloadFile streams one file of a torrent (qB ≥ 5.3, WebAPI 2.16.0: torrents/downloadFile),
-// forwarding the Range header. The caller must close the body.
-func (c *Client) DownloadFile(ctx context.Context, hash string, index int, rangeHdr string) (*http.Response, error) {
-	h := http.Header{}
-	if rangeHdr != "" {
-		h.Set("Range", rangeHdr)
-	}
-	return c.raw(ctx, http.MethodGet, "torrents/downloadFile", url.Values{"hash": {hash}, "file": {strconv.Itoa(index)}}, h, true)
-}
-
 // MaxExportBytes caps torrents/export responses (same cap as crawled .torrent files).
 const MaxExportBytes = 5 << 20
 

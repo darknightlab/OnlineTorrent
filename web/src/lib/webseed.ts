@@ -68,7 +68,7 @@ export function retryDelay(attempt: number) {
   return RETRY_STEPS_MS[Math.min(Math.max(0, attempt), RETRY_STEPS_MS.length - 1)]
 }
 
-/** 一个 WebSeed 地址：主站自己（只有下载完成的文件）或某个边缘节点（需要访问令牌） */
+/** 一个 WebSeed 地址（某个边缘节点）及其访问令牌 */
 export interface SeedInfo {
   url: string
   pieces: number | null

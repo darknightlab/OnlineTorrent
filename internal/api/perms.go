@@ -93,6 +93,15 @@ func (s *Server) route(mux *http.ServeMux, method, pattern, access, group, label
 	mux.HandleFunc(key, s.checkPerm(key, s.h(h)))
 }
 
+// permOnly registers a permission spec without an HTTP handler on this server (the action
+// happens elsewhere, e.g. "GET /webseed/hash/{ih}/{path...}" is served by edge nodes; the
+// permission gates the access tokens the main server issues for them).
+func (s *Server) permOnly(method, pattern, access, group, label string, defaults []string) {
+	key := method + " " + pattern
+	bundle, bundleLabel := bundleOf(key)
+	s.perms.add(RouteSpec{Key: key, Method: method, Path: pattern, Group: group, Label: label, Access: access, DefaultRoles: defaults, Bundle: bundle, BundleLabel: bundleLabel})
+}
+
 // checkPerm enforces a route permission before calling next.
 func (s *Server) checkPerm(key string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

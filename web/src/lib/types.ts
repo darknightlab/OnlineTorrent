@@ -27,7 +27,7 @@ export interface Site {
   trackers: string[]
   ice_servers: IceServer[]
   max_auto_size_bytes: number
-  /** HTTP WebSeed：地址固定 /webseed/hash/{ih}/（Cookie 鉴权，权限 PERM.webseed）；播放即订阅就绪推送 */
+  /** HTTP WebSeed（只由边缘节点提供，权限 PERM.webseed）：播放即订阅就绪推送，地址与访问令牌由 SSE 下发 */
   webseed?: { enabled: boolean }
   /** 可播放种子大小上限（字节）；浏览器缓存预算 = min(此值, 存储配额的 25%) */
   max_push_size_bytes?: number
@@ -316,7 +316,7 @@ export interface PlayResponse {
   magnet: string
   /** 恒为 []：服务器做种改由 POST /torrents/hash/{ih}/seed 单独请求 */
   seeded_by: string[]
-  /** 恒为 []：WebSeed 地址固定为 /webseed/hash/{ih}/，就绪后由 SSE 推送 */
+  /** 恒为 []：WebSeed（边缘节点）地址就绪后由 SSE 推送 */
   webseeds: string[]
   meta: PlayMeta | null
 }

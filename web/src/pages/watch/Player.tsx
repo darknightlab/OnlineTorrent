@@ -225,7 +225,7 @@ export function Player({
   useEffect(() => {
     if (!session || direct || !ih || !meReady) return
     let cancelled = false
-    // WebSeed 地址固定（/webseed/hash/{ih}/，Cookie 鉴权）；SSE 推送 ready 后才加入
+    // WebSeed 只由边缘节点提供：地址与访问令牌都由 SSE 推送（ready / seed / token）后才加入
     setWebseedArmed(canWebseed && !!site.webseed?.enabled)
     if (canSeed) {
       void (async () => {

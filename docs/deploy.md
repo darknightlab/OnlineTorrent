@@ -18,7 +18,7 @@
 - https://qbittorrent-ams.kawaii.cam（隧道 → TrueNAS `192.168.233.14:8888`，同 LAN 可直连），v5.3.0beta1 / libtorrent 2.1.1。
 
 ## 边缘节点（otd edge，未部署）
-qB 所在主机（TrueNAS-AMS，Portainer endpoint 5，docker；LAN 192.168.233.14）上运行，读 qB 的下载目录直接向浏览器提供 WebSeed（包括下载中的文件），数据不经主站。它主动连主站的隧道，主站不需要能访问它。
+qB 所在主机（TrueNAS-AMS，Portainer endpoint 5，docker；LAN 192.168.233.14）上运行，读 qB 的下载目录直接向浏览器提供 WebSeed（包括下载中的文件），数据不经主站。WebSeed 只由边缘节点提供：没有边缘节点的 qB 服务器不提供 WebSeed（主站没有 WebSeed 数据接口）。它主动连主站的隧道，主站不需要能访问它。
 
 1. 后台 → qB 服务器 → 该服务器「编辑」：填「边缘节点公开地址」`https://edge-ams.projectk.org`；如需让主站经边缘节点访问 qB WebUI（不再走 `qbittorrent-ams.kawaii.cam`），开「qB API 经边缘节点访问」。
 2. 同一行的「边缘节点」按钮 → 生成令牌，记下 `OTD_EDGE_TOKEN` 与 `OTD_MAIN`（只显示一次）。

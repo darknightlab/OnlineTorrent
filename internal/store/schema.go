@@ -274,4 +274,8 @@ ALTER TABLE qb_servers ADD COLUMN edge_url TEXT NOT NULL DEFAULT '';
 ALTER TABLE qb_servers ADD COLUMN edge_api INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX qb_servers_edge_token ON qb_servers(edge_token_hash) WHERE edge_token_hash <> '';
 `,
+	// 9: the main server no longer serves WebSeed data (edge nodes only): its setting is gone.
+	`
+DELETE FROM settings WHERE key = 'webseed.progressive';
+`,
 }
