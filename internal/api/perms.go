@@ -36,6 +36,32 @@ type RouteSpec struct {
 	Label        string   `json:"label"`
 	Access       string   `json:"access"`
 	DefaultRoles []string `json:"default_roles"`
+	// Bundle groups routes that only work together (e.g. WebSeed download + its readiness
+	// streams): their grants must always be identical. The admin UI toggles them together and
+	// the server rejects a save that would split them.
+	Bundle      string `json:"bundle,omitempty"`
+	BundleLabel string `json:"bundle_label,omitempty"`
+}
+
+// routeBundles lists route keys that must be granted together, by bundle id.
+var routeBundles = map[string]struct {
+	Label string
+	Keys  []string
+}{
+	"webseed": {"WebSeed", []string{
+		"GET /webseed/hash/{ih}/{path...}",
+		"GET /api/v1/torrents/hash/{ih}/webseed/events",
+		"GET /api/v1/torrents/hash/{ih}/webseed/events/file/{idx}",
+	}},
+}
+
+func bundleOf(key string) (id, label string) {
+	for id, b := range routeBundles {
+		if slices.Contains(b.Keys, key) {
+			return id, b.Label
+		}
+	}
+	return "", ""
 }
 
 type permState struct {
@@ -62,7 +88,8 @@ func (p *permState) add(spec RouteSpec) {
 // route registers a handler under its permission key.
 func (s *Server) route(mux *http.ServeMux, method, pattern, access, group, label string, defaults []string, h handler) {
 	key := method + " " + pattern
-	s.perms.add(RouteSpec{Key: key, Method: method, Path: pattern, Group: group, Label: label, Access: access, DefaultRoles: defaults})
+	bundle, bundleLabel := bundleOf(key)
+	s.perms.add(RouteSpec{Key: key, Method: method, Path: pattern, Group: group, Label: label, Access: access, DefaultRoles: defaults, Bundle: bundle, BundleLabel: bundleLabel})
 	mux.HandleFunc(key, s.checkPerm(key, s.h(h)))
 }
 
@@ -194,6 +221,9 @@ func (s *Server) adminPutPermissions(w http.ResponseWriter, r *http.Request) err
 	if err := httpx.Decode(r, &in); err != nil {
 		return err
 	}
+	if err := s.checkBundles(in.Grants); err != nil {
+		return err
+	}
 	for key, roles := range in.Grants {
 		s.perms.mu.RLock()
 		spec := s.perms.byKey[key]
@@ -216,4 +246,49 @@ func (s *Server) adminPutPermissions(w http.ResponseWriter, r *http.Request) err
 		return err
 	}
 	return s.adminGetPermissions(w, r)
+}
+
+// checkBundles rejects a save that would leave the routes of a bundle with different grants
+// (resulting state = submitted grants, else the current ones).
+func (s *Server) checkBundles(in map[string][]string) error {
+	s.perms.mu.RLock()
+	defer s.perms.mu.RUnlock()
+	current := func(key string) []string {
+		var out []string
+		for _, g := range store.GrantableRoles {
+			if s.perms.grants[g][key] {
+				out = append(out, g)
+			}
+		}
+		return out
+	}
+	norm := func(roles []string) string {
+		r := slices.Clone(roles)
+		sort.Strings(r)
+		return strings.Join(slices.Compact(r), ",")
+	}
+	for _, b := range routeBundles {
+		touched := false
+		for _, k := range b.Keys {
+			if _, ok := in[k]; ok {
+				touched = true
+			}
+		}
+		if !touched {
+			continue
+		}
+		want := ""
+		for i, k := range b.Keys {
+			roles, ok := in[k]
+			if !ok {
+				roles = current(k)
+			}
+			if i == 0 {
+				want = norm(roles)
+			} else if norm(roles) != want {
+				return httpx.E(400, "bad_request", "「"+b.Label+"」相关接口必须一起开关："+strings.Join(b.Keys, "、"))
+			}
+		}
+	}
+	return nil
 }

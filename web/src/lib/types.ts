@@ -698,6 +698,9 @@ export interface PermissionItem {
   default_roles: string[] | null
   /** 显式授权（不含继承） */
   granted: Record<GrantRole, boolean>
+  /** 联动组：同组接口的权限必须一致（后台切换其一，其余自动跟随；保存时后端校验） */
+  bundle?: string
+  bundle_label?: string
 }
 
 export interface PermissionsResponse {

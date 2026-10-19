@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { ChevronRight, Info, Loader2, Lock, RotateCcw, Save, Undo2 } from "lucide-react"
+import { ChevronRight, Info, Link2, Loader2, Lock, RotateCcw, Save, Undo2 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -74,6 +74,19 @@ export default function PermissionsPage() {
   const [draft, setDraft] = useState<Record<string, Min>>({})
   useEffect(() => setDraft(base), [base])
 
+  // 联动组：切换其中一个接口，同组的其余接口一起切换
+  const bundles = useMemo(() => {
+    const m = new Map<string, string[]>()
+    for (const i of items) if (i.bundle) m.set(i.bundle, [...(m.get(i.bundle) ?? []), i.key])
+    return m
+  }, [items])
+  const set = (key: string, min: Min) =>
+    setDraft((d) => {
+      const item = items.find((i) => i.key === key)
+      const keys = item?.bundle ? (bundles.get(item.bundle) ?? [key]) : [key]
+      return { ...d, ...Object.fromEntries(keys.map((k) => [k, min])) }
+    })
+
   const dirty = useMemo(() => Object.keys(base).filter((k) => draft[k] !== undefined && draft[k] !== base[k]), [base, draft])
   const groups = useMemo(() => {
     const m = new Map<string, PermissionItem[]>()
@@ -101,7 +114,6 @@ export default function PermissionsPage() {
       </div>
     )
 
-  const set = (key: string, min: Min) => setDraft((d) => ({ ...d, [key]: min }))
 
   return (
     <div className="pb-20">
@@ -251,6 +263,15 @@ function RouteLabel({ item, dirty, onReset }: { item: PermissionItem; dirty: boo
         <span className="text-[13px] font-medium leading-snug">{item.label || item.key}</span>
         {item.access === "public" && <Badge variant="soft">公开</Badge>}
         {item.access === "user" && <Badge variant="outline">需登录</Badge>}
+        {item.bundle && (
+          <span
+            className="inline-flex items-center gap-0.5 rounded bg-accent-soft px-1 text-[11px] text-accent-text"
+            title={`与「${item.bundle_label ?? item.bundle}」的其他接口联动：必须一起开关`}
+          >
+            <Link2 className="h-3 w-3" />
+            联动 · {item.bundle_label ?? item.bundle}
+          </span>
+        )}
         {dirty && <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-label="已修改" title="已修改" />}
         {onReset && (
           <button type="button" onClick={onReset} className="inline-flex items-center gap-0.5 rounded px-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground" title="恢复为默认权限">
