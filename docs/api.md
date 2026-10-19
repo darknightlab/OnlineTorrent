@@ -97,7 +97,7 @@ URL 与 API 中用来指代某一集（Go：`meta.ParseEpisodeKey`，`internal/m
 ### `GET /schedule`
 番剧时间线（bangumi-data 本季 + 上季仍在播）。`items` 按 `next_air_at`/`last_air_at` 计算，前端按星期分组。
 ```json
-{ "generated_at": "...", "season": "2026-10",
+{ "generated_at": "...",
   "items": [{
     "key": "bgm:123456",          // 映射库内部键
     "subject_id": 1034,            // 本站条目 ID → /subject/id/1034

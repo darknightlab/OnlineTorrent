@@ -44,7 +44,6 @@ func (it *ScheduleItem) ScopeFacts() (tags, metaTags []string) { return it.Scope
 // Schedule is the timeline response.
 type Schedule struct {
 	GeneratedAt string          `json:"generated_at"`
-	Season      string          `json:"season"`
 	Items       []*ScheduleItem `json:"items"`
 }
 
@@ -219,13 +218,11 @@ func (c *Catalog) publishSchedule(now time.Time, items []*ScheduleItem) {
 		}
 		return items[i].AirTime < items[j].AirTime
 	})
-	m := now.In(cst)
-	season := m.Format("2006") + "-" + []string{"01", "01", "01", "04", "04", "04", "07", "07", "07", "10", "10", "10"}[m.Month()-1]
 	if items == nil {
 		items = []*ScheduleItem{}
 	}
 	c.schedMu.Lock()
-	c.sched = &Schedule{GeneratedAt: store.Now(), Season: season, Items: items}
+	c.sched = &Schedule{GeneratedAt: store.Now(), Items: items}
 	c.schedMu.Unlock()
 }
 

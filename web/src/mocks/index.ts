@@ -454,7 +454,7 @@ const routes: [string, string, Handler][] = [
     sessionStorage.setItem(USER_KEY, "vip")
     return me()
   }],
-  ["GET", "/schedule", () => (requirePerm("GET /api/v1/schedule"), { generated_at: new Date().toISOString(), season: "2026-10", items: subjects.filter(visibleSubject).map(fx.toScheduleItem) })],
+  ["GET", "/schedule", () => (requirePerm("GET /api/v1/schedule"), { generated_at: new Date().toISOString(), items: subjects.filter(visibleSubject).map(fx.toScheduleItem) })],
   ["GET", "/subjects/:provider/:id", ({ params }) => {
     requirePerm("GET /api/v1/subjects/{provider}/{id}")
     const a = findSubject(params.provider, params.id)

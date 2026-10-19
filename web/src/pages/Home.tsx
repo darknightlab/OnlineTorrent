@@ -12,7 +12,7 @@ import { Card } from "@/components/ui/card"
 import { useSchedule, useSite } from "@/lib/queries"
 import { byWeekday } from "@/lib/schedule"
 import type { ScheduleItem } from "@/lib/types"
-import { todayWeekday, WEEKDAYS, weekdayDate } from "@/lib/format"
+import { todayWeekday, WEEKDAYS } from "@/lib/format"
 import { useDocumentTitle, useNow } from "@/lib/hooks"
 import { cn, parseTorrentInput, watchHref } from "@/lib/utils"
 
@@ -38,18 +38,7 @@ function ScheduleSection() {
   const today = todayWeekday(new Date(now))
   const [day, setDay] = useState(today)
   const { data, isPending, error, refetch } = useSchedule()
-  const [showAll, setShowAll] = useState(() => localStorage.getItem("schedule.showAll") === "1")
-  const toggleShowAll = () =>
-    setShowAll((v) => {
-      localStorage.setItem("schedule.showAll", v ? "0" : "1")
-      return !v
-    })
-  // 默认只显示有资源（本地已收录，或字幕组发布站有标签）的番（无资源的多为国产/少儿动画，点进去也看不了）
-  const visible = useMemo(
-    () => (data ? (showAll ? data.items : data.items.filter((i) => i.latest_episode || i.moe_tag_id)) : []),
-    [data, showAll],
-  )
-  const hiddenCount = (data?.items.length ?? 0) - visible.length
+  const visible = useMemo(() => data?.items ?? [], [data])
   const byDay = useMemo(() => WEEK_ORDER.map((w) => byWeekday(visible, w)), [visible])
   const [emblaRef, embla] = useEmblaCarousel(
     { loop: true, align: "start", startIndex: WEEK_ORDER.indexOf(today), duration: 22 },
@@ -65,7 +54,7 @@ function ScheduleSection() {
       embla.off("select", onSelect)
     }
   }, [embla])
-  // 数据加载完成 / 显示全部切换后，面板高度变了，让轮播重新测量
+  // 数据加载完成后，面板高度变了，让轮播重新测量
   useEffect(() => {
     embla?.reInit()
   }, [embla, byDay, isPending])
@@ -87,45 +76,10 @@ function ScheduleSection() {
       cancelAnimationFrame(raf)
     }
   }, [embla])
-  const counts = useMemo(() => {
-    const c = new Map<number, number>()
-    for (const i of visible) c.set(i.weekday, (c.get(i.weekday) ?? 0) + 1)
-    return c
-  }, [visible])
-  const season = data?.season?.match(/^(\d{4})-(\d{2})/)
-
   return (
     <section aria-labelledby="schedule-title" id="schedule">
-      <SectionHeader
-        id="schedule-title"
-        icon={CalendarDays}
-        title={
-          <span className="flex items-baseline gap-2 whitespace-nowrap">
-            新番时间表
-            {season && (
-              <span className="hidden text-xs font-normal text-muted-foreground min-[400px]:inline">
-                {season[1]} 年 {Number(season[2])} 月新番
-              </span>
-            )}
-          </span>
-        }
-        extra={
-          <span className="flex shrink-0 items-center gap-3 whitespace-nowrap text-xs text-muted-foreground">
-            <span className="hidden sm:inline">北京时间 · 按播出时间排序</span>
-            {(hiddenCount > 0 || showAll) && (
-              <button
-                type="button"
-                onClick={toggleShowAll}
-                aria-pressed={showAll}
-                className="inline-flex h-8 items-center rounded-md px-2 font-medium text-primary-text hover:bg-primary-soft"
-              >
-                {showAll ? "只看有资源" : `显示全部（+${hiddenCount}）`}
-              </button>
-            )}
-          </span>
-        }
-      />
-      <div role="tablist" aria-label="选择星期" className="mb-3 grid grid-cols-7 gap-1 rounded-xl border bg-card p-1 shadow-card sm:mb-4">
+      <SectionHeader id="schedule-title" icon={CalendarDays} title="新番时间表" />
+      <div role="tablist" aria-label="选择星期" className="mb-3 grid grid-cols-7 gap-1 sm:mb-4">
         {WEEK_ORDER.map((w) => {
           const active = w === day
           const isToday = w === today
@@ -136,22 +90,19 @@ function ScheduleSection() {
               role="tab"
               aria-selected={active}
               aria-controls={`schedule-panel-${w}`}
+              aria-label={isToday ? `${WEEKDAYS[w]}（今天）` : WEEKDAYS[w]}
               onClick={() => {
                 setDay(w)
                 embla?.scrollTo(WEEK_ORDER.indexOf(w))
               }}
               className={cn(
-                "relative flex h-12 flex-col items-center justify-center rounded-lg text-sm font-medium transition-colors sm:h-14",
+                "relative flex h-9 items-center justify-center rounded-lg text-sm font-medium transition-colors",
                 active ? "bg-primary text-white shadow-sm" : "text-muted-foreground hover:bg-muted hover:text-foreground",
                 !active && isToday && "text-primary-text",
               )}
             >
-              <span className="leading-tight">{isToday ? "今天" : WEEKDAYS[w]}</span>
-              <span className={cn("text-[10px] tabular-nums leading-tight sm:text-[11px]", active ? "text-white/85" : "text-muted-foreground/80")}>
-                {isToday ? WEEKDAYS[w] : weekdayDate(w, new Date(now))}
-                <span className="hidden sm:inline">{counts.get(w) ? ` · ${counts.get(w)} 部` : ""}</span>
-              </span>
-              {isToday && !active && <span aria-hidden className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-primary" />}
+              {WEEKDAYS[w]}
+              {isToday && !active && <span aria-hidden className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary" />}
             </button>
           )
         })}

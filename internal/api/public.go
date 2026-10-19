@@ -327,7 +327,7 @@ func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 	}
-	out := catalog.Schedule{GeneratedAt: sc.GeneratedAt, Season: sc.Season, Items: items}
+	out := catalog.Schedule{GeneratedAt: sc.GeneratedAt, Items: items}
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	httpx.JSON(w, 200, out)
 	return nil

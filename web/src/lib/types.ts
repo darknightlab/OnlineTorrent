@@ -155,7 +155,6 @@ export interface ScheduleItem {
 
 export interface ScheduleResponse {
   generated_at: string
-  season: string
   items: ScheduleItem[]
 }
 
