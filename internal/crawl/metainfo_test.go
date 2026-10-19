@@ -96,6 +96,25 @@ func TestParseTorrentMultiFile(t *testing.T) {
 	if m.Size != 308 {
 		t.Errorf("size %d", m.Size)
 	}
+	if len(m.Announce) != 1 || m.Announce[0] != "udp://t" {
+		t.Errorf("announce %v", m.Announce)
+	}
+}
+
+func TestParseTorrentAnnounceList(t *testing.T) {
+	info := map[string]any{"name": "a.mkv", "piece length": 16384, "pieces": strings.Repeat("x", 20), "length": 5}
+	raw := benc(map[string]any{
+		"announce":      "http://primary/announce",
+		"announce-list": []any{[]any{"udp://a:1/announce", "http://primary/announce"}, []any{"udp://b:2/announce", "notaurl", "udp://a:1/announce"}},
+		"info":          info,
+	})
+	m, err := ParseTorrent([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(m.Announce, ",") != "udp://a:1/announce,http://primary/announce,udp://b:2/announce" {
+		t.Errorf("announce %v", m.Announce)
+	}
 }
 
 func TestParseTorrentRejects(t *testing.T) {

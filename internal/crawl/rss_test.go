@@ -50,6 +50,10 @@ func TestParseFeedNyaa(t *testing.T) {
 	if it.PageURL != "https://nyaa.si/view/2175581" || it.Size != ParseSize("810.4 MiB") || it.PublishedAt != "2026-10-18T10:39:55Z" {
 		t.Errorf("item: %+v", it)
 	}
+	// nyaa:seeders / leechers / downloads: initial swarm stats
+	if it.Seeders == nil || *it.Seeders != 4 || it.Leechers == nil || *it.Leechers != 13 || it.Completed == nil || *it.Completed != 0 {
+		t.Errorf("swarm: %v %v %v", it.Seeders, it.Leechers, it.Completed)
+	}
 }
 
 func TestParseFeedDmhy(t *testing.T) {

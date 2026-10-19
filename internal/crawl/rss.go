@@ -30,6 +30,11 @@ type FeedItem struct {
 	PublishedAt string   `json:"published_at,omitempty"`
 	Team        string   `json:"team,omitempty"`
 	Category    string   `json:"category,omitempty"`
+	// swarm counts announced by the feed (Nyaa nyaa:seeders / nyaa:leechers /
+	// nyaa:downloads): stored as initial swarm stats until the first scrape
+	Seeders   *int `json:"seeders,omitempty"`
+	Leechers  *int `json:"leechers,omitempty"`
+	Completed *int `json:"downloads,omitempty"`
 
 	moe *catalog.Torrent // bangumi.moe item (tags, team, file list)
 }
@@ -185,6 +190,17 @@ func walkExt(ns, name string, v ext.Extension, fi *FeedItem, consider func(strin
 		fi.Size, _ = strconv.ParseInt(val, 10, 64)
 	case lname == "size" && ns == "nyaa" && fi.Size == 0:
 		fi.Size = ParseSize(val)
+	case ns == "nyaa" && (lname == "seeders" || lname == "leechers" || lname == "downloads"):
+		if n, err := strconv.Atoi(val); err == nil && n >= 0 {
+			switch lname {
+			case "seeders":
+				fi.Seeders = &n
+			case "leechers":
+				fi.Leechers = &n
+			default:
+				fi.Completed = &n
+			}
+		}
 	case lname == "pubdate" && fi.PublishedAt == "":
 		// Mikan: <torrent><pubDate>2026-10-18T18:39:54.598</pubDate> (local time, no zone)
 		fi.PublishedAt = parseLooseTime(val)

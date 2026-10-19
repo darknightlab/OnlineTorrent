@@ -17,6 +17,7 @@ import (
 	"github.com/darknightlab/onlinetorrent/internal/meta"
 	"github.com/darknightlab/onlinetorrent/internal/policy"
 	"github.com/darknightlab/onlinetorrent/internal/store"
+	"github.com/darknightlab/onlinetorrent/internal/swarm"
 )
 
 type playReq struct {
@@ -352,7 +353,9 @@ func (s *Server) seed(w http.ResponseWriter, r *http.Request) error {
 	if timeout <= 0 {
 		timeout = 8 * time.Second
 	}
-	push := s.Pool.Push(r.Context(), rec.Infohash, sub.Title, s.St.List(store.KeyTrackers), timeout)
+	// wss + configured BT trackers + the torrent's own announce list (we don't rely on qB's
+	// "automatically add trackers")
+	push := s.Pool.Push(r.Context(), rec.Infohash, sub.Title, swarm.PushTrackers(r.Context(), s.St, s.Meta, rec.Infohash, nil), timeout)
 	if len(push.Errors) > 0 {
 		s.Log.Warn("push errors", "ih", rec.Infohash, "errors", push.Errors)
 	}

@@ -12,7 +12,8 @@ import { Container } from "@/components/layout/Container"
 import { Card } from "@/components/ui/card"
 import { ErrorState } from "@/components/states"
 import { api, isApiError } from "@/lib/api"
-import { PERM, can, qk, useEpisode, useMe, useSiteOrFallback } from "@/lib/queries"
+import { PERM, can, qk, useEpisode, useMe, useSite, useSiteOrFallback } from "@/lib/queries"
+import { DEFAULT_RANK_RULES, rankFiles, type Scored } from "@/lib/rank"
 import { displayTitle } from "@/lib/schedule"
 import type { EpisodeFile, EpisodeResponse, TorrentStatus } from "@/lib/types"
 import { useDocumentTitle } from "@/lib/hooks"
@@ -73,10 +74,31 @@ export default function PlaybackPage() {
   // ---- 单集数据 ----
   const epQ = useEpisode(isEpisode ? provider : "", subjectId, epKey)
   const epData = epQ.data
-  const items = useMemo(() => epData?.items ?? [], [epData])
 
-  // ---- 要播放的资源：URL 指定，否则单集页自动推荐（items[0]） ----
-  const auto = isEpisode && !urlIh ? (items[0] ?? null) : null
+  // ---- 推荐排序（lib/rank.ts）：依赖当前用户权限与站点规则，二者加载完才自动选择 ----
+  const me = useMe()
+  const siteQ = useSite()
+  const canSeed = can(me.data, PERM.seed)
+  const canWebseed = can(me.data, PERM.webseed)
+  const rankReady = !me.isPending && !siteQ.isPending
+  const ranked = useMemo<Scored<EpisodeFile>[]>(
+    () => rankFiles(epData?.items ?? [], site.rank_rules ?? DEFAULT_RANK_RULES, { canSeed, canWebseed }, site.max_auto_size_bytes),
+    [epData, site.rank_rules, site.max_auto_size_bytes, canSeed, canWebseed],
+  )
+  const items = useMemo(() => ranked.map((r) => r.file), [ranked])
+
+  // ---- 要播放的资源：URL 指定，否则单集页自动推荐（排序后的第一个）。
+  // 选中后固定（做种人数刷新导致重新排序时不切换正在播放的资源），换集或身份变化时重新选择 ----
+  const pickScope = `${provider}/${subjectId}/${epKey}/${canSeed}/${canWebseed}`
+  const pickRef = useRef<{ scope: string; key: string } | null>(null)
+  let auto: EpisodeFile | null = null
+  if (isEpisode && !urlIh && rankReady && items.length > 0) {
+    const prev = pickRef.current?.scope === pickScope ? items.find((f) => sourceKey(f) === pickRef.current!.key) : undefined
+    auto = prev ?? items[0]
+  }
+  useEffect(() => {
+    if (auto) pickRef.current = { scope: pickScope, key: sourceKey(auto) }
+  }, [auto, pickScope])
   const ih = urlIh ?? auto?.infohash ?? null
   const fileIndex = urlIh ? urlIndex : (auto?.file_index ?? null)
   const listed = urlIh ? (items.find((f) => f.infohash === urlIh && (urlIndex === null || f.file_index === urlIndex)) ?? null) : auto
@@ -148,7 +170,7 @@ export default function PlaybackPage() {
 
   // ================= 单集页 =================
   if (!urlIh) {
-    if (epQ.isPending)
+    if (epQ.isPending || (items.length > 0 && !rankReady))
       return (
         <Container className="pb-6 lg:py-5">
           <EpisodeSkeleton />
@@ -170,7 +192,7 @@ export default function PlaybackPage() {
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
   const side = epData ? (
-    <EpisodeSide data={epData} ep={ep!} ih={ih} fileIndex={fileIndex ?? playing} listed={!!listed} playName={ready ? state.play?.name : undefined} hint={hint} selected={selected} onSelect={select} />
+    <EpisodeSide data={epData} ranked={ranked} ep={ep!} ih={ih} fileIndex={fileIndex ?? playing} listed={!!listed} playName={ready ? state.play?.name : undefined} hint={hint} selected={selected} onSelect={select} />
   ) : epQ.error ? (
     <Card>
       <ErrorState error={epQ.error} onRetry={() => epQ.refetch()} />
@@ -237,6 +259,7 @@ function EpisodeError({ error, retry }: { error: unknown; retry: () => void }) {
 /** 单集页右栏：选集 + 资源（URL 指定但未收录到本集的资源置顶） */
 function EpisodeSide({
   data,
+  ranked,
   ep,
   ih,
   fileIndex,
@@ -247,6 +270,7 @@ function EpisodeSide({
   onSelect,
 }: {
   data: EpisodeResponse
+  ranked: Scored<EpisodeFile>[]
   ep: EpisodeKey
   ih: string | null
   fileIndex: number | null
@@ -279,7 +303,7 @@ function EpisodeSide({
   return (
     <>
       <EpisodeList subject={data.subject} ep={ep} hasItems={data.items.length > 0 || !!ih} />
-      <SourceList items={data.items} extra={extra} selected={extra ? sourceKey(extra) : selected} onSelect={onSelect} />
+      <SourceList ranked={ranked} extra={extra} selected={extra ? sourceKey(extra) : selected} onSelect={onSelect} />
     </>
   )
 }

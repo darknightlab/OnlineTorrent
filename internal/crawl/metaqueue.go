@@ -9,6 +9,7 @@ import (
 	"github.com/darknightlab/onlinetorrent/internal/magnet"
 	"github.com/darknightlab/onlinetorrent/internal/qb"
 	"github.com/darknightlab/onlinetorrent/internal/store"
+	"github.com/darknightlab/onlinetorrent/internal/swarm"
 )
 
 // qB metadata queue: a magnet-only feed item is added to one qB server in the category
@@ -189,7 +190,9 @@ func (c *Crawler) fetchMetadata(ctx context.Context, sv *qb.Server, j store.Meta
 		if in, ok := c.Meta.GetTorrentInput(ctx, ih); ok {
 			name = in.Title
 		}
-		uri := magnet.Build(ih, name, j.Trackers)
+		// the feed magnet's trackers + configured BT / wss trackers (+ own announce list if a
+		// .torrent is stored), so qB finds peers without its global tracker list
+		uri := magnet.Build(ih, name, swarm.PushTrackers(ctx, c.St, c.Meta, ih, j.Trackers))
 		if err := sv.Client.Add(ctx, qb.AddParams{URLs: uri, Category: sv.MetaCategory(), StopCondition: "MetadataReceived"}); err != nil {
 			return fmt.Errorf("qB add: %w", err)
 		}

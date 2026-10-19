@@ -60,6 +60,83 @@ type Pool struct {
 
 	mu      sync.RWMutex
 	servers []*Server
+
+	progMu      sync.Mutex
+	prog        map[string]float64 // infohash → best progress over online servers
+	progAt      time.Time
+	progLoading bool
+}
+
+// progressTTL: how long a torrents/info snapshot is reused.
+const progressTTL = time.Minute
+
+// Progress returns infohash → best download progress (0…1) over every enabled, online
+// server (all categories: a torrent seeded there serves WebRTC peers and WebSeed either
+// way), refreshing the snapshot when it is older than a minute. nil if no server answered.
+func (p *Pool) Progress(ctx context.Context) map[string]float64 {
+	p.progMu.Lock()
+	if p.prog != nil && time.Since(p.progAt) < progressTTL {
+		m := p.prog
+		p.progMu.Unlock()
+		return m
+	}
+	p.progMu.Unlock()
+	return p.loadProgress(ctx)
+}
+
+// ProgressCached returns the last snapshot without blocking (ok = there is one) and
+// refreshes it in the background when stale.
+func (p *Pool) ProgressCached() (map[string]float64, bool) {
+	p.progMu.Lock()
+	m, at, loading := p.prog, p.progAt, p.progLoading
+	if time.Since(at) >= progressTTL && !loading {
+		p.progLoading = true
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			p.loadProgress(ctx)
+		}()
+	}
+	p.progMu.Unlock()
+	return m, m != nil
+}
+
+func (p *Pool) loadProgress(ctx context.Context) map[string]float64 {
+	defer func() {
+		p.progMu.Lock()
+		p.progLoading = false
+		p.progMu.Unlock()
+	}()
+	var m map[string]float64
+	for _, s := range p.Servers() {
+		if !s.Cfg.Enabled || !s.Status().Online {
+			continue
+		}
+		cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		ts, err := s.Client.Info(cctx, "")
+		cancel()
+		if err != nil {
+			continue
+		}
+		if m == nil {
+			m = map[string]float64{}
+		}
+		for _, t := range ts {
+			h := strings.ToLower(t.Hash)
+			if t.HasMetadata || t.Progress > 0 {
+				m[h] = max(m[h], t.Progress)
+			} else if _, ok := m[h]; !ok {
+				m[h] = 0
+			}
+		}
+	}
+	if m == nil {
+		return nil
+	}
+	p.progMu.Lock()
+	p.prog, p.progAt = m, time.Now()
+	p.progMu.Unlock()
+	return m
 }
 
 // NewPool creates a pool; call Reload to load servers.
@@ -155,8 +232,10 @@ type PushResult struct {
 	Errors   map[string]string `json:"errors,omitempty"`
 }
 
-// Push adds a torrent to every online, enabled server and, if configured per server,
-// adds the wss trackers afterwards (qB ≥ 5.3.0rc1 strips ws/wss from magnets, PR #24512).
+// Push adds a torrent to every online, enabled server, then adds the trackers with
+// torrents/addTrackers (qB skips ones the torrent already has): this also gives a torrent
+// that was already in qB the missing trackers. wss trackers are only added this way when
+// the server's add_wss_trackers is on (qB ≥ 5.3.0rc1 strips ws/wss from magnets, PR #24512).
 // It is detached from ctx cancellation (a client disconnect must not abort between Add
 // and AddTrackers); timeout bounds each server.
 func (p *Pool) Push(ctx context.Context, ih, name string, trackers []string, timeout time.Duration) PushResult {
@@ -165,10 +244,12 @@ func (p *Pool) Push(ctx context.Context, ih, name string, trackers []string, tim
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	uri := magnet.Build(ih, name, trackers)
-	var wss []string
+	var wss, other []string
 	for _, t := range trackers {
 		if magnet.IsWebSocket(t) {
 			wss = append(wss, t)
+		} else {
+			other = append(other, t)
 		}
 	}
 	for _, s := range p.Servers() {
@@ -184,10 +265,14 @@ func (p *Pool) Push(ctx context.Context, ih, name string, trackers []string, tim
 			if err == nil {
 				p.adoptMeta(cctx, s, ih)
 			}
-			if err == nil && s.Cfg.AddWSSTrackers && len(wss) > 0 {
+			add := other
+			if s.Cfg.AddWSSTrackers {
+				add = append(append([]string(nil), wss...), other...)
+			}
+			if err == nil && len(add) > 0 {
 				// the torrent may need a moment to appear
 				for i := 0; i < 3; i++ {
-					if err2 := s.Client.AddTrackers(cctx, ih, wss); err2 == nil {
+					if err2 := s.Client.AddTrackers(cctx, ih, add); err2 == nil {
 						break
 					} else if i == 2 {
 						p.log.Warn("addTrackers failed", "server", s.Cfg.Name, "hash", ih, "err", err2)

@@ -21,6 +21,7 @@ import (
 	"github.com/darknightlab/onlinetorrent/internal/policy"
 	"github.com/darknightlab/onlinetorrent/internal/qb"
 	"github.com/darknightlab/onlinetorrent/internal/store"
+	"github.com/darknightlab/onlinetorrent/internal/swarm"
 )
 
 const sessionCookie = "ot_session"
@@ -32,6 +33,7 @@ type Server struct {
 	Cat     *catalog.Catalog
 	Crawl   *crawl.Crawler
 	Pool    *qb.Pool
+	Swarm   *swarm.Service // tracker health + swarm stats (may be nil)
 	Policy  *policy.Engine
 	Log     *slog.Logger
 	WebFS   fs.FS // built SPA (may be nil in dev)

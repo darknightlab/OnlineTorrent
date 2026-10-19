@@ -179,6 +179,27 @@ CREATE TABLE torrent_metainfo (
 	source     TEXT NOT NULL DEFAULT '',   -- crawl (feed .torrent) | qb (torrents/export) | bangumi.moe
 	created_at TEXT NOT NULL
 );
+`,
+	// 8: swarm statistics per torrent (internal/swarm: tracker scrapes, Nyaa RSS initial
+	// values, qB progress) and the announce list of stored .torrent files (NULL = not yet
+	// extracted; filled lazily).
+	`
+CREATE TABLE swarm_stats (
+	infohash        TEXT PRIMARY KEY,
+	bt_seeders      INTEGER,               -- NULL = unknown; MAX over udp/http trackers
+	bt_leechers     INTEGER,
+	bt_completed    INTEGER,
+	wt_seeders      INTEGER,               -- MAX over wss (WebTorrent) trackers
+	wt_leechers     INTEGER,
+	server_complete INTEGER NOT NULL DEFAULT 0,
+	server_progress REAL NOT NULL DEFAULT 0,
+	source          TEXT NOT NULL DEFAULT '',  -- scrape | rss (initial value from the feed)
+	checked_at      TEXT NOT NULL DEFAULT '',  -- when the counts were observed
+	scraped_at      TEXT NOT NULL DEFAULT '',  -- last scrape attempt ('' = never scraped)
+	error           TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX swarm_stats_scraped ON swarm_stats(scraped_at);
+ALTER TABLE torrent_metainfo ADD COLUMN announce TEXT;   -- JSON []string
 `}
 
 // Store is the meta database.

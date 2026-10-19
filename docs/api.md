@@ -35,7 +35,7 @@
 | GET | `/api/v1/schedule` | 新番时间表 |
 | GET | `/api/v1/subjects/{provider}/{id}` | 条目详情 + 本地种子（映射到该条目的） |
 | GET | `/api/v1/subjects/{provider}/{id}/episodes` | 选集列表：正片 + 特别篇（SP / NCOP / NCED / PV / CM） |
-| GET | `/api/v1/subjects/{provider}/{id}/episodes/{n}` | 单集所有已知文件（含当前用户 access），`items[0]` 为自动推荐；`{n}` 为集的键 |
+| GET | `/api/v1/subjects/{provider}/{id}/episodes/{n}` | 单集所有已知文件（含当前用户 access 与做种统计 swarm），由前端按推荐规则排序；`{n}` 为集的键 |
 | GET | `/api/v1/search/{keyword}` | 搜索：番剧 + 种子（本地库；翻页 `?page=`） |
 | GET | `/api/v1/torrents/hash/{ih}` | 种子收录状态与文件刮削结果（做种后轮询） |
 | POST | `/api/v1/torrents/hash/{ih}/play` | 打开种子（策略判定 + 磁力） |
@@ -75,7 +75,8 @@ URL 与 API 中用来指代某一集（Go：`meta.ParseEpisodeKey`，`internal/m
   "registration": "open|invite|closed", "turnstile_site_key": "",
   "trackers": ["wss://tracker.projectk.org", "..."],
   "ice_servers": [{"urls": ["stun:stun.l.google.com:19302"]}],
-  "max_auto_size_bytes": 2147483648 }
+  "max_auto_size_bytes": 2147483648,
+  "rank_rules": { ...推荐规则，见下方「推荐规则」... } }
 ```
 
 ### `GET /me` → `{"user": null, "permissions": [...]}` 或
@@ -145,9 +146,10 @@ URL 与 API 中用来指代某一集（Go：`meta.ParseEpisodeKey`，`internal/m
   "items": [{ "infohash": "...", "file_index": 0, "path": "[Team] Foo - 03 [1080p].mkv", "size_bytes": 0,
               "torrent_title": "...", "team": "字幕组名", "published_at": "...", "source_id": "来源条目 ID（bangumi.moe _id / RSS guid），可空",
               "source": "抓取源名称（bangumi.moe、Nyaa…）或 user",
-              "confidence": 0.85, "access": {"action": "allow", "reason": ""} }] }
+              "confidence": 0.85, "access": {"action": "allow", "reason": ""},
+              "swarm": Swarm | null }] }
 ```
-`items[0]` 为服务端自动推荐；无已知文件时 `items` 为空数组。特别篇的文件来自 `torrent_files` 中对应的 kind（见「集的键」）。
+`items` 按发布时间倒序（中性顺序），**不再由服务端推荐**：前端按 `/site.rank_rules` 与当前用户权限打分排序（`web/src/lib/rank.ts`，见「推荐规则」），列表第一项自动播放。无已知文件时 `items` 为空数组。`swarm` 见「做种统计」。特别篇的文件来自 `torrent_files` 中对应的 kind（见「集的键」）。
 
 ### `GET /search/{keyword}?page=1`
 关键词放在路径里（需 URL 编码，最长 100 字）；`page` 上限 50。每 IP 突发 20 次、之后每 3 秒 1 次。全部读本地库（SQLite FTS5 trigram，中日文可搜；关键词中任一词少于 3 个字时改用 LIKE 子串匹配）。
@@ -170,14 +172,15 @@ Torrent：
   "tags": [{"id": "...", "name": "..."}],      // bangumi.moe 标签；其他来源为 []
   "published_at": "...",
   "source": "抓取源名称（bangumi.moe / 蜜柑计划 / Nyaa / 动漫花园…，后台可改名）或 user",
-  "seeders": 0, "leechers": 0,                 // 不再实时获取，恒为 0（保留字段）
+  "seeders": 0, "leechers": 0,                 // = swarm.bt_seeders / bt_leechers（未知为 0，保留字段）
+  "swarm": Swarm | null,                       // 见「做种统计」
   "access": { "action": "allow|login|vip|block", "reason": "" }
 }
 ```
 受信：后台把抓取源标记为「受信」（默认只有 bangumi.moe）后，其种子与原来的 bangumi.moe 种子一样不受「用户自填磁力最低权限」限制；未受信来源（如 Nyaa、蜜柑）的种子与用户磁力同等对待（默认需登录）。
 
 ### `GET /torrents/hash/{ih}`
-种子在本地库中的收录状态与逐文件刮削结果，供播放页在「服务器做种」后轮询（建议 3–5 秒一次）。只读本地数据，不发起任何外部请求。接口权限可配置，默认游客可用。
+种子在本地库中的收录状态与逐文件刮削结果，供播放页在「服务器做种」后轮询（建议 3–5 秒一次）。只读本地数据；唯一的外部请求是做种统计过期时的按需 scrape（见「做种统计」，最多等待 1.5 秒）。接口权限可配置，默认游客可用。
 ```json
 { "status": "unknown|pending|ready",
   "title": "种子标题（本地库 / qB 元数据名称；未知时为空串）",
@@ -185,7 +188,8 @@ Torrent：
               "kind": "episode|sp|op|ed|pv|cm|extra|other",
               "subject": { "subject_id": 1034, "bgm_id": 123456, "title": "原名", "title_cn": "中文名" },   // 可省略：未刮削到条目；bgm_id 可省略
               "episode": 2,                // 可省略：仅正片（kind=episode）且有 subject 时给出；可为小数（12.5）
-              "episode_key": "2" }] }      // 可省略：有 subject 时给出集的键（"12.5"、"sp1"、"ncop1"…）
+              "episode_key": "2" }],       // 可省略：有 subject 时给出集的键（"12.5"、"sp1"、"ncop1"…）
+  "swarm": Swarm | null }
 ```
 - `ready`：文件列表已知（`files` 为全部文件，包含字幕、字体等 `other`）。`pending`：正在获取元数据（抓取源的磁力在 qB 元数据队列中、刚请求过服务器做种 30 分钟内、或做种后的检查进行中），`files` 为 `[]`。`unknown`：本地没有该种子，或获取失败（`title` 可能仍有值）。
 - 前端：若当前播放文件刮削到 `subject` + `episode_key`（任意类型），切到 `/subject/{bgm|id}/{…}/episode/{episode_key}/hash/{ih}/file/{index}`。
@@ -208,7 +212,7 @@ Torrent：
 - 用户提交的种子获取元数据后会被复查；此外后台每 10 分钟用 qB 中的真实名称与文件列表复查本站分类下所有种子，命中屏蔽规则或超过大小上限的会被移除。
 
 ### `POST /torrents/hash/{ih}/seed` → `{"seeded_by": ["ams"]}`
-让所有在线 qB 下载并做种（消耗服务器带宽 / 磁盘）。默认仅会员及以上。种子须先经 play 打开过；会对当前用户重新做策略判定。超过 `play.max_push_size_mb` 返回 413 `too_large`。
+让所有在线 qB 下载并做种（消耗服务器带宽 / 磁盘）。推给 qB 的 tracker 由本站管理（不依赖 qB 的「自动添加 tracker」）：`webtorrent.trackers` + `bt.trackers` + 种子自带的 announce 列表（本地存的 .torrent），去重后最多 30 个；磁力带上全部，`torrents/add` 之后再 `torrents/addTrackers` 一次（qB 跳过已有的，所以已在 qB 里的种子也会补上缺少的 tracker）。wss 只有在该 qB 开启 `add_wss_trackers` 时才经 addTrackers 添加（qB 会过滤磁力里的 wss）。抓取源的 qB 元数据队列同样使用 Feed 磁力的 tracker + 以上列表。默认仅会员及以上。种子须先经 play 打开过；会对当前用户重新做策略判定。超过 `play.max_push_size_mb` 返回 413 `too_large`。
 qB 拿到元数据后，后端把文件列表写入本地库并刮削（每个 infohash 一次）；期间 `GET /torrents/hash/{ih}` 返回 `pending`，完成后 `ready`。若该种子正好在抓取源的元数据队列里（qB 分类 `projectk-meta`），会被转入做种分类并开始下载，不会被队列删除。
 
 ### `GET /torrents/hash/{ih}/torrent` → `application/x-bittorrent`
@@ -224,6 +228,40 @@ qB 拿到元数据后，后端把文件列表写入本地库并刮削（每个 i
 - 前端：`/site.webseed = {enabled}`；播放开始即订阅推送（SSE 自己等待元数据与服务器文件就绪），收到 `ready` 才 `addWebSeed`，不做客户端探测。
 
 ### `POST /torrents/hash/{ih}/report` `{reason}` → `{}`  需登录。举报 → 进入审核队列（标题取自服务端记录，不接受客户端提供；reason 最长 500 字）
+
+
+## 做种统计（swarm）
+`Swarm`（单集 items、条目 / 搜索的 Torrent、`GET /torrents/hash/{ih}` 的 `swarm` 字段；从未统计且不在服务器上时为 `null`）：
+```json
+{ "bt_seeders": 23, "bt_leechers": 8,     // UDP / HTTP tracker；null = 该类 tracker 都没有响应过
+  "wt_seeders": 1, "wt_leechers": 0,      // WebTorrent（wss）tracker；null 同上
+  "server_complete": true,                // 某台在线 qB 已完整下载（qB 种子列表快照，缓存 1 分钟）
+  "checked_at": "2026-10-19T04:04:01Z" }  // 计数的统计时间；null = 尚未统计（只有 server_complete 可能已知）
+```
+- **按需、缓存 30 分钟，不做全库定时查询**：上述接口返回的种子中，没有数据或 `scraped_at` 超过 30 分钟的，当场只查询这些种子——按 tracker 分组批量请求（UDP BEP 15 每包 ≤ 74 个 infohash、connection id 复用约 1 分钟、每次 1.5/2.5/4 秒重试；HTTP scrape 一次多个 `info_hash`（announce → scrape）、5xx 重试一次；wss 发 `{"action":"scrape","info_hash":[latin1 字符串…]}`，每条 ≤ 50 个），所有 tracker 并行；响应最多等待 **1.5 秒**（约 1.2 秒时先把已响应 tracker 的结果写库），返回当时已知的数据（新值、旧值或 null），其余在后台完成后写库。同一 infohash 的并发请求只查询一次（in-flight 集合）；每个 tracker 限速（突发 4 次，之后每秒 1 次）；同时最多 8 组按需查询，再多时直接返回库中数据。每次请求最多刷新 100 个种子。
+- tracker：`bt.trackers` ∪ `webtorrent.trackers` ∪ 种子自带 announce 列表中前 3 个 udp/http（不在配置里的；每次最多 16 个这类 tracker；必须解析到公网地址）。计数取各 tracker 的**最大值**（同一节点会向多个 tracker 汇报，不能相加）：BT = UDP/HTTP tracker 的最大值，WebRTC = wss tracker 的最大值。响应了但没有列出某个种子的 tracker 记为 0。
+- Nyaa RSS 的 `nyaa:seeders` / `nyaa:leechers` / `nyaa:downloads` 在抓取时写为初始值（`checked_at` = 抓取时间），第一次真正 scrape 前有效，之后不再覆盖。
+- 设置 `swarm.enabled`（默认开）：关闭后不再查询，只返回已有数据。
+- 存储：映射库迁移 8：`swarm_stats(infohash PK, bt_seeders, bt_leechers, bt_completed, wt_seeders, wt_leechers, server_complete, server_progress, source scrape|rss, checked_at, scraped_at, error)`；`torrent_metainfo.announce`（JSON，种子文件的 announce-list，旧行首次使用时补齐）。
+- tracker 状态是**被动**的：只记录每个已配置 tracker 最后一次实际使用（上述按需查询）时的结果，从不为检测主动发请求；保存在内存（重启后为「尚未使用」）。
+
+## 推荐规则
+`/site.rank_rules`（后台「推荐规则」编辑，设置键 `rank.rules`，不在 `/admin/settings` 中）。单集页在浏览器里给每个文件打分（`web/src/lib/rank.ts`，纯函数），按「当前用户可播放（策略 allow）→ 总分 → 发布时间新 → 原顺序」排序，自动播放第一个；策略不允许的始终排最后、不会被自动播放。自动选中后在本页固定（做种人数刷新导致重新排序时不切换）。
+```json
+{ "availability": { "server_complete": 30,         // 服务器已缓存
+                    "wt_seeder": 5, "wt_cap": 30,  // 每个 WebTorrent 做种者，最多 +30
+                    "bt_seeder": 1, "bt_cap": 20,  // 每个 BT 做种者，最多 +20 —— 只对有做种权限（POST …/seed）的用户
+                    "dead": -100 },                // 无人做种，见下
+  "keywords": [ {"label": "HEVC", "pattern": "hevc|[hx]\\.?265", "score": 3},       // 不区分大小写，匹配 种子标题 + 文件路径
+                {"label": "1080p", "pattern": "1080|1920", "score": 3},
+                {"label": "4K", "pattern": "2160|\\b4k\\b", "score": 1},
+                {"label": "简体", "pattern": "简|chs|\\bsc\\b|\\bgb\\b", "score": 2},
+                {"label": "繁体", "pattern": "繁|cht|\\btc\\b|big5", "score": 1} ],
+  "teams": [ {"name": "字幕组名（精确匹配）", "score": 5} ],   // 默认 []
+  "oversize": -10 }   // 文件大于 play.max_auto_size_mb
+```
+- 无人做种（`dead`）：没有做种权限也没有 WebSeed 权限的用户（游客类）：`wt_seeders == 0` 且服务器未缓存；有做种或 WebSeed 权限的用户：所有来源都为 0（BT 0、WebRTC 0、服务器未缓存）。从未统计（`checked_at` 为 null）或对应 tracker 都没响应（计数 null）时可用性记 0、不扣分。HEVC / 10-bit 不再降权。
+- 校验（PUT 400 `bad_request`）：未知字段报错；分值 −1000…1000，上限 0…1000；关键词 ≤ 30 个（名称 ≤ 40 字、正则 ≤ 200 字），字幕组 ≤ 200 个（名称 ≤ 80 字、不重复）；正则须为 Go RE2 与 JavaScript（`i` 标志、无 `u`）共同支持的子集：能被 RE2 编译（因此没有前后查找、反向引用），且不能用 `(?…)`（`(?:` 除外）、`\A \z \Q \E \C`、`\p{…}`、`\x{…}`、`[[:alpha:]]`。
 
 ## 后台 `/admin/*`（仅 admin）
 - `GET /admin/permissions` → `{"roles":["guest","member","vip"], "items":[{key, method, path, group, label, access, default_roles, granted:{guest,member,vip}}]}`
@@ -252,6 +290,12 @@ qB 拿到元数据后，后端把文件列表写入本地库并刮削（每个 i
   - 表达式：AND 优先于 OR——在每个 OR 处分组，条目拥有某一组的全部标签即匹配：`原创 AND 校园 OR 战斗` = `(原创 AND 校园) OR 战斗`。`selected` 模式只显示匹配的条目；`exclude_tags` 在两种模式下都生效（带有任意一个即隐藏，优先于表达式）。
   - 注意：没有任何标签的条目（如只来自 bangumi-data、尚未被 bangumi Archive 补全的条目，或按需从 bgm.tv / TMDB 搜索写入的条目）在 `selected` 模式下被隐藏。
   - 搜索：本地条目按范围在 SQL 中过滤（不影响每页数量）；只有本地完全没有匹配（不论范围）时才查询外部，外部结果同样按范围过滤。
+- Tracker（后台页 `/admin/trackers`）：`GET /admin/trackers` →
+  `{"items":[{url, kind:"udp|http|wss", list:"bt|webtorrent", status:"ok|error|unused", result:"ok|timeout|dns|network|protocol|error|", latency_ms, last_error, checked_at, last_ok_at, last_error_at, ok_count, fail_count}],
+    "swarm":{enabled, running, runs, torrents, last_at, last_ms, last_torrents, last_answered, skipped_busy},
+    "stats":{torrents, scraped, known, dead}, "lists":{"webtorrent":[…],"bt":[…]}}`。
+  状态为最后一次实际使用时的结果（被动记录，启动以来；未使用为 `unused`），计数为启动以来。两个列表在该页编辑，经 `PUT /admin/settings` 保存（`webtorrent.trackers` 只接受 ws/wss，`bt.trackers` 只接受 udp（需端口）/ http(s)，各 ≤ 50 个，去空白去重）。
+- 推荐规则（后台页 `/admin/rank-rules`）：`GET /admin/rank-rules` → `{rules, defaults}`；`PUT /admin/rank-rules` body = 规则对象 → `{rules（规范化后）, defaults}`，记审计日志 `rank_rules.update`。
 - `GET /admin/plays?page=`：播放/推送记录
 - `GET /admin/audit?page=`
 - `GET /admin/stats`：`{users, plays_24h, qb_online, qb_total, pending_reviews}`
@@ -286,7 +330,7 @@ Source：
 - `GET /admin/bgm-archive` → `{dump, dump_at, digest, synced_at, subjects, episodes, relations, duration_sec, checked_at, error?, error_at?, running, phase?}`（bangumi Archive 同步状态；phase 为 subjects|episodes|relations）；`POST /admin/bgm-archive/run` → 202（即使未更新也重新导入），运行中 409 `busy`。设置 `bgm_archive.enabled` 控制每 6 小时自动检查。
 - `GET /admin/metadata-jobs` → `{"items":[{infohash, source_id, status:"pending|running|done|failed", attempts, next_at, server_id, added, started_at, last_error, created_at, updated_at}]}`（最近 200 条，未完成的在前）
 
-相关设置（`GET/PUT /admin/settings`）：`crawl.enabled`（bool，默认 true）、`crawl.workers`（同时抓取的源数，默认 2）、`upstream.tmdb_api_key`（secret，默认空；TMDB v3 key 或 v4 读取令牌）、`upstream.proxy`（抓取与 bgm.tv/TMDB 请求共用；为空时使用环境变量 `HTTPS_PROXY` 等）。
+相关设置（`GET/PUT /admin/settings`）：`bt.trackers`（string_list，默认 opentrackr / torrent.eu.org / stealth.si / desync / nyaa.tracker.wf / explodie，2026-10 实测可 scrape）、`swarm.enabled`（bool，默认 true）、`crawl.enabled`（bool，默认 true）、`crawl.workers`（同时抓取的源数，默认 2）、`upstream.tmdb_api_key`（secret，默认空；TMDB v3 key 或 v4 读取令牌）、`upstream.proxy`（抓取与 bgm.tv/TMDB 请求共用；为空时使用环境变量 `HTTPS_PROXY` 等）。
 
 ## 映射服务 `/meta/v1/*`（metad，可独立部署；默认与 otd 同进程挂载）
 映射粒度是**文件级**：`(infohash, file_index)` → 作品 + 集。种子的每个文件一行（含字幕、字体等，`kind=other`）。`episode`（正片）与特别篇 `sp`/`op`(NCOP)/`ed`(NCED)/`pv`/`cm` 映射到作品 + 集，`episode` 列存正片集数或特别篇编号（没有编号的特别篇为 1；如 `NCOP2` → `kind=op, episode=2`）；Menu/Sample/Preview/特典（`extra`）与非视频（`other`）不映射。集的键由 `kind` + `episode` 得出（`op` → `ncop`，`ed` → `nced`）。

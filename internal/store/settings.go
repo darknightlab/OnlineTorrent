@@ -5,8 +5,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"slices"
+	"strings"
 	"sync"
+
+	"github.com/darknightlab/onlinetorrent/internal/rank"
 )
 
 // SettingSpec describes one admin-editable setting. Values are stored as JSON.
@@ -19,6 +23,11 @@ type SettingSpec struct {
 	Options     []string `json:"options,omitempty"`
 	Default     any      `json:"-"`
 	Public      bool     `json:"-"` // exposed via /site
+	// Hidden settings (type json) are edited on their own admin page and its endpoint,
+	// not in GET/PUT /admin/settings.
+	Hidden bool `json:"-"`
+	// Validate normalises a json setting (returns the value to store).
+	Validate func(json.RawMessage) (json.RawMessage, error) `json:"-"`
 }
 
 // Setting keys.
@@ -31,6 +40,9 @@ const (
 	KeyTurnstileSiteKey  = "auth.turnstile_site_key"
 	KeyTurnstileSecret   = "auth.turnstile_secret"
 	KeyTrackers          = "webtorrent.trackers"
+	KeyBTTrackers        = "bt.trackers"
+	KeySwarmEnabled      = "swarm.enabled"
+	KeyRankRules         = "rank.rules"
 	KeyICEServers        = "webtorrent.ice_servers"
 	KeyMaxAutoSize       = "play.max_auto_size_mb"
 	KeyMaxPushSize       = "play.max_push_size_mb"
@@ -57,6 +69,48 @@ var defaultTrackers = []string{
 	"wss://tracker.btorrent.xyz",
 }
 
+// defaultBTTrackers: public UDP / HTTP trackers (checked reachable and scrape-capable,
+// 2026-10) given to qB and used for swarm statistics.
+var defaultBTTrackers = []string{
+	"udp://tracker.opentrackr.org:1337/announce",
+	"udp://tracker.torrent.eu.org:451/announce",
+	"udp://open.stealth.si:80/announce",
+	"udp://exodus.desync.com:6969/announce",
+	"http://nyaa.tracker.wf:7777/announce",
+	"udp://explodie.org:6969/announce",
+}
+
+func validateRankRules(raw json.RawMessage) (json.RawMessage, error) {
+	r, err := rank.Parse(raw)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(r)
+}
+
+// trackerList validates a tracker list setting: at most 50 URLs of the given schemes.
+func trackerList(schemes ...string) func(json.RawMessage) (json.RawMessage, error) {
+	return func(raw json.RawMessage) (json.RawMessage, error) {
+		var l []string
+		if err := json.Unmarshal(raw, &l); err != nil {
+			return nil, fmt.Errorf("需要字符串数组")
+		}
+		if len(l) > 50 {
+			return nil, fmt.Errorf("最多 50 个 tracker")
+		}
+		for _, t := range l {
+			u, err := url.Parse(t)
+			if err != nil || u.Host == "" || u.Hostname() == "" || len(t) > 300 || !slices.Contains(schemes, strings.ToLower(u.Scheme)) {
+				return nil, fmt.Errorf("无效的 tracker：%s（需要 %s）", t, strings.Join(schemes, " / "))
+			}
+			if strings.ToLower(u.Scheme) == "udp" && u.Port() == "" {
+				return nil, fmt.Errorf("udp tracker 需要端口：%s", t)
+			}
+		}
+		return json.Marshal(l)
+	}
+}
+
 // SettingsSchema lists every setting; order is the admin form order.
 func SettingsSchema() []SettingSpec {
 	return []SettingSpec{
@@ -69,7 +123,10 @@ func SettingsSchema() []SettingSpec {
 		{Key: KeyTurnstileSiteKey, Group: "用户", Type: "string", Label: "Turnstile Site Key", Description: "Cloudflare Turnstile，留空则不启用人机验证", Default: "", Public: true},
 		{Key: KeyTurnstileSecret, Group: "用户", Type: "secret", Label: "Turnstile Secret", Default: ""},
 
-		{Key: KeyTrackers, Group: "播放", Type: "string_list", Label: "WebTorrent Tracker", Description: "浏览器与 qB 用于互相发现的 wss tracker", Default: defaultTrackers, Public: true},
+		{Key: KeyTrackers, Group: "Tracker", Type: "string_list", Label: "WebTorrent Tracker", Description: "浏览器与 qB 用于互相发现的 wss tracker（公开，下发给浏览器）；也用于统计 WebTorrent 做种人数", Default: defaultTrackers, Public: true, Validate: trackerList("wss", "ws")},
+		{Key: KeyBTTrackers, Group: "Tracker", Type: "string_list", Label: "BT Tracker", Description: "udp:// / http(s):// tracker：推送给 qB（与种子自带的 tracker、wss tracker 合并去重，最多 30 个），并用于统计 BT 做种人数；不再依赖 qB 的「自动添加 tracker」", Default: defaultBTTrackers, Validate: trackerList("udp", "http", "https")},
+		{Key: KeySwarmEnabled, Group: "Tracker", Type: "bool", Label: "统计做种人数", Description: "按需向 tracker 查询（scrape）做种 / 下载人数：单集、条目、搜索、种子状态接口返回的种子若没有数据或超过 30 分钟，就在当时批量查询这些种子（最多等待约 1.5 秒，其余在后台完成）。不做全库定时查询。关闭后只显示已有数据（含 Nyaa RSS 的初始值）", Default: true},
+		{Key: KeyRankRules, Group: "播放", Type: "json", Label: "推荐规则", Description: "单集页资源排序与自动播放（后台「推荐规则」页编辑）", Default: rank.Default(), Public: true, Hidden: true, Validate: validateRankRules},
 		{Key: KeyICEServers, Group: "播放", Type: "string_list", Label: "ICE 服务器", Description: "stun:/turn: URL", Default: []string{"stun:stun.l.google.com:19302", "stun:stun.miwifi.com:3478"}, Public: true},
 		{Key: KeyMaxAutoSize, Group: "播放", Type: "number", Label: "时间线自动选种大小上限（MB）", Default: 2048, Public: true},
 		{Key: KeyMaxPushSize, Group: "播放", Type: "number", Label: "可播放种子大小上限（MB）", Description: "超过此大小的种子不会推送给 qB；用户自填磁力在获取元数据后超限会被移除", Default: 8192},
@@ -186,6 +243,9 @@ type SettingItem struct {
 func (s *Store) SettingItems() []SettingItem {
 	var out []SettingItem
 	for _, spec := range SettingsSchema() {
+		if spec.Hidden {
+			continue
+		}
 		var v any
 		_ = json.Unmarshal(s.rawSetting(spec.Key), &v)
 		it := SettingItem{SettingSpec: spec, Value: v}
@@ -211,7 +271,7 @@ func (s *Store) UpdateSettings(ctx context.Context, values map[string]json.RawMe
 	defer tx.Rollback()
 	for k, raw := range values {
 		spec, ok := specFor(k)
-		if !ok {
+		if !ok || spec.Hidden {
 			return fmt.Errorf("unknown setting %q", k)
 		}
 		norm, skip, err := normalizeSetting(spec, raw)
@@ -231,8 +291,42 @@ func (s *Store) UpdateSettings(ctx context.Context, values map[string]json.RawMe
 	return s.reloadSettings(ctx)
 }
 
+// Raw returns the stored JSON of a setting.
+func (s *Store) Raw(key string) json.RawMessage { return s.rawSetting(key) }
+
+// SetJSON validates (spec.Validate) and stores a hidden json setting, returning the
+// stored value.
+func (s *Store) SetJSON(ctx context.Context, key string, raw json.RawMessage) (json.RawMessage, error) {
+	spec, ok := specFor(key)
+	if !ok || spec.Type != "json" {
+		return nil, fmt.Errorf("unknown setting %q", key)
+	}
+	norm, _, err := normalizeSetting(spec, raw)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.W.ExecContext(ctx, `INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value`, key, norm); err != nil {
+		return nil, err
+	}
+	return json.RawMessage(norm), s.reloadSettings(ctx)
+}
+
 func normalizeSetting(spec SettingSpec, raw json.RawMessage) (string, bool, error) {
 	switch spec.Type {
+	case "json":
+		if spec.Validate != nil {
+			v, err := spec.Validate(raw)
+			if err != nil {
+				return "", false, err
+			}
+			return string(v), false, nil
+		}
+		var v map[string]any
+		if err := json.Unmarshal(raw, &v); err != nil || v == nil {
+			return "", false, fmt.Errorf("需要 JSON 对象")
+		}
+		b, _ := json.Marshal(v)
+		return string(b), false, nil
 	case "string", "text", "markdown", "secret", "enum":
 		var v string
 		if err := json.Unmarshal(raw, &v); err != nil {
@@ -267,9 +361,17 @@ func normalizeSetting(spec SettingSpec, raw json.RawMessage) (string, bool, erro
 		}
 		clean := make([]string, 0, len(v))
 		for _, x := range v {
-			if x != "" {
+			if x = strings.TrimSpace(x); x != "" && !slices.Contains(clean, x) {
 				clean = append(clean, x)
 			}
+		}
+		if spec.Validate != nil {
+			b, _ := json.Marshal(clean)
+			out, err := spec.Validate(b)
+			if err != nil {
+				return "", false, err
+			}
+			return string(out), false, nil
 		}
 		b, _ := json.Marshal(clean)
 		return string(b), false, nil

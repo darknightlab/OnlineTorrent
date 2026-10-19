@@ -8,11 +8,13 @@ import {
   KeySquare,
   ListFilter,
   Menu,
+  RadioTower,
   Rss,
   ScrollText,
   Server,
   Settings2,
   ShieldCheck,
+  Sparkles,
   Ticket,
   Users,
 } from "lucide-react"
@@ -34,6 +36,8 @@ import UsersPage from "./Users"
 import Codes from "./Codes"
 import Rules from "./Rules"
 import Reviews from "./Reviews"
+import TrackersPage from "./Trackers"
+import RankRulesPage from "./RankRules"
 import { Audit, Plays } from "./Logs"
 
 const NAV = [
@@ -43,6 +47,8 @@ const NAV = [
   { to: "/admin/content-scope", label: "内容范围", icon: ListFilter },
   { to: "/admin/qb", label: "qB 服务器", icon: Server },
   { to: "/admin/sources", label: "抓取源", icon: Rss },
+  { to: "/admin/trackers", label: "Tracker", icon: RadioTower },
+  { to: "/admin/rank-rules", label: "推荐规则", icon: Sparkles },
   { to: "/admin/users", label: "用户", icon: Users },
   { to: "/admin/codes", label: "邀请码 / 兑换码", icon: Ticket },
   { to: "/admin/rules", label: "策略规则", icon: ShieldCheck },
@@ -121,6 +127,8 @@ export default function AdminApp() {
             <Route path="content-scope" element={<ContentScopePage />} />
             <Route path="qb" element={<QBServers />} />
             <Route path="sources" element={<SourcesPage />} />
+            <Route path="trackers" element={<TrackersPage />} />
+            <Route path="rank-rules" element={<RankRulesPage />} />
             <Route path="users" element={<UsersPage />} />
             <Route path="codes" element={<Codes />} />
             <Route path="rules" element={<Rules />} />

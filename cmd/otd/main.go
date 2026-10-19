@@ -24,6 +24,7 @@ import (
 	"github.com/darknightlab/onlinetorrent/internal/policy"
 	"github.com/darknightlab/onlinetorrent/internal/qb"
 	"github.com/darknightlab/onlinetorrent/internal/store"
+	"github.com/darknightlab/onlinetorrent/internal/swarm"
 	"github.com/darknightlab/onlinetorrent/web"
 )
 
@@ -92,11 +93,15 @@ func serve(args []string) error {
 
 	wg.Go(func() { maintenance(ctx, st, log) })
 
+	// tracker health + swarm statistics (scrapes; on-demand refresh from the API)
+	sw := swarm.New(st, ms, pool, log)
+	sw.Run(ctx)
+
 	if n, _ := st.UserCount(ctx); n == 0 {
 		log.Warn("no users yet; create an admin with: otd user -db <db> -username admin -password <pw> -role admin")
 	}
 
-	srv := &api.Server{St: st, Meta: ms, Cat: cat, Crawl: cr, Pool: pool, Policy: policy.New(st), Log: log, WebFS: web.FS(), BaseCtx: ctx}
+	srv := &api.Server{St: st, Meta: ms, Cat: cat, Crawl: cr, Pool: pool, Swarm: sw, Policy: policy.New(st), Log: log, WebFS: web.FS(), BaseCtx: ctx}
 	hs := &http.Server{Addr: *addr, Handler: srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
 	wg.Go(func() { srv.RunRecheck(ctx) })
@@ -122,6 +127,7 @@ func serve(args []string) error {
 	wg.Wait()
 	cat.Wait()
 	cr.Wait()
+	sw.Wait()
 	srv.Wait()
 	log.Info("shutdown complete")
 	return serveErr

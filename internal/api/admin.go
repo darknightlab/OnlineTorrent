@@ -58,6 +58,9 @@ func (s *Server) adminRoutes(mux *http.ServeMux) {
 	adm("GET", "/api/v1/admin/content-scopes", "内容范围 · 查看", s.adminListContentScopes)
 	adm("PUT", "/api/v1/admin/content-scopes/role/{role}", "内容范围 · 修改", s.adminSetContentScope)
 	adm("GET", "/api/v1/admin/subject-tags", "内容范围 · 查看", s.adminSubjectTags)
+	adm("GET", "/api/v1/admin/trackers", "Tracker · 查看", s.adminTrackers)
+	adm("GET", "/api/v1/admin/rank-rules", "推荐规则 · 查看", s.adminGetRankRules)
+	adm("PUT", "/api/v1/admin/rank-rules", "推荐规则 · 修改", s.adminPutRankRules)
 }
 
 func pathID(r *http.Request) int64 {

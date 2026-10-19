@@ -31,6 +31,45 @@ export interface Site {
   webseed?: { enabled: boolean }
   /** 可播放种子大小上限（字节）；浏览器缓存预算 = min(此值, 存储配额的 25%) */
   max_push_size_bytes?: number
+  /** 单集页推荐规则（后台「推荐规则」；评分见 lib/rank.ts）。缺省时用 DEFAULT_RANK_RULES */
+  rank_rules?: RankRules
+}
+
+/**
+ * 做种统计（tracker scrape，按需刷新、缓存 30 分钟）。计数为 null = 未知（该类 tracker 没有响应过）；
+ * checked_at 为 null = 从未统计（只有 server_complete 可能已知）。
+ */
+export interface SwarmStats {
+  bt_seeders: number | null
+  bt_leechers: number | null
+  /** WebTorrent（wss tracker）做种 / 下载人数 */
+  wt_seeders: number | null
+  wt_leechers: number | null
+  /** 某台 qB 服务器已完整下载（可做种 / WebSeed） */
+  server_complete: boolean
+  checked_at: string | null
+}
+
+/** 推荐规则（GET /site 的 rank_rules，后台 GET/PUT /admin/rank-rules） */
+export interface RankRules {
+  availability: {
+    /** 服务器已缓存加分 */
+    server_complete: number
+    /** 每个 WebTorrent 做种者加分，最多 wt_cap */
+    wt_seeder: number
+    wt_cap: number
+    /** 每个 BT 做种者加分，最多 bt_cap（仅对能让服务器做种的用户） */
+    bt_seeder: number
+    bt_cap: number
+    /** 对当前用户无可用来源时的扣分 */
+    dead: number
+  }
+  /** 正则（不区分大小写）匹配 种子标题 + 文件路径 */
+  keywords: { label: string; pattern: string; score: number }[]
+  /** 字幕组名称精确匹配 */
+  teams: { name: string; score: number }[]
+  /** 文件超过「自动选种大小上限」时的分值（负数） */
+  oversize: number
 }
 
 export interface User {
@@ -84,6 +123,8 @@ export interface Torrent {
   /** 抓取源名称（后台可改名）或 "user"（用户提交的磁力） */
   source: string
   access: Access
+  /** 做种统计；null = 未知 */
+  swarm?: SwarmStats | null
 }
 
 export interface ScheduleItem {
@@ -163,9 +204,11 @@ export interface EpisodeFile {
   source?: string
   confidence: number
   access: Access
+  /** 做种统计；null = 从未统计且不在服务器上 */
+  swarm?: SwarmStats | null
 }
 
-/** GET /subjects/{provider}/{id}/episodes/{key}；items[0] 为服务端自动推荐 */
+/** GET /subjects/{provider}/{id}/episodes/{key}；items 按发布时间倒序，由前端按推荐规则排序（lib/rank.ts） */
 export interface EpisodeResponse {
   subject: Subject
   /** 规范写法的集的键："12"、"12.5"、"sp1"、"ncop1"… */
@@ -242,6 +285,7 @@ export interface TorrentStatus {
   status: "unknown" | "pending" | "ready"
   title: string
   files: TorrentStatusFile[]
+  swarm?: SwarmStats | null
 }
 
 export interface PlayMeta {
@@ -554,6 +598,51 @@ export interface BgmArchiveStatus {
   error_at?: string | null
   running: boolean
   phase?: "subjects" | "episodes" | "relations" | (string & {})
+}
+
+// ---------- Tracker（后台） ----------
+
+/** 某个已配置 tracker 最后一次实际使用（按需统计做种人数）时的状态；不做主动探测 */
+export interface TrackerHealth {
+  url: string
+  kind: "udp" | "http" | "wss" | (string & {})
+  list: "bt" | "webtorrent"
+  /** unused = 启动以来尚未使用 */
+  status: "ok" | "error" | "unused"
+  result: "" | "ok" | "timeout" | "dns" | "network" | "protocol" | "error"
+  latency_ms: number
+  last_error: string
+  checked_at: string | null
+  last_ok_at: string | null
+  last_error_at: string | null
+  ok_count: number
+  fail_count: number
+}
+
+export interface SwarmInfo {
+  enabled: boolean
+  running: number
+  runs: number
+  torrents: number
+  last_at: string | null
+  last_ms: number
+  last_torrents: number
+  last_answered: number
+  skipped_busy: number
+}
+
+/** GET /admin/trackers */
+export interface TrackersResponse {
+  items: TrackerHealth[]
+  swarm: SwarmInfo
+  stats: { torrents: number; scraped: number; known: number; dead: number } | null
+  lists: { webtorrent: string[]; bt: string[] }
+}
+
+/** GET/PUT /admin/rank-rules */
+export interface RankRulesResponse {
+  rules: RankRules
+  defaults: RankRules
 }
 
 export interface AdminStats {

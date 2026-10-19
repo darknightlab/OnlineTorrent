@@ -10,6 +10,7 @@ import (
 	"github.com/darknightlab/onlinetorrent/internal/crawl"
 	"github.com/darknightlab/onlinetorrent/internal/httpx"
 	"github.com/darknightlab/onlinetorrent/internal/magnet"
+	"github.com/darknightlab/onlinetorrent/internal/meta"
 	"github.com/darknightlab/onlinetorrent/internal/store"
 )
 
@@ -35,9 +36,10 @@ type statusFile struct {
 }
 
 type statusResp struct {
-	Status string       `json:"status"` // unknown | pending | ready
-	Title  string       `json:"title"`
-	Files  []statusFile `json:"files"`
+	Status string          `json:"status"` // unknown | pending | ready
+	Title  string          `json:"title"`
+	Files  []statusFile    `json:"files"`
+	Swarm  *meta.SwarmView `json:"swarm"`
 }
 
 // GET /api/v1/torrents/hash/{ih} — catalogue status of a torrent and its scraped files
@@ -82,6 +84,7 @@ func (s *Server) getTorrentStatus(w http.ResponseWriter, r *http.Request) error 
 	if out.Status != "ready" && s.metadataExpected(r, ih) {
 		out.Status = "pending"
 	}
+	out.Swarm = s.swarmFor(ctx, []string{ih})[ih]
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, 200, out)
 	return nil

@@ -40,6 +40,11 @@ func (c *Crawler) ingestItems(ctx context.Context, src store.Source, items []Fee
 		if downloaded {
 			downloads++
 		}
+		if ih != "" && (it.Seeders != nil || it.Leechers != nil) {
+			if err := c.Meta.PutSwarmInitial(ctx, ih, it.Seeders, it.Leechers, it.Completed); err != nil {
+				c.Log.Warn("crawl: initial swarm stats", "ih", ih, "err", err)
+			}
+		}
 		if err != nil {
 			complete = false
 			if len(errs) < 5 {

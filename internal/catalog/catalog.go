@@ -26,18 +26,19 @@ type Ref struct {
 
 // Torrent is the normalized listing item (see docs/api.md).
 type Torrent struct {
-	ID          string         `json:"id"`
-	Infohash    string         `json:"infohash"`
-	Title       string         `json:"title"`
-	SizeBytes   int64          `json:"size_bytes"`
-	Files       int            `json:"files"`
-	Team        *Ref           `json:"team"`
-	Tags        []Ref          `json:"tags"`
-	PublishedAt string         `json:"published_at"`
-	Source      string         `json:"source"`
-	Seeders     int            `json:"seeders"`
-	Leechers    int            `json:"leechers"`
-	Access      *policy.Access `json:"access,omitempty"`
+	ID          string          `json:"id"`
+	Infohash    string          `json:"infohash"`
+	Title       string          `json:"title"`
+	SizeBytes   int64           `json:"size_bytes"`
+	Files       int             `json:"files"`
+	Team        *Ref            `json:"team"`
+	Tags        []Ref           `json:"tags"`
+	PublishedAt string          `json:"published_at"`
+	Source      string          `json:"source"`
+	Seeders     int             `json:"seeders"`  // = swarm.bt_seeders (0 if unknown)
+	Leechers    int             `json:"leechers"` // = swarm.bt_leechers (0 if unknown)
+	Swarm       *meta.SwarmView `json:"swarm"`
+	Access      *policy.Access  `json:"access,omitempty"`
 
 	FileList  []string `json:"-"`
 	FileSizes []int64  `json:"-"`

@@ -1,7 +1,9 @@
 // Mock 数据：条目（番剧）来自 bgm.tv /calendar 的真实条目（seed.json），种子标题来自 bangumi.moe 最新列表。
 // 放送时间相对“现在”动态计算，保证“已更新/即将播出”徽标在任何时候都有样例。
 import seed from "./seed.json"
+import { DEFAULT_RANK_RULES } from "@/lib/rank"
 import type {
+  SwarmStats,
   AccessAction,
   AdminStats,
   AdminUser,
@@ -177,6 +179,32 @@ export const site: Site = {
   ice_servers: [{ urls: ["stun:stun.miwifi.com:3478", "stun:stun.l.google.com:19302"] }],
   max_auto_size_bytes: 2 * 1024 ** 3,
   webseed: { enabled: true },
+  rank_rules: structuredClone(DEFAULT_RANK_RULES),
+}
+
+export const btTrackers = [
+  "udp://tracker.opentrackr.org:1337/announce",
+  "udp://tracker.torrent.eu.org:451/announce",
+  "udp://open.stealth.si:80/announce",
+  "udp://exodus.desync.com:6969/announce",
+  "http://nyaa.tracker.wf:7777/announce",
+  "udp://explodie.org:6969/announce",
+]
+
+/** 按 infohash 生成稳定的做种统计（约 1/5 未统计、1/6 无人做种、1/4 服务器已缓存） */
+export function mockSwarm(ih: string): SwarmStats | null {
+  const n = parseInt(ih.slice(0, 6), 16) || 0
+  const server = n % 4 === 0
+  if (n % 5 === 1) return server ? { bt_seeders: null, bt_leechers: null, wt_seeders: null, wt_leechers: null, server_complete: true, checked_at: null } : null
+  if (n % 6 === 2) return { bt_seeders: 0, bt_leechers: 1, wt_seeders: 0, wt_leechers: 0, server_complete: false, checked_at: new Date(Date.now() - 12 * 60_000).toISOString() }
+  return {
+    bt_seeders: n % 40,
+    bt_leechers: (n >> 3) % 9,
+    wt_seeders: (n >> 5) % 3,
+    wt_leechers: (n >> 7) % 2,
+    server_complete: server,
+    checked_at: new Date(Date.now() - ((n >> 9) % 30) * 60_000).toISOString(),
+  }
 }
 
 export const settings: SettingItem[] = [
@@ -187,7 +215,9 @@ export const settings: SettingItem[] = [
   { key: "auth.turnstile_site_key", group: "用户", type: "string", label: "Turnstile Site Key", description: "留空则不启用人机验证", value: "" },
   { key: "auth.turnstile_secret", group: "用户", type: "secret", label: "Turnstile Secret", value: "", is_set: true },
   { key: "auth.session_days", group: "用户", type: "number", label: "会话有效期（天）", value: 30 },
-  { key: "play.trackers", group: "播放", type: "string_list", label: "Tracker 列表", description: "每行一个，前端与 qB 都会使用", value: site.trackers },
+  { key: "webtorrent.trackers", group: "Tracker", type: "string_list", label: "WebTorrent Tracker", description: "浏览器与 qB 用于互相发现的 wss tracker（公开，下发给浏览器）；也用于统计 WebTorrent 做种人数", value: site.trackers },
+  { key: "bt.trackers", group: "Tracker", type: "string_list", label: "BT Tracker", description: "udp:// / http(s):// tracker：推送给 qB，并用于统计 BT 做种人数", value: btTrackers },
+  { key: "swarm.enabled", group: "Tracker", type: "bool", label: "统计做种人数", description: "按需向 tracker 查询做种人数（缓存 30 分钟），不做全库定时查询", value: true },
   { key: "play.ice_servers", group: "播放", type: "string_list", label: "STUN/TURN 服务器", value: ["stun:stun.miwifi.com:3478", "stun:stun.l.google.com:19302"] },
   { key: "play.max_auto_size_bytes", group: "播放", type: "number", label: "自动推送大小上限", description: "超过此大小的种子不会自动推送到 qB", value: 2147483648 },
   { key: "policy.default_action", group: "策略", type: "enum", label: "默认策略动作", options: ["allow", "login", "vip", "block"], value: "allow" },

@@ -128,6 +128,54 @@ type Metainfo struct {
 	Name     string
 	Files    []TorrentFile
 	Size     int64
+	// Announce: the torrent's own trackers (announce-list tiers flattened in order, else
+	// announce), deduplicated, at most maxAnnounce valid-looking URLs.
+	Announce []string
+}
+
+const maxAnnounce = 50
+
+// Decode decodes one bencoded value: int64, []byte, []any or map[string]any. Trailing
+// bytes are an error.
+func Decode(b []byte) (any, error) {
+	d := &bdecoder{b: b}
+	v, err := d.value(false)
+	if err != nil {
+		return nil, err
+	}
+	if d.pos != len(b) {
+		return nil, errBencode
+	}
+	return v, nil
+}
+
+// announceList extracts the trackers of a decoded metainfo root.
+func announceList(root map[string]any) []string {
+	var out []string
+	seen := map[string]bool{}
+	add := func(v any) {
+		b, ok := v.([]byte)
+		if !ok || len(out) >= maxAnnounce {
+			return
+		}
+		u := strings.TrimSpace(string(b))
+		if u == "" || len(u) > 300 || !utf8.ValidString(u) || seen[u] || !strings.Contains(u, "://") {
+			return
+		}
+		seen[u] = true
+		out = append(out, u)
+	}
+	if tiers, ok := root["announce-list"].([]any); ok {
+		for _, tier := range tiers {
+			if l, ok := tier.([]any); ok {
+				for _, u := range l {
+					add(u)
+				}
+			}
+		}
+	}
+	add(root["announce"])
+	return out
 }
 
 // ParseTorrent decodes a .torrent file.
@@ -152,7 +200,7 @@ func ParseTorrent(b []byte) (*Metainfo, error) {
 		return nil, errors.New("v2-only torrent (no v1 infohash)")
 	}
 	sum := sha1.Sum(b[d.infoStart:d.infoEnd])
-	m := &Metainfo{Infohash: hex.EncodeToString(sum[:])}
+	m := &Metainfo{Infohash: hex.EncodeToString(sum[:]), Announce: announceList(root)}
 	m.Name = str(info, "name.utf-8")
 	if m.Name == "" {
 		m.Name = str(info, "name")

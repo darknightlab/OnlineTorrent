@@ -2,6 +2,8 @@
 import { Link } from "react-router-dom"
 import { ChevronRight, Film, HardDrive, Layers, ListVideo, Pin, Sparkles } from "lucide-react"
 import { AccessBadge } from "@/components/badges"
+import { SwarmInfo } from "@/components/Swarm"
+import { describeScore, type Scored } from "@/lib/rank"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -185,21 +187,22 @@ function sourceTags(f: EpisodeFile) {
 export const sourceKey = (f: Pick<EpisodeFile, "infohash" | "file_index">) => `${f.infohash}:${f.file_index}`
 
 /**
- * 资源列表。`extra`：URL 指定、但不在本集已知文件中的资源（显示在最上方）。
+ * 资源列表（已按推荐规则排序，见 lib/rank.ts）。`extra`：URL 指定、但不在本集已知文件中的资源（显示在最上方）。
  * `selected`：正在播放的资源键（sourceKey）。
  */
 export function SourceList({
-  items,
+  ranked,
   extra,
   selected,
   onSelect,
 }: {
-  items: EpisodeFile[]
+  ranked: Scored<EpisodeFile>[]
   extra?: EpisodeFile | null
   selected: string | null
   onSelect: (f: EpisodeFile) => void
 }) {
   const now = useNow()
+  const items = ranked.map((r) => r.file)
   const list = extra ? [extra, ...items] : items
   return (
     <SideSection id="sources-title" icon={Layers} title="资源" extra={`${list.length} 个`}>
@@ -210,6 +213,7 @@ export function SourceList({
           const active = sourceKey(f) === selected
           const blocked = f.access.action === "block"
           const name = baseName(f.path)
+          const sc = i >= 0 ? ranked[i] : undefined
           return (
             <li key={pinned ? "extra" : sourceKey(f)} className="relative">
               {active && <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-primary" />}
@@ -232,8 +236,8 @@ export function SourceList({
                         指定
                       </Badge>
                     )}
-                    {i === 0 && (
-                      <Badge variant="soft" title="服务器自动推荐">
+                    {i === 0 && sc?.allowed && (
+                      <Badge variant="soft" title={`自动推荐（${describeScore(sc)}）`}>
                         <Sparkles />
                         推荐
                       </Badge>
@@ -253,6 +257,7 @@ export function SourceList({
                   <span className={cn("mt-1 block truncate text-[13px] leading-snug", active ? "font-medium text-primary-text" : "text-foreground/85")} title={f.path}>
                     {name}
                   </span>
+                  {!pinned && <SwarmInfo swarm={f.swarm} dead={sc?.dead} className="mt-0.5 flex" />}
                 </span>
                 <span className="shrink-0 text-right text-[11px] leading-5 tabular-nums text-muted-foreground">
                   {f.size_bytes > 0 && (
@@ -264,6 +269,11 @@ export function SourceList({
                   {f.published_at && (
                     <span className="block" title={formatDateTime(f.published_at)}>
                       {timeAgo(f.published_at, now)}
+                    </span>
+                  )}
+                  {sc && (
+                    <span className={cn("block", sc.score < 0 && "text-destructive-text")} title={describeScore(sc)}>
+                      {sc.allowed ? `${sc.score > 0 ? "+" : ""}${sc.score} 分` : "不可播放"}
                     </span>
                   )}
                 </span>

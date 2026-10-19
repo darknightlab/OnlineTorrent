@@ -1,9 +1,11 @@
 // VITE_MOCK=1 时安装：拦截 /api/v1/* 的 fetch，返回 fixtures 数据（只在 dev/mock 构建中被动态 import）。
 // 切换身份：?mock_user=guest|member|vip|admin（保存在 sessionStorage）；默认 admin。
 import * as fx from "./fixtures"
+import { DEFAULT_RANK_RULES } from "@/lib/rank"
 import { canonicalEpisodeKey, compareEpisodeKeys, episodeLabel, parseEpisodeKey, type EpisodeKey } from "@/lib/episode"
 import { scopeVisible, validateScope } from "@/lib/scope"
-import type { AdminUser, BgmArchiveStatus, ContentScope, ContentScopeInput, EpisodeFile, EpisodeListItem, GrantRole, MeResponse, PermissionItem, PlayResponse, QBServer, Rule, Source, Subject, Torrent, TorrentStatus, User } from "@/lib/types"
+import { patternOK } from "./rankcheck"
+import type { RankRules, TrackerHealth, AdminUser, BgmArchiveStatus, ContentScope, ContentScopeInput, EpisodeFile, EpisodeListItem, GrantRole, MeResponse, PermissionItem, PlayResponse, QBServer, Rule, Source, Subject, Torrent, TorrentStatus, User } from "@/lib/types"
 
 type Handler = (ctx: { params: Record<string, string>; query: URLSearchParams; body: any }) => unknown
 
@@ -148,6 +150,27 @@ torrents.sort((a, b) => b.published_at.localeCompare(a.published_at))
 const plays = fx.buildPlays(torrents)
 const settings = fx.settings.map((s) => ({ ...s }))
 const secrets: Record<string, string> = {}
+const withSwarm = (ts: Torrent[]) => ts.map((t) => ({ ...t, swarm: fx.mockSwarm(t.infohash) }))
+
+/** 后台 Tracker：按当前设置列出，状态为假定的「最后一次使用」结果 */
+function trackersView() {
+  const list = (key: string) => (settings.find((s) => s.key === key)?.value as string[] | undefined) ?? []
+  const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString()
+  const health = (url: string, i: number, kind: "bt" | "webtorrent"): TrackerHealth => {
+    const k = url.startsWith("udp") ? "udp" : url.startsWith("ws") ? "wss" : "http"
+    if (i === 3) return { url, kind: k, list: kind, status: "unused", result: "", latency_ms: 0, last_error: "", checked_at: null, last_ok_at: null, last_error_at: null, ok_count: 0, fail_count: 0 }
+    if (i === 2 || (kind === "webtorrent" && i === 1))
+      return { url, kind: k, list: kind, status: "error", result: i === 2 ? "timeout" : "protocol", latency_ms: 0, last_error: i === 2 ? "scrape: timeout" : "websocket.Dial: bad status", checked_at: ago(4), last_ok_at: null, last_error_at: ago(4), ok_count: 0, fail_count: 7 }
+    return { url, kind: k, list: kind, status: "ok", result: "ok", latency_ms: 180 + i * 140, last_error: "", checked_at: ago(4 + i), last_ok_at: ago(4 + i), last_error_at: null, ok_count: 42 - i * 5, fail_count: i }
+  }
+  return {
+    items: [...list("webtorrent.trackers").map((u, i) => health(u, i, "webtorrent")), ...list("bt.trackers").map((u, i) => health(u, i, "bt"))],
+    swarm: { enabled: settings.find((s) => s.key === "swarm.enabled")?.value !== false, running: 0, runs: 37, torrents: 412, last_at: ago(4), last_ms: 640, last_torrents: 3, last_answered: 3, skipped_busy: 0 },
+    stats: { torrents: torrents.length, scraped: Math.round(torrents.length * 0.6), known: Math.round(torrents.length * 0.7), dead: Math.round(torrents.length * 0.1) },
+    lists: { webtorrent: list("webtorrent.trackers"), bt: list("bt.trackers") },
+  }
+}
+
 const settingsView = () => ({ items: settings.map((s) => (s.type === "secret" ? { ...s, value: "", is_set: s.is_set || !!secrets[s.key] } : s)) })
 const qb = [...fx.qbServers]
 const rules = [...fx.rules]
@@ -397,7 +420,7 @@ const routes: [string, string, Handler][] = [
   ["GET", "/subjects/:provider/:id", ({ params }) => {
     requirePerm("GET /api/v1/subjects/{provider}/{id}")
     const a = findSubject(params.provider, params.id)
-    return { subject: a, torrents: subjectTorrents(a) }
+    return { subject: a, torrents: withSwarm(subjectTorrents(a)) }
   }],
   ["GET", "/subjects/:provider/:id/episodes", ({ params }) => {
     requirePerm("GET /api/v1/subjects/{provider}/{id}/episodes")
@@ -423,6 +446,7 @@ const routes: [string, string, Handler][] = [
         source: t.source,
         confidence: i === 0 ? 0.95 : 0.8,
         access: t.access,
+        swarm: fx.mockSwarm(t.infohash),
       }))
     return { subject: a, key, kind: k.kind, number: k.number, label: episodeLabel(k), ...(k.kind === "main" ? { episode: k.number } : {}), items }
   }],
@@ -434,9 +458,9 @@ const routes: [string, string, Handler][] = [
     const subs = p === 1 ? subjects.filter((a) => visibleSubject(a) && hit(`${a.title} ${a.title_cn}`)).slice(0, 24) : []
     const list = torrents.filter((t) => hit(`${t.title} ${t.team?.name ?? ""}`) && visibleSubject(subjectOfTorrent(t)))
     const pg = page(list, p, 30)
-    return { subjects: subs, torrents: pg.items, page: pg.page, page_count: Math.min(50, pg.page_count), total: list.length }
+    return { subjects: subs, torrents: withSwarm(pg.items), page: pg.page, page_count: Math.min(50, pg.page_count), total: list.length }
   }],
-  ["GET", "/torrents/hash/:ih", ({ params }) => (requirePerm("GET /api/v1/torrents/hash/{ih}"), torrentStatus(params.ih.toLowerCase()))],
+  ["GET", "/torrents/hash/:ih", ({ params }) => (requirePerm("GET /api/v1/torrents/hash/{ih}"), { ...torrentStatus(params.ih.toLowerCase()), swarm: fx.mockSwarm(params.ih.toLowerCase()) })],
   // mock 引擎自带模拟元数据，不需要 .torrent
   ["GET", "/torrents/hash/:ih/torrent", () => {
     requirePerm("GET /api/v1/torrents/hash/{ih}/torrent")
@@ -606,6 +630,19 @@ const routes: [string, string, Handler][] = [
       .slice(0, 30)
       .map(([name, count]) => ({ name, count }))
     return { items }
+  }],
+  ["GET", "/admin/trackers", () => (requireAdmin(), trackersView())],
+  ["GET", "/admin/rank-rules", () => (requireAdmin(), { rules: fx.site.rank_rules, defaults: DEFAULT_RANK_RULES })],
+  ["PUT", "/admin/rank-rules", ({ body }) => {
+    requireAdmin()
+    const r = body as RankRules
+    if (!r?.availability || !Array.isArray(r.keywords) || !Array.isArray(r.teams)) throw new HttpError(400, "bad_request", "规则格式错误")
+    for (const [i, k] of r.keywords.entries()) {
+      if (!k.label?.trim()) throw new HttpError(400, "bad_request", `第 ${i + 1} 个关键词：名称不能为空`)
+      if (!patternOK(k.pattern)) throw new HttpError(400, "bad_request", `第 ${i + 1} 个关键词（${k.label}）：正则无效`)
+    }
+    fx.site.rank_rules = structuredClone(r)
+    return { rules: fx.site.rank_rules, defaults: DEFAULT_RANK_RULES }
   }],
   ["GET", "/admin/settings", () => (requireAdmin(), settingsView())],
   ["PUT", "/admin/settings", ({ body }) => {

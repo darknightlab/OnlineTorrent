@@ -60,6 +60,8 @@ type siteResp struct {
 	// MaxPushSizeBytes is the playable torrent size limit; the browser cache budget is
 	// min(this, 25% of the origin storage quota).
 	MaxPushSizeBytes int64 `json:"max_push_size_bytes"`
+	// RankRules: recommendation rules for the episode page (web/src/lib/rank.ts)
+	RankRules json.RawMessage `json:"rank_rules"`
 }
 
 type siteWebseed struct {
@@ -85,6 +87,7 @@ func (s *Server) getSite(w http.ResponseWriter, r *http.Request) error {
 		Trackers: trackers, ICEServers: ice, MaxAutoSizeBytes: int64(s.St.Num(store.KeyMaxAutoSize)) << 20,
 		Webseed:          siteWebseed{Enabled: s.St.Bool(store.KeyWebseedEnabled)},
 		MaxPushSizeBytes: int64(s.St.Num(store.KeyMaxPushSize)) << 20,
+		RankRules:        s.rankRules(),
 	})
 	return nil
 }
@@ -316,6 +319,7 @@ func (s *Server) withAccess(r *http.Request, ts []*catalog.Torrent) []catalog.To
 		}
 		out = append(out, c)
 	}
+	s.attachSwarm(r.Context(), out)
 	return out
 }
 

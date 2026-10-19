@@ -2,10 +2,8 @@ package api
 
 import (
 	"errors"
-	"github.com/darknightlab/onlinetorrent/internal/rank"
 	"math"
 	"net/http"
-	"regexp"
 	"sort"
 	"time"
 
@@ -98,15 +96,9 @@ func (s *Server) getSubject(w http.ResponseWriter, r *http.Request) error {
 
 type episodeFile struct {
 	meta.EpisodeFile
-	Access policy.Access `json:"access"`
+	Access policy.Access   `json:"access"`
+	Swarm  *meta.SwarmView `json:"swarm"`
 }
-
-var (
-	reEpHEVC = regexp.MustCompile(`(?i)hevc|x\.?265|h\.?265|10-?bit|ma10p`)
-	reEpAVC  = regexp.MustCompile(`(?i)\bavc\b|x\.?264|h\.?264`)
-	reEpHi   = regexp.MustCompile(`(?i)1080|1920`)
-	reEpCHS  = regexp.MustCompile(`(?i)简|chs|\bgb\b|\bsc\b`)
-)
 
 // episodeItem is one entry of the episode list (选集).
 type episodeItem struct {
@@ -225,8 +217,9 @@ func (s *Server) getEpisodes(w http.ResponseWriter, r *http.Request) error {
 
 // GET /api/v1/subjects/{provider}/{id}/episodes/{n}
 // {n} is an episode key ("12", "12.5", "0", "sp1", "ncop1", …; see meta.ParseEpisodeKey).
-// Lists every known file of that episode with per-user access; items[0] is the
-// automatic pick (playable for this user, browser friendly codec, sensible size).
+// Lists every known file of that episode, newest first, with per-user access and swarm
+// stats. The browser ranks them (rank rules from GET /site, web/src/lib/rank.ts) and
+// auto-plays the best one.
 func (s *Server) getEpisode(w http.ResponseWriter, r *http.Request) error {
 	work, err := s.resolveSubject(r)
 	if err != nil {
@@ -241,22 +234,20 @@ func (s *Server) getEpisode(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	u := userOf(r)
-	maxBytes := int64(s.St.Num(store.KeyMaxAutoSize)) << 20
-	list := make([]episodeFile, 0, len(files))
-	cs := make([]rank.Candidate, 0, len(files))
+	items := make([]episodeFile, 0, len(files))
+	ihs := make([]string, 0, len(files))
 	for _, f := range files {
 		sub := policy.Subject{Infohash: f.Infohash, Title: f.Title, Files: []string{f.Path}, Team: f.Team, Trusted: f.Trusted}
 		d, err := s.Policy.Decide(r.Context(), u, sub)
 		if err != nil {
 			return err
 		}
-		list = append(list, episodeFile{f, d.Access()})
-		cs = append(cs, rank.Candidate{Name: f.Title + " " + f.Path, Size: f.Size, PublishedAt: f.PublishedAt, Allowed: d.Allowed})
+		items = append(items, episodeFile{EpisodeFile: f, Access: d.Access()})
+		ihs = append(ihs, f.Infohash)
 	}
-	// same ranking as the schedule card (internal/rank): items[0] is the auto-play pick
-	items := make([]episodeFile, len(list))
-	for i, j := range rank.Order(cs, maxBytes) {
-		items[i] = list[j]
+	views := s.swarmFor(r.Context(), ihs)
+	for i := range items {
+		items[i].Swarm = views[items[i].Infohash]
 	}
 	out := map[string]any{"subject": s.subjectView(r, work), "key": key.String(), "kind": key.Kind, "number": key.Number, "label": key.Label(), "items": items}
 	if key.Kind == meta.KeyMain {
