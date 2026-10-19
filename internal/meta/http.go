@@ -16,11 +16,19 @@ type Authz func(r *http.Request) (actor string, ok bool)
 // Scope returns the content scope of a request (nil: unrestricted).
 type Scope func(r *http.Request) *store.ScopePlan
 
+// FileFilter returns, per request, which episode files may be listed (nil func: all).
+// otd hides files of torrents the user may not play (content policy).
+type FileFilter func(r *http.Request) func(EpisodeFile) bool
+
 // Handler returns the /meta/v1 HTTP API. scope (may be nil) limits which subjects reads
 // expose: subjects outside it are 404, left out of search, and hidden from file mappings.
-func (s *Store) Handler(authz Authz, scope Scope) http.Handler {
+// files (may be nil) filters the episode file lists and counts.
+func (s *Store) Handler(authz Authz, scope Scope, files FileFilter) http.Handler {
 	if scope == nil {
 		scope = func(*http.Request) *store.ScopePlan { return nil }
+	}
+	if files == nil {
+		files = func(*http.Request) func(EpisodeFile) bool { return nil }
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /meta/v1/torrents/hash/{ih}", func(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +133,7 @@ func (s *Store) Handler(authz Authz, scope Scope) http.Handler {
 		if !ok {
 			return
 		}
-		keys, err := s.EpisodeKeys(r.Context(), wk.Key)
+		keys, err := s.EpisodeKeysWhere(r.Context(), wk.Key, files(r))
 		if err != nil {
 			httpx.Fail(w, err)
 			return
@@ -147,12 +155,21 @@ func (s *Store) Handler(authz Authz, scope Scope) http.Handler {
 			httpx.Fail(w, httpx.E(400, "bad_request", "无效集数"))
 			return
 		}
-		files, err := s.EpisodeFiles(r.Context(), wk.Key, key)
+		list, err := s.EpisodeFiles(r.Context(), wk.Key, key)
 		if err != nil {
 			httpx.Fail(w, err)
 			return
 		}
-		httpx.JSON(w, 200, map[string]any{"key": key.String(), "items": files})
+		if keep := files(r); keep != nil {
+			kept := list[:0]
+			for _, f := range list {
+				if keep(f) {
+					kept = append(kept, f)
+				}
+			}
+			list = kept
+		}
+		httpx.JSON(w, 200, map[string]any{"key": key.String(), "items": list})
 	})
 	return mux
 }

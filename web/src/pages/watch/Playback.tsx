@@ -82,8 +82,8 @@ export default function PlaybackPage() {
   const canWebseed = can(me.data, PERM.webseed)
   const rankReady = !me.isPending && !siteQ.isPending
   const ranked = useMemo<Scored<EpisodeFile>[]>(
-    () => rankFiles(epData?.items ?? [], site.rank_rules ?? DEFAULT_RANK_RULES, { canSeed, canWebseed }, site.max_auto_size_bytes),
-    [epData, site.rank_rules, site.max_auto_size_bytes, canSeed, canWebseed],
+    () => rankFiles(epData?.items ?? [], site.rank_rules ?? DEFAULT_RANK_RULES, { canSeed, canWebseed }),
+    [epData, site.rank_rules, canSeed, canWebseed],
   )
   const items = useMemo(() => ranked.map((r) => r.file), [ranked])
 
@@ -94,7 +94,8 @@ export default function PlaybackPage() {
   let auto: EpisodeFile | null = null
   if (isEpisode && !urlIh && rankReady && items.length > 0) {
     const prev = pickRef.current?.scope === pickScope ? items.find((f) => sourceKey(f) === pickRef.current!.key) : undefined
-    auto = prev ?? items[0]
+    // 后端只返回当前用户可播放的资源；管理员能看到全部（含被屏蔽的），自动播放跳过这些
+    auto = prev ?? items.find((f) => f.access.action === "allow") ?? items[0]
   }
   useEffect(() => {
     if (auto) pickRef.current = { scope: pickScope, key: sourceKey(auto) }

@@ -236,7 +236,7 @@ export function SourceList({
                         指定
                       </Badge>
                     )}
-                    {i === 0 && sc?.allowed && (
+                    {i === 0 && sc && (
                       <Badge variant="soft" title={`自动推荐（${describeScore(sc)}）`}>
                         <Sparkles />
                         推荐
@@ -273,7 +273,7 @@ export function SourceList({
                   )}
                   {sc && (
                     <span className={cn("block", sc.score < 0 && "text-destructive-text")} title={describeScore(sc)}>
-                      {sc.allowed ? `${sc.score > 0 ? "+" : ""}${Math.round(sc.score)} 分` : "不可播放"}
+                      {`${sc.score > 0 ? "+" : ""}${Math.round(sc.score)} 分`}
                     </span>
                   )}
                 </span>

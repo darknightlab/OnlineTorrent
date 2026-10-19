@@ -149,12 +149,12 @@ URL 与 API 中用来指代某一集（Go：`meta.ParseEpisodeKey`，`internal/m
               "confidence": 0.85, "access": {"action": "allow", "reason": ""},
               "swarm": Swarm | null }] }
 ```
-`items` 按发布时间倒序（中性顺序），**不再由服务端推荐**：前端按 `/site.rank_rules` 与当前用户权限打分排序（`web/src/lib/rank.ts`，见「推荐规则」），列表第一项自动播放。无已知文件时 `items` 为空数组。`swarm` 见「做种统计」。特别篇的文件来自 `torrent_files` 中对应的 kind（见「集的键」）。
+`items` 只含当前用户可播放的文件（管理员为全部，见「列表只包含可播放的种子」），按发布时间倒序（中性顺序），**不再由服务端推荐**：前端按 `/site.rank_rules` 与当前用户权限打分排序（`web/src/lib/rank.ts`，见「推荐规则」），列表第一项自动播放。无已知文件时 `items` 为空数组。`swarm` 见「做种统计」。特别篇的文件来自 `torrent_files` 中对应的 kind（见「集的键」）。
 
 ### `GET /search/{keyword}?page=1`
 关键词放在路径里（需 URL 编码，最长 100 字）；`page` 上限 50。每 IP 突发 20 次、之后每 3 秒 1 次。全部读本地库（SQLite FTS5 trigram，中日文可搜；关键词中任一词少于 3 个字时改用 LIKE 子串匹配）。
 - `subjects`：只在第 1 页返回（其余页为 `[]`），最多 24 个。本地作品按原名 / 中文名 / 别名匹配；**本地没有任何匹配时**按需查询 bgm.tv 搜索 API（动画）以及 TMDB（后台设置了 `upstream.tmdb_api_key` 时，动画类剧集 / 电影），结果写入映射库成为本地作品（获得稳定的 `subject_id`）后返回。无结果的关键词缓存 1 小时；外部请求全局限速（每 IP 每 30 秒最多触发 5 次）。外部查询失败时 `subjects` 为空，不报错。
-- `torrents`：本地种子的标题 + 种子内文件名匹配，按发布时间倒序，每页 30 个；带当前用户的 `access`。
+- `torrents`：本地种子的标题 + 种子内文件名匹配，按发布时间倒序，每页 30 个；只含当前用户可播放的（管理员为全部），带 `access`。
 - 磁力 / infohash 不走搜索：前端识别后直接进入 `/watch/hash/{ih}`。
 ```json
 { "subjects": [Subject, ...],     // 同 GET /subjects/{provider}/{id} 的 subject（不含按需拉取的简介；summary 可能为空）
@@ -246,27 +246,32 @@ qB 拿到元数据后，后端把文件列表写入本地库并刮削（每个 i
 - tracker 状态是**被动**的：只记录每个已配置 tracker 最后一次实际使用（上述按需查询）时的结果，从不为检测主动发请求；保存在内存（重启后为「尚未使用」）。
 
 ## 推荐规则
-`/site.rank_rules`（后台「推荐规则」编辑，设置键 `rank.rules`，不在 `/admin/settings` 中；`/site` 返回规范化后的完整对象）。单集页在浏览器里给每个文件打分（`web/src/lib/rank.ts`，纯函数），按「当前用户可播放（策略 allow）→ 总分 → 发布时间新 → 原顺序」排序，自动播放第一个；策略不允许的始终排最后、不会被自动播放。自动选中后在本页固定（做种人数刷新导致重新排序时不切换）。默认值的依据与 41 个场景见 [research/rank-rules.md](research/rank-rules.md)。
+`/site.rank_rules`（后台「推荐规则」编辑，设置键 `rank.rules`，不在 `/admin/settings` 中；`/site` 返回规范化后的完整对象）。单集页在浏览器里给每个文件打分（`web/src/lib/rank.ts`，纯函数），按「总分 → 发布时间新 → 原顺序」排序，自动播放第一个。当前用户无权播放的资源后端不返回（见下方「列表只包含可播放的种子」），评分不再处理；管理员能看到全部，自动播放跳过 access 不是 allow 的。自动选中后在本页固定（做种人数刷新导致重新排序时不切换）。默认值（第四版，店主指定）与 43 个场景见 [research/rank-rules.md](research/rank-rules.md)。
 ```json
-{ "availability": { "server_complete": 2,            // 服务器已缓存（小加分）
-                    "wt_seeder": 2, "wt_cap": 6,     // WebTorrent 做种：系数、上限
-                    "bt_seeder": 1, "bt_cap": 10,    // BT 做种（只对有做种权限 POST …/seed 的用户）
-                    "curve": "log",                  // log：系数 × log2(1+人数)；linear：每人 系数 分（缺省 = linear）
-                    "dead": -100 },                  // 无人做种，见下
-  "keywords": [ {"label": "简体中文", "pattern": "简|chs|\\bsc\\b|\\bgb\\b|zh-?hans", "score": 25, "group": "字幕"},  // 不区分大小写，匹配 种子标题 + 文件路径
-                {"label": "繁体中文", "pattern": "繁|cht|\\btc\\b|big5|zh-?hant", "score": 20, "group": "字幕"},       // 同一 group 只取命中的最高分
-                {"label": "1080p", "pattern": "1080[pi]?\\b|1920x1080", "score": 15, "group": "分辨率"},
-                {"label": "4K", "pattern": "2160p?\\b|3840x2160|\\b4k\\b", "score": 8, "group": "分辨率"},
-                {"label": "720p", "pattern": "720p\\b|1280x720", "score": 5, "group": "分辨率"},
+{ "availability": { "server_complete": 2,                               // 服务器已缓存
+                    "wt_seeder": 20, "wt_cap": 20, "wt_scale": 20,      // WebTorrent 做种：系数、上限、尺度
+                    "bt_seeder": 10, "bt_cap": 10, "bt_scale": 20,      // BT 做种（只对有做种权限 POST …/seed 的用户）
+                    "curve": "tanh",                                    // tanh：系数 × tanh(人数 / 尺度)；log：系数 × log2(1+人数)；linear：每人 系数 分（缺省 = linear）；都不超过上限
+                    "dead": -100 },                                     // 无人做种，见下
+  "keywords": [ {"label": "简体中文", "pattern": "简|chs|\\bsc\\b|\\bgb\\b|zh-?hans|jpsc", "score": 25, "group": "字幕"},  // 不区分大小写，匹配 种子标题 + 文件路径
+                {"label": "繁体中文", "pattern": "繁|cht|\\btc\\b|big5|zh-?hant|jptc", "score": 20, "group": "字幕"},       // 同一 group 只取命中的最高分
+                {"label": "日文", "pattern": "\\bjpn?\\b|\\bjapanese\\b|日字|日文|日[语語]|[简繁中]日|ch[st][_&.-]?jp|jp[_&.-]?ch[st]", "score": 10, "group": "字幕"},
+                {"label": "4K 及以上", "pattern": "2160p?\\b|3840x2160|4320p?\\b|7680x4320|\\b[48]k\\b", "score": 30, "group": "分辨率"},
+                {"label": "1080p", "pattern": "1080[pi]?\\b|1920x1080", "score": 20, "group": "分辨率"},
+                {"label": "720p", "pattern": "720p\\b|1280x720", "score": 10, "group": "分辨率"},
                 {"label": "HEVC", "pattern": "hevc|[hx]\\.?265", "score": 2, "group": ""} ],
   "teams": [ {"name": "字幕组名（精确匹配）", "score": 5} ],   // 默认 []
-  "size": { "max": 16, "full_below_mb": 200, "zero_above_mb": 1000 },  // 小文件加分：≤200 MB 满分，≥1000 MB 0，中间线性（每 100 MB 2 分）；大小未知不加
-  "oversize": -10 }   // 文件大于 play.max_auto_size_mb
+  "size": { "from_mb": 200, "from_score": 0, "to_mb": 1000, "to_score": -16, "extend": true } }
+  // 文件大小：过 (from_mb, from_score)、(to_mb, to_score) 的直线；from_mb 以下取 from_score，to_mb 以上取 to_score，extend 时继续延伸（不设下限）；大小未知 0
 ```
 - 分数可为小数（显示取整，tooltip 给明细）。
 - 无人做种（`dead`）：没有做种或 WebSeed 权限的用户（游客类）：`wt_seeders == 0` 且服务器未缓存；有做种或 WebSeed 权限的用户：所有来源都为 0（BT 0、WebRTC 0、服务器未缓存）。从未统计（`checked_at` 为 null）或对应 tracker 都没响应（计数 null）时可用性记 0、不扣分。
-- 校验（PUT 400 `bad_request`）：未知字段报错；分值 / 系数 −1000…1000，上限 0…1000；`curve` 为 `linear|log`；`size` 的两个大小 0…1048576 MB，`max ≠ 0` 时 `zero_above_mb > full_below_mb`；关键词 ≤ 30 个（名称 ≤ 40 字、正则 ≤ 200 字、分组 ≤ 20 字），字幕组 ≤ 200 个（名称 ≤ 80 字、不重复）；正则须为 Go RE2 与 JavaScript（`i` 标志、无 `u`）共同支持的子集：能被 RE2 编译（因此没有前后查找、反向引用），且不能用 `(?…)`（`(?:` 除外）、`\A \z \Q \E \C`、`\p{…}`、`\x{…}`、`[[:alpha:]]`。
-- 升级：库中的 `rank.rules` 若仍等于旧版内置默认值（JSON 相等，即管理员没改过），启动时替换为当前默认值；改过的保留。
+- 兼容：旧写法 `size: {max, full_below_mb, zero_above_mb}`（小文件加分）读作 (full_below_mb, max) → (zero_above_mb, 0)、不延伸；旧的 `oversize` 字段读入时忽略（已删除）；两种 size 写法不能混用。
+- 校验（PUT 400 `bad_request`）：未知字段报错；分值 / 系数 −1000…1000，上限 0…1000；`curve` 为 `linear|log|tanh`，tanh 时 `wt_scale`、`bt_scale` 须 > 0（≤ 10⁶）；size 的大小 0…1048576 MB，两个分值不全为 0 时 `to_mb > from_mb`；关键词 ≤ 30 个（名称 ≤ 40 字、正则 ≤ 200 字、分组 ≤ 20 字），字幕组 ≤ 200 个（名称 ≤ 80 字、不重复）；正则须为 Go RE2 与 JavaScript（`i` 标志、无 `u`）共同支持的子集：能被 RE2 编译（因此没有前后查找、反向引用），且不能用 `(?…)`（`(?:` 除外）、`\A \z \Q \E \C`、`\p{…}`、`\x{…}`、`[[:alpha:]]`。
+- 升级：库中的 `rank.rules` 若仍等于任一旧版内置默认值（第一版 7d2effb、第二版 e23a33a、第三版 708decc；JSON 相等，即管理员没改过），启动时替换为当前默认值；改过的保留。
+
+## 列表只包含可播放的种子
+内容策略不允许当前用户播放的种子（`login` 对游客、`vip` 对非大会员、`block` 对所有人）不出现在任何列表中：单集 `items`、条目 `torrents`、搜索 `torrents`（`total` / `page_count` 按过滤后计算；为此先取前 50 页的匹配再分页）、选集的 `sources`、`/meta/v1/subjects/…/episodes`（`files` 计数）与 `/meta/v1/subjects/…/episodes/{key}/files`。管理员看到全部（带 `access`）。按 infohash 直接访问的接口（play、seed、`GET /torrents/hash/{ih}`、种子文件、WebSeed、`/meta/v1/torrents/hash/{ih}`）照旧按策略判定。`access` 字段保留（非管理员恒为 allow）。
 
 ## 后台 `/admin/*`（仅 admin）
 - `GET /admin/permissions` → `{"roles":["guest","member","vip"], "items":[{key, method, path, group, label, access, default_roles, granted:{guest,member,vip}}]}`

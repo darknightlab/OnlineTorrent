@@ -90,7 +90,7 @@ func (s *Server) getSubject(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	httpx.JSON(w, 200, map[string]any{"subject": s.subjectView(r, work), "torrents": s.withAccess(r, catalog.FromCatalogList(rows))})
+	httpx.JSON(w, 200, map[string]any{"subject": s.subjectView(r, work), "torrents": s.listTorrents(r, catalog.FromCatalogList(rows))})
 	return nil
 }
 
@@ -193,7 +193,8 @@ func (s *Server) getEpisodes(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	mapped, err := s.Meta.EpisodeKeys(r.Context(), work.Key)
+	// sources = files the user may play (others are not listed on the episode page either)
+	mapped, err := s.Meta.EpisodeKeysWhere(r.Context(), work.Key, s.fileFilter(r))
 	if err != nil {
 		return err
 	}
@@ -217,7 +218,8 @@ func (s *Server) getEpisodes(w http.ResponseWriter, r *http.Request) error {
 
 // GET /api/v1/subjects/{provider}/{id}/episodes/{n}
 // {n} is an episode key ("12", "12.5", "0", "sp1", "ncop1", …; see meta.ParseEpisodeKey).
-// Lists every known file of that episode, newest first, with per-user access and swarm
+// Lists every known file of that episode the user may play (admins: all), newest first,
+// with per-user access and swarm
 // stats. The browser ranks them (rank rules from GET /site, web/src/lib/rank.ts) and
 // auto-plays the best one.
 func (s *Server) getEpisode(w http.ResponseWriter, r *http.Request) error {
@@ -233,14 +235,14 @@ func (s *Server) getEpisode(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	u := userOf(r)
+	// files of torrents the user may not play are not listed (listing.go)
+	dc := s.decider(r)
 	items := make([]episodeFile, 0, len(files))
 	ihs := make([]string, 0, len(files))
 	for _, f := range files {
-		sub := policy.Subject{Infohash: f.Infohash, Title: f.Title, Files: []string{f.Path}, Team: f.Team, Trusted: f.Trusted}
-		d, err := s.Policy.Decide(r.Context(), u, sub)
-		if err != nil {
-			return err
+		d, ok := dc.decide(episodeSubject(f))
+		if !ok {
+			continue
 		}
 		items = append(items, episodeFile{EpisodeFile: f, Access: d.Access()})
 		ihs = append(ihs, f.Infohash)

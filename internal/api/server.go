@@ -100,7 +100,7 @@ func (s *Server) Handler() http.Handler {
 			return "", false
 		}
 		return u.Username, true
-	}, s.scopeOf)
+	}, s.scopeOf, s.fileFilter)
 	// reads are one configurable permission; writes are admin-only (checked by the meta authz)
 	s.perms.add(RouteSpec{Key: "GET /meta/v1/", Method: "GET", Path: "/meta/v1/…", Group: "映射库", Label: "读取映射库（作品 / 种子文件映射）", Access: AccessConfigurable, DefaultRoles: []string{store.RoleGuest}})
 	s.perms.add(RouteSpec{Key: "PUT /meta/v1/", Method: "PUT", Path: "/meta/v1/torrents/hash/{ih}/files/{idx}", Group: "映射库", Label: "纠正映射", Access: AccessAdmin})

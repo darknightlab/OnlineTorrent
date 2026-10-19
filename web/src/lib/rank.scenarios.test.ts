@@ -7,7 +7,6 @@ import { DEFAULT_RANK_RULES, describeScore, rankFiles, type RankInput, type View
 import type { AccessAction } from "./types.ts"
 
 const NOW = Date.parse("2026-10-20T12:00:00Z")
-const MAX_AUTO = 2 * 1024 ** 3 // play.max_auto_size_mb 默认 2048
 
 export const VIEWERS: Record<"guest" | "member", Viewer> = {
   guest: { canSeed: false, canWebseed: false },
@@ -294,16 +293,7 @@ export const SCENARIOS: Scenario[] = [
     alt: ["old"],
     why: "（第三版改）新版本小 400 MB（约 +8），未知不扣分；已知可播的旧版也可接受",
   },
-  {
-    name: "23 最好的资源需要大会员（策略不允许）",
-    viewer: "member",
-    cands: [
-      { id: "vip", title: `[LoliHouse] ${S} - 05 [WebRip 1080p HEVC-10bit AAC][简体内封]`, mb: 300, bt: 80, wt: 3, server: true, age: 3, access: "vip" },
-      { id: "raw", title: `[Ohys-Raws] ${S} - 05 (AT-X 1280x720 x264 AAC)`, mb: 400, bt: 30, wt: 0, age: 30 },
-    ],
-    expect: "raw",
-    why: "不可播放的永远排最后",
-  },
+
   {
     name: "24 游客：已缓存的繁体 vs 有 WebRTC 节点的简体",
     viewer: "guest",
@@ -420,16 +410,7 @@ export const SCENARIOS: Scenario[] = [
     expect: "unknown",
     why: "确定放不了的排在未知之后",
   },
-  {
-    name: "35 会员：可播放但无人做种 vs 不允许播放的",
-    viewer: "member",
-    cands: [
-      { id: "blocked", title: `[某字幕组] ${S} [05][1080p][简体]`, mb: 500, bt: 50, wt: 3, server: true, age: 5, access: "block" },
-      { id: "dead", title: `[Ohys-Raws] ${S} - 05 (AT-X 1280x720 x264 AAC)`, mb: 400, bt: 0, wt: 0, age: 30 },
-    ],
-    expect: "dead",
-    why: "策略禁止的永远最后",
-  },
+
   {
     name: "36 游客：只有服务器缓存的生肉 vs 有 WebRTC 节点的简体",
     viewer: "guest",
@@ -473,6 +454,48 @@ export const SCENARIOS: Scenario[] = [
     why: "游客只能播有 WebRTC 节点 / 服务器缓存的",
   },
   {
+    name: "42 日文字幕 vs 生肉（第四版新增）",
+    viewer: "member",
+    cands: [
+      { id: "raw", title: `[Ohys-Raws] ${S} - 05 (TBS 1920x1080 x264 AAC)`, mb: 900, bt: 60, wt: 1, server: true, age: 20 },
+      { id: "jp", title: `[某组] ${S} - 05 [1080p][HEVC][日字]`, mb: 400, bt: 20, wt: 1, age: 10 },
+    ],
+    expect: "jp",
+    why: "有日文字幕也比生肉好（+10）",
+  },
+  {
+    name: "43 4K HEVC 900 MB vs 1080p AVC 600 MB（同为简体，第四版新增）",
+    viewer: "member",
+    cands: [
+      { id: "4k", title: `[某字幕组] ${S} [05][2160p][HEVC][简体]`, mb: 900, bt: 20, wt: 1, age: 10 },
+      { id: "1080", title: `[桜都字幕组] ${S} [05][1080p][简体内嵌]`, mb: 600, bt: 20, wt: 1, age: 10 },
+    ],
+    expect: "4k",
+    alt: ["1080"],
+    why: "4K 只大 300 MB，画质优势值得；1080p 也可接受",
+  },
+  {
+    name: "44 游客：繁体 20 个 WebRTC 节点 vs 简体 1 个（第四版新增）",
+    viewer: "guest",
+    cands: [
+      { id: "cht", title: `[ANi] 藥師少女的獨語 - 05 [1080P][Baha][WEB-DL][AAC AVC][CHT]`, mb: 600, bt: 300, wt: 20, server: true, age: 30 },
+      { id: "chs", title: `[桜都字幕组] ${S} [05][1080p][简体内嵌]`, mb: 600, bt: 5, wt: 1, age: 30 },
+    ],
+    expect: "cht",
+    alt: ["chs"],
+    why: "游客的播放速度几乎全靠 WebRTC 节点，20 个 vs 1 个差距大；简体也可接受",
+  },
+  {
+    name: "45 标题含「日常」「日本」不算日文字幕（第四版新增）",
+    viewer: "member",
+    cands: [
+      { id: "nichijou", title: "[Ohys-Raws] Nichijou 日常 日本語 - 05 (TBS 1920x1080 x264 AAC)", mb: 500, bt: 10, wt: 1, age: 10 },
+      { id: "jp", title: "[某组] Nichijou - 05 [1080p][日文字幕]", mb: 520, bt: 10, wt: 1, age: 10 },
+    ],
+    expect: "jp",
+    why: "生肉的「日常」「日本」不能拿到日文字幕分",
+  },
+  {
     name: "40 真实：学生会也有洞！03（会员，生产环境统计）",
     viewer: "member",
     cands: [
@@ -501,7 +524,7 @@ export const SCENARIOS: Scenario[] = [
 /** 跑一个场景：返回排序结果（id、分数、明细） */
 export function runScenario(sc: Scenario, rules = DEFAULT_RANK_RULES) {
   const items = sc.cands.map(toInput)
-  return rankFiles(items, rules, VIEWERS[sc.viewer], MAX_AUTO).map((s) => ({ id: (s.file as RankInput & { id: string }).id, score: s.score, why: describeScore(s) }))
+  return rankFiles(items, rules, VIEWERS[sc.viewer]).map((s) => ({ id: (s.file as RankInput & { id: string }).id, score: s.score, why: describeScore(s) }))
 }
 
 for (const sc of SCENARIOS) {

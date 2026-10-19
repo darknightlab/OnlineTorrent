@@ -9,7 +9,6 @@ import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/toast"
 import { ErrorState, Spinner, errorMessage } from "@/components/states"
 import { api } from "@/lib/api"
-import { useSiteOrFallback } from "@/lib/queries"
 import { scoreFile, type Viewer } from "@/lib/rank"
 import type { RankRules, RankRulesResponse, SwarmStats } from "@/lib/types"
 import { cn } from "@/lib/utils"
@@ -38,8 +37,10 @@ const AVAIL: { key: NumKey; label: string; hint: string }[] = [
   { key: "server_complete", label: "服务器已缓存", hint: "某台 qB 已完整下载（可 WebRTC 做种 / WebSeed）。只作小加分，否则更好的新版本出现后推荐不会换" },
   { key: "wt_seeder", label: "WebTorrent 做种系数", hint: "wss tracker 统计的做种人数；曲线见下" },
   { key: "wt_cap", label: "WebTorrent 加分上限", hint: "≥ 0" },
+  { key: "wt_scale", label: "WebTorrent 尺度", hint: "仅 tanh 曲线：系数 × tanh(人数 / 尺度)" },
   { key: "bt_seeder", label: "BT 做种系数", hint: "仅对能让服务器做种的用户（接口权限 seed）" },
   { key: "bt_cap", label: "BT 加分上限", hint: "≥ 0" },
+  { key: "bt_scale", label: "BT 尺度", hint: "仅 tanh 曲线" },
   { key: "dead", label: "无人做种", hint: "游客类用户：WebRTC 做种 0 且服务器未缓存；有做种 / WebSeed 权限的用户：所有来源都为 0。未统计过的不扣分" },
 ]
 
@@ -79,13 +80,13 @@ export default function RankRulesPage() {
     errors.some(Boolean) ||
     draft.keywords.some((k) => !k.label.trim()) ||
     draft.teams.some((t) => !t.name.trim()) ||
-    (draft.size.max !== 0 && draft.size.zero_above_mb <= draft.size.full_below_mb)
+    ((draft.size.from_score !== 0 || draft.size.to_score !== 0) && draft.size.to_mb <= draft.size.from_mb)
 
   return (
     <div className="pb-20">
       <AdminHeader
         title="推荐规则"
-        description="单集页按总分从高到低排序资源并自动播放第一个（当前账号不可播放的始终排最后）；同分时较新的在前。评分在浏览器中进行，取决于用户权限与做种人数。"
+        description="单集页按总分从高到低排序资源并自动播放第一个；同分时较新的在前。当前账号无权播放的资源后端不会返回。评分在浏览器中进行，取决于用户权限与做种人数。"
         actions={
           <Button variant="outline" size="sm" onClick={() => setDraft(structuredClone(q.data.defaults))}>
             <RotateCcw />
@@ -103,8 +104,9 @@ export default function RankRulesPage() {
                 id={`avail-${a.key}`}
                 label={a.label}
                 hint={a.hint}
-                value={draft.availability[a.key]}
-                min={a.key.endsWith("_cap") ? 0 : -1000}
+                value={draft.availability[a.key] ?? 0}
+                min={a.key.endsWith("_cap") || a.key.endsWith("_scale") ? 0 : -1000}
+                max={a.key.endsWith("_scale") ? 1000000 : 1000}
                 onChange={(v) => set((r) => void (r.availability[a.key] = v))}
               />
             ))}
@@ -113,6 +115,7 @@ export default function RankRulesPage() {
               <div role="radiogroup" aria-label="做种人数曲线" className="inline-flex w-fit rounded-lg border bg-muted p-0.5">
                 {(
                   [
+                    ["tanh", "tanh"],
                     ["log", "对数"],
                     ["linear", "线性"],
                   ] as const
@@ -130,7 +133,7 @@ export default function RankRulesPage() {
                 ))}
               </div>
               <p className="text-xs leading-relaxed text-muted-foreground">
-                对数：系数 × log₂(1 + 人数)，1 人得 1 倍、3 人 2 倍、7 人 3 倍；线性：每人 系数 分。都不超过上限
+                tanh：系数 × tanh(人数 / 尺度)，人少时约每人 系数/尺度 分，人多时趋近系数；对数：系数 × log₂(1 + 人数)；线性：每人 系数 分。都不超过上限
               </p>
             </div>
           </div>
@@ -210,38 +213,24 @@ export default function RankRulesPage() {
         <Card className="divide-y">
           <div className="px-4 py-3 sm:px-5">
             <h2 className="text-sm font-semibold">文件大小</h2>
-            <p className="text-xs text-muted-foreground">小文件对 P2P 与服务器流量更友好：不超过「满分大小」得满分，达到「不加分大小」为 0，中间线性；大小未知不加分</p>
+            <p className="text-xs text-muted-foreground">
+              一条直线：不超过「起点大小」取起点分值，起点到终点之间线性，达到「终点大小」取终点分值；勾选「继续延伸」则终点之后沿直线继续（不设下限）。大小未知为 0
+            </p>
           </div>
           <div className="grid gap-x-6 gap-y-3 px-4 py-3 sm:grid-cols-2 sm:px-5 xl:grid-cols-4">
-            <NumberField id="size-max" label="小文件加分（满分）" hint="0 = 关闭" value={draft.size.max} min={-1000} onChange={(v) => set((r) => void (r.size.max = v))} />
-            <NumberField
-              id="size-full"
-              label="满分大小（MB）"
-              hint="不超过此大小得满分"
-              value={draft.size.full_below_mb}
-              min={0}
-              max={1048576}
-              step={50}
-              onChange={(v) => set((r) => void (r.size.full_below_mb = Math.round(v)))}
-            />
-            <NumberField
-              id="size-zero"
-              label="不加分大小（MB）"
-              hint="达到此大小不再加分；须大于满分大小"
-              value={draft.size.zero_above_mb}
-              min={0}
-              max={1048576}
-              step={50}
-              onChange={(v) => set((r) => void (r.size.zero_above_mb = Math.round(v)))}
-            />
-            <NumberField
-              id="oversize"
-              label="超过自动选种大小上限"
-              hint="文件大于站点设置「时间线自动选种大小上限」（play.max_auto_size_mb）时"
-              value={draft.oversize}
-              min={-1000}
-              onChange={(v) => set((r) => void (r.oversize = v))}
-            />
+            <NumberField id="size-from-mb" label="起点大小（MB）" hint="" value={draft.size.from_mb} min={0} max={1048576} step={50} onChange={(v) => set((r) => void (r.size.from_mb = v))} />
+            <NumberField id="size-from-score" label="起点分值" hint="起点及以下的分值" value={draft.size.from_score} min={-1000} onChange={(v) => set((r) => void (r.size.from_score = v))} />
+            <NumberField id="size-to-mb" label="终点大小（MB）" hint="须大于起点大小" value={draft.size.to_mb} min={0} max={1048576} step={50} onChange={(v) => set((r) => void (r.size.to_mb = v))} />
+            <NumberField id="size-to-score" label="终点分值" hint="" value={draft.size.to_score} min={-1000} onChange={(v) => set((r) => void (r.size.to_score = v))} />
+            <label className="flex items-center gap-2 text-[13px] sm:col-span-2 xl:col-span-4">
+              <input type="checkbox" checked={draft.size.extend} onChange={(e) => set((r) => void (r.size.extend = e.target.checked))} />
+              终点之后继续延伸（不设下限）
+              {draft.size.to_mb > draft.size.from_mb && (
+                <span className="text-xs text-muted-foreground">
+                  · 每 100 MB {Math.round(((draft.size.to_score - draft.size.from_score) / (draft.size.to_mb - draft.size.from_mb)) * 1000) / 10} 分
+                </span>
+              )}
+            </label>
           </div>
         </Card>
 
@@ -335,7 +324,6 @@ const VIEWERS: { label: string; v: Viewer }[] = [
 
 /** 试算：输入标题与做种人数，按草稿规则给出分数 */
 function TryIt({ rules }: { rules: RankRules }) {
-  const maxAuto = useSiteOrFallback().max_auto_size_bytes
   const [title, setTitle] = useState("[Team] Show - 02 [WebRip 1080p HEVC-10bit AAC][简繁内封]")
   const [bt, setBt] = useState("23")
   const [wt, setWt] = useState("0")
@@ -374,7 +362,7 @@ function TryIt({ rules }: { rules: RankRules }) {
         </div>
         <ul className="grid gap-1.5">
           {VIEWERS.map(({ label, v }) => {
-            const s = scoreFile({ torrent_title: title, path: "", team: "", size_bytes: (Number(mb) || 0) * 1024 ** 2, published_at: "", access: { action: "allow", reason: "" }, swarm }, rules, v, maxAuto)
+            const s = scoreFile({ torrent_title: title, path: "", team: "", size_bytes: (Number(mb) || 0) * 1024 ** 2, published_at: "", access: { action: "allow", reason: "" }, swarm }, rules, v)
             return (
               <li key={label} className="flex flex-wrap items-center gap-1.5 text-[13px]">
                 <span className="w-44 shrink-0 text-muted-foreground">{label}</span>

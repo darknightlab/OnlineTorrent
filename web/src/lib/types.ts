@@ -55,14 +55,16 @@ export interface RankRules {
   availability: {
     /** 服务器已缓存加分 */
     server_complete: number
-    /** WebTorrent 做种者：系数与上限 */
+    /** WebTorrent 做种者：系数、上限、尺度（tanh） */
     wt_seeder: number
     wt_cap: number
-    /** BT 做种者：系数与上限（仅对能让服务器做种的用户） */
+    wt_scale?: number
+    /** BT 做种者：系数、上限、尺度（仅对能让服务器做种的用户） */
     bt_seeder: number
     bt_cap: number
-    /** linear：每人 系数 分；log：系数 × log2(1 + 人数) */
-    curve: "linear" | "log"
+    bt_scale?: number
+    /** linear：每人 系数 分；log：系数 × log2(1 + 人数)；tanh：系数 × tanh(人数 / 尺度) */
+    curve: "linear" | "log" | "tanh"
     /** 对当前用户无可用来源时的扣分 */
     dead: number
   }
@@ -70,10 +72,8 @@ export interface RankRules {
   keywords: { label: string; pattern: string; score: number; group?: string }[]
   /** 字幕组名称精确匹配 */
   teams: { name: string; score: number }[]
-  /** 小文件加分：≤ full_below_mb 得 max，≥ zero_above_mb 得 0，中间线性 */
-  size: { max: number; full_below_mb: number; zero_above_mb: number }
-  /** 文件超过「自动选种大小上限」时的分值（负数） */
-  oversize: number
+  /** 文件大小：过 (from_mb, from_score)、(to_mb, to_score) 的直线；from 以下取 from_score，to 以上取 to_score（extend 时继续延伸） */
+  size: { from_mb: number; from_score: number; to_mb: number; to_score: number; extend: boolean }
 }
 
 export interface User {

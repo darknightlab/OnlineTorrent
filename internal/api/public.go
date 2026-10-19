@@ -307,22 +307,6 @@ func (s *Server) redeem(w http.ResponseWriter, r *http.Request) error {
 
 // ---- catalog ----
 
-func (s *Server) withAccess(r *http.Request, ts []*catalog.Torrent) []catalog.Torrent {
-	u := userOf(r)
-	out := make([]catalog.Torrent, 0, len(ts))
-	for _, t := range ts {
-		c := *t
-		d, err := s.Policy.Decide(r.Context(), u, c.Subject())
-		if err == nil {
-			a := d.Access()
-			c.Access = &a
-		}
-		out = append(out, c)
-	}
-	s.attachSwarm(r.Context(), out)
-	return out
-}
-
 func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) error {
 	sc := s.Cat.Schedule()
 	if sc == nil {
@@ -410,13 +394,30 @@ func (s *Server) getSearch(w http.ResponseWriter, r *http.Request) error {
 			}
 		}
 	}
-	list, total, err := s.Meta.SearchTorrents(ctx, q, (page-1)*searchPageSize, searchPageSize, scope)
-	if err != nil {
-		return err
+	// torrents the user may not play are left out entirely (listing.go): filter every match
+	// up to the page cap, then paginate, so pages stay full and total / page_count are right
+	var torrents []catalog.Torrent
+	total := 0
+	if s.decider(r).admin {
+		list, n, err := s.Meta.SearchTorrents(ctx, q, (page-1)*searchPageSize, searchPageSize, scope)
+		if err != nil {
+			return err
+		}
+		torrents, total = s.listTorrents(r, catalog.FromCatalogList(list)), n
+	} else {
+		list, _, err := s.Meta.SearchTorrents(ctx, q, 0, maxCatalogPage*searchPageSize, scope)
+		if err != nil {
+			return err
+		}
+		all := s.listTorrentsNoSwarm(r, catalog.FromCatalogList(list))
+		total = len(all)
+		from := min((page-1)*searchPageSize, len(all))
+		torrents = all[from:min(from+searchPageSize, len(all))]
+		s.attachSwarm(ctx, torrents)
 	}
 	out.Total = total
 	out.PageCount = min(max(1, (total+searchPageSize-1)/searchPageSize), maxCatalogPage)
-	out.Torrents = s.withAccess(r, catalog.FromCatalogList(list))
+	out.Torrents = torrents
 	httpx.JSON(w, 200, out)
 	return nil
 }

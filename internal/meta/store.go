@@ -735,6 +735,66 @@ func (s *Store) EpisodeKeys(ctx context.Context, workKey string) ([]EpisodeCount
 	return out, rows.Err()
 }
 
+// EpisodeKeysWhere is EpisodeKeys counting only the files keep accepts (nil keep: all,
+// same as EpisodeKeys). The file carries the fields policy decisions need (infohash, path,
+// torrent title, team, trusted).
+func (s *Store) EpisodeKeysWhere(ctx context.Context, workKey string, keep func(EpisodeFile) bool) ([]EpisodeCount, error) {
+	if keep == nil {
+		return s.EpisodeKeys(ctx, workKey)
+	}
+	s.episodeOffset(ctx, workKey) // warm the cache before holding a rows cursor
+	rows, err := s.R.QueryContext(ctx, `SELECT f.kind, f.episode, f.infohash, f.file_index, f.path, f.size_bytes, t.title, t.team, t.trusted
+		FROM torrent_files f JOIN torrents t ON t.infohash = f.infohash
+		WHERE f.work_key = ? AND f.episode IS NOT NULL AND f.kind IN ('episode','sp','op','ed','pv','cm') AND f.status != 'rejected'`, workKey)
+	if err != nil {
+		return nil, err
+	}
+	type fileKey struct {
+		kind string
+		ep   float64
+	}
+	counts := map[fileKey]int{}
+	var order []fileKey
+	for rows.Next() {
+		var k fileKey
+		var f EpisodeFile
+		if err := rows.Scan(&k.kind, &k.ep, &f.Infohash, &f.Index, &f.Path, &f.Size, &f.Title, &f.Team, &f.Trusted); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if !keep(f) {
+			continue
+		}
+		if _, ok := counts[k]; !ok {
+			order = append(order, k)
+		}
+		counts[k]++
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return nil, err
+	}
+	out := []EpisodeCount{}
+	idx := map[EpisodeKey]int{}
+	for _, fk := range order {
+		ep := fk.ep
+		k, ok := KeyOfFile(fk.kind, &ep)
+		if !ok {
+			continue
+		}
+		k = s.CanonicalKey(ctx, workKey, k)
+		if i, dup := idx[k]; dup {
+			out[i].Files += counts[fk]
+			continue
+		}
+		idx[k] = len(out)
+		out = append(out, EpisodeCount{k, counts[fk]})
+	}
+	sort.Slice(out, func(i, j int) bool { return LessKey(out[i].Key, out[j].Key) })
+	return out, nil
+}
+
 // LatestEpisodes returns max mapped episode per work (for timeline "已有资源").
 func (s *Store) LatestEpisodes(ctx context.Context) (map[string]float64, error) {
 	rows, err := s.R.QueryContext(ctx, `SELECT work_key, MAX(episode) FROM torrent_files WHERE work_key IS NOT NULL AND episode IS NOT NULL AND kind = 'episode' AND status != 'rejected' GROUP BY work_key`)

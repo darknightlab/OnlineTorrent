@@ -14,11 +14,12 @@ func TestDefaultValid(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := r.Availability
-	if a.ServerComplete != 2 || a.BTCap != 10 || a.Dead != -100 || a.Curve != CurveLog || len(r.Keywords) != 6 || r.Oversize != -10 || r.Size.Max != 16 {
+	if a.ServerComplete != 2 || a.BTSeeder != 10 || a.BTScale != 20 || a.WTSeeder != 20 || a.WTScale != 20 || a.Dead != -100 || a.Curve != CurveTanh ||
+		len(r.Keywords) != 7 || r.Oversize != nil || r.Size != (SizeRule{FromMB: 200, ToMB: 1000, ToScore: -16, Extend: true}) {
 		t.Fatalf("%+v", r)
 	}
-	// the dead penalty stays decisive: more than every bonus together
-	sum := a.ServerComplete + a.WTCap + a.BTCap + r.Size.Max
+	// the dead penalty stays decisive: more than every bonus together (size only subtracts)
+	sum := a.ServerComplete + min(a.WTCap, a.WTSeeder) + min(a.BTCap, a.BTSeeder) + max(r.Size.FromScore, 0)
 	groups := map[string]float64{}
 	for _, k := range r.Keywords {
 		if k.Group == "" {
@@ -32,15 +33,6 @@ func TestDefaultValid(t *testing.T) {
 	}
 	if -a.Dead <= sum {
 		t.Fatalf("dead %v not decisive vs max bonus %v", a.Dead, sum)
-	}
-	// 1080p beats 720p unless the 720p file is ≥ 500 MB smaller (size: 2 points / 100 MB)
-	res := map[string]float64{}
-	for _, k := range r.Keywords {
-		res[k.Label] = k.Score
-	}
-	slope := r.Size.Max / float64(r.Size.ZeroAboveMB-r.Size.FullBelowMB) * 100
-	if slope < 2 || res["1080p"]-res["720p"] < 5*slope {
-		t.Fatalf("size slope %.2f/100MB, 1080p−720p %.0f", slope, res["1080p"]-res["720p"])
 	}
 }
 
@@ -80,8 +72,16 @@ func TestLegacyDefault(t *testing.T) {
 	}
 	// legacy rules still parse (no curve / size / group): linear, size off
 	r, err := Parse([]byte(legacyDefaults[0]))
-	if err != nil || r.Availability.Curve != CurveLinear || r.Size.Max != 0 {
+	if err != nil || r.Availability.Curve != CurveLinear || r.Size != (SizeRule{}) || r.Oversize != nil {
 		t.Fatalf("%+v %v", r, err)
+	}
+	// the legacy size shape is read as a small-file bonus line; oversize is dropped
+	r, err = Parse([]byte(legacyDefaults[2]))
+	if err != nil || r.Size != (SizeRule{FromMB: 200, FromScore: 16, ToMB: 1000}) || r.Oversize != nil {
+		t.Fatalf("v3: %+v %v", r, err)
+	}
+	if b, _ := json.Marshal(r); strings.Contains(string(b), "oversize") || strings.Contains(string(b), "full_below_mb") {
+		t.Fatalf("legacy fields re-emitted: %s", b)
 	}
 }
 

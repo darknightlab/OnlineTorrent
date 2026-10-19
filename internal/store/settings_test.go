@@ -21,7 +21,7 @@ func TestRankRulesLegacyUpgrade(t *testing.T) {
 	if err := st.seedSettings(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(st.Raw(KeyRankRules)), `"curve":"log"`) {
+	if !strings.Contains(string(st.Raw(KeyRankRules)), `"curve":"tanh"`) {
 		t.Fatalf("not upgraded: %s", st.Raw(KeyRankRules))
 	}
 	edited := strings.Replace(v1, `"server_complete":30`, `"server_complete":10`, 1)

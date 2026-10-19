@@ -243,6 +243,16 @@ function subjectTorrents(a: Subject): Torrent[] {
   return [...own, ...related]
 }
 
+/** 与后端一致：当前用户无权播放的种子不出现在任何列表中（管理员看到全部） */
+function playableFor(access: { action: string }): boolean {
+  const role = roleOf(currentUser())
+  if (role === "admin") return true
+  const need = { allow: 0, login: 1, vip: 2, block: 99 }[access.action] ?? 99
+  const have = { guest: 0, member: 1, vip: 2 }[role as "guest"] ?? 0
+  return have >= need
+}
+const listable = <T extends { access: { action: string } }>(ts: T[]) => ts.filter((t) => playableFor(t.access))
+
 function subjectOfTorrent(t: Torrent): Subject | undefined {
   return subjects.find((a) => a.latest_torrent?.id === t.id || pastEpisodes.get(a.key)?.includes(t) || t.title.includes((a.title_cn || a.title).slice(0, 4)))
 }
@@ -420,7 +430,7 @@ const routes: [string, string, Handler][] = [
   ["GET", "/subjects/:provider/:id", ({ params }) => {
     requirePerm("GET /api/v1/subjects/{provider}/{id}")
     const a = findSubject(params.provider, params.id)
-    return { subject: a, torrents: withSwarm(subjectTorrents(a)) }
+    return { subject: a, torrents: withSwarm(listable(subjectTorrents(a))) }
   }],
   ["GET", "/subjects/:provider/:id/episodes", ({ params }) => {
     requirePerm("GET /api/v1/subjects/{provider}/{id}/episodes")
@@ -432,7 +442,7 @@ const routes: [string, string, Handler][] = [
     const k = parseEpisodeKey(params.n)
     if (!k) throw new HttpError(400, "bad_request", "无效集数")
     const key = canonicalEpisodeKey(params.n)
-    const items = subjectTorrents(a)
+    const items = listable(subjectTorrents(a))
       .filter((t) => keyOf(t.title) === key)
       .map((t, i): EpisodeFile => ({
         infohash: t.infohash,
@@ -456,7 +466,7 @@ const routes: [string, string, Handler][] = [
     const p = Math.min(50, Math.max(1, Number(query.get("page") || 1)))
     const hit = (s: string) => kw.every((k) => s.toLowerCase().includes(k))
     const subs = p === 1 ? subjects.filter((a) => visibleSubject(a) && hit(`${a.title} ${a.title_cn}`)).slice(0, 24) : []
-    const list = torrents.filter((t) => hit(`${t.title} ${t.team?.name ?? ""}`) && visibleSubject(subjectOfTorrent(t)))
+    const list = torrents.filter((t) => hit(`${t.title} ${t.team?.name ?? ""}`) && visibleSubject(subjectOfTorrent(t)) && playableFor(t.access))
     const pg = page(list, p, 30)
     return { subjects: subs, torrents: withSwarm(pg.items), page: pg.page, page_count: Math.min(50, pg.page_count), total: list.length }
   }],

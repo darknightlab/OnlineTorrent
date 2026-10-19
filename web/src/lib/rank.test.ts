@@ -16,8 +16,7 @@ const AV: RankRules = {
   availability: { server_complete: 30, wt_seeder: 5, wt_cap: 30, bt_seeder: 1, bt_cap: 20, curve: "linear", dead: -100 },
   keywords: [],
   teams: [],
-  size: { max: 0, full_below_mb: 0, zero_above_mb: 0 },
-  oversize: -10,
+  size: { from_mb: 0, from_score: 0, to_mb: 0, to_score: 0, extend: false },
 }
 
 const sw = (p: Partial<SwarmStats>): SwarmStats => ({
@@ -41,7 +40,7 @@ const file = (p: Partial<RankInput> = {}): RankInput => ({
   ...p,
 })
 
-const score = (f: RankInput, v: Viewer = MEMBER, rules = AV) => scoreFile(f, rules, v, 2 * GB).score
+const score = (f: RankInput, v: Viewer = MEMBER, rules = AV) => scoreFile(f, rules, v).score
 
 test("Go and TS defaults are identical (internal/rank/testdata/default.json)", () => {
   const golden = JSON.parse(readFileSync(new URL("../../../internal/rank/testdata/default.json", import.meta.url), "utf8"))
@@ -62,10 +61,17 @@ test("log curve: coefficient × log2(1 + n), capped", () => {
   assert.equal(seederScore(3, 2, 6, "log"), 4)
   assert.equal(seederScore(7, 2, 6, "log"), 6)
   assert.equal(seederScore(500, 2, 6, "log"), 6)
-  // default BT: ~1000 seeders reach the cap of 10; 100 vs 500 differ by ~2.3
-  assert.equal(seederScore(100, 1, 10, "log"), 6.7)
-  assert.equal(seederScore(500, 1, 10, "log"), 9)
-  assert.equal(seederScore(1023, 1, 10, "log"), 10)
+})
+
+test("tanh curve: coefficient × tanh(n / scale)", () => {
+  // defaults: BT 10·tanh(n/20), WebRTC 20·tanh(n/20)
+  assert.equal(seederScore(3, 10, 10, "tanh", 20), 1.5)
+  assert.equal(seederScore(23, 10, 10, "tanh", 20), 8.2)
+  assert.equal(seederScore(500, 10, 10, "tanh", 20), 10)
+  assert.equal(seederScore(1, 20, 20, "tanh", 20), 1)
+  assert.equal(seederScore(20, 20, 20, "tanh", 20), 15.2)
+  assert.equal(seederScore(5, 20, 3, "tanh", 20), 3, "cap still applies")
+  assert.equal(seederScore(5, 20, 20, "tanh", 0), 0, "no scale → 0")
   assert.equal(seederScore(0, 2, 6, "log"), 0)
   assert.equal(seederScore(4, 2, 100, "linear"), 8)
   // rules saved before `curve` existed behave linearly
@@ -73,22 +79,26 @@ test("log curve: coefficient × log2(1 + n), capped", () => {
   assert.equal(score(file({ swarm: sw({ wt_seeders: 2 }) }), MEMBER, legacy), 10)
 })
 
-test("size bonus: full below, zero above, linear between; unknown size 0", () => {
+test("size line: 0 up to 200 MB, −16 at 1000 MB, unbounded beyond", () => {
   const s = R.size
-  assert.equal(sizeScore(100 * MB, s), 16)
-  assert.equal(sizeScore(200 * MB, s), 16)
-  assert.equal(sizeScore(400 * MB, s), 12)
-  assert.equal(sizeScore(500 * MB, s), 10, "2 points per 100 MB")
-  assert.equal(sizeScore(900 * MB, s), 2)
-  assert.equal(sizeScore(1000 * MB, s), 0)
-  assert.equal(sizeScore(5 * GB, s), 0)
-  assert.equal(sizeScore(0, s), 0)
-  assert.equal(sizeScore(100 * MB, { max: 0, full_below_mb: 300, zero_above_mb: 1500 }), 0)
+  assert.equal(sizeScore(100 * MB, s), 0)
+  assert.equal(sizeScore(200 * MB, s), 0)
+  assert.equal(sizeScore(300 * MB, s), -2, "2 points per 100 MB")
+  assert.equal(sizeScore(1000 * MB, s), -16)
+  assert.equal(sizeScore(2 * GB, s), -37)
+  assert.equal(sizeScore(0, s), 0, "unknown size")
+  // not extended: flat beyond to_mb
+  assert.equal(sizeScore(2 * GB, { ...s, extend: false }), -16)
+  // legacy shape {max, full_below_mb, zero_above_mb} = small-file bonus
+  const legacy = { max: 16, full_below_mb: 200, zero_above_mb: 1000 } as unknown as RankRules["size"]
+  assert.equal(sizeScore(100 * MB, legacy), 16)
+  assert.equal(sizeScore(600 * MB, legacy), 8)
+  assert.equal(sizeScore(5 * GB, legacy), 0)
   assert.equal(sizeScore(100 * MB, undefined), 0)
 })
 
 test("guest −100: no WebRTC seeder and not on the server", () => {
-  const s = scoreFile(file({ swarm: sw({ bt_seeders: 23, wt_seeders: 0 }) }), AV, GUEST, 2 * GB)
+  const s = scoreFile(file({ swarm: sw({ bt_seeders: 23, wt_seeders: 0 }) }), AV, GUEST)
   assert.equal(s.score, -100)
   assert.equal(s.dead, true)
   assert.equal(score(file({ swarm: sw({ bt_seeders: 0, wt_seeders: 0, server_complete: true }) }), GUEST), 30)
@@ -107,40 +117,47 @@ test("unknown stats score 0", () => {
   assert.equal(score(file({ swarm: null }), GUEST), 0)
   assert.equal(score(file({ swarm: sw({ checked_at: null, bt_seeders: 0, wt_seeders: 0 }) }), GUEST), 0)
   assert.equal(score(file({ swarm: sw({ bt_seeders: 0, wt_seeders: null }) }), GUEST), 0)
-  assert.equal(scoreFile(file(), R, GUEST, 0).known, false)
+  assert.equal(scoreFile(file(), R, GUEST).known, false)
 })
 
 test("keyword groups: only the best match per group counts", () => {
-  const kw = (title: string) => scoreFile(file({ torrent_title: title, path: "a.mp4" }), R, MEMBER, 0)
-  // 简繁 → 简体 25 only (not 25 + 20)
+  const kw = (title: string) => scoreFile(file({ torrent_title: title, path: "a.mp4" }), R, MEMBER)
+  // 简繁 → 简体 25 only (not 25 + 20); 简日 / CHS_JP → 简体
   assert.equal(kw("[Team] Show - 02 [简繁内封]").score, 25)
+  assert.equal(kw("[Team] Show - 02 [简日双语]").score, 25)
+  assert.equal(kw("[Team] Show - 02 [CHS_JP]").score, 25)
+  assert.equal(kw("[Nekomoe kissaten][Show][02][JPTC]").score, 20)
   assert.equal(kw("[Team] Show - 02 [CHT]").score, 20)
-  assert.equal(kw("[Team] Show - 02 [1080p][HEVC][CHS]").score, 42)
-  assert.equal(kw("Show 2160p 1080p").score, 15, "resolution group: max")
+  assert.equal(kw("[Team] Show - 02 [1080p][HEVC][CHS]").score, 47)
+  assert.equal(kw("Show 2160p 1080p").score, 30, "resolution group: max (4K +30)")
+  assert.equal(kw("Show [4320p]").score, 30)
+  assert.equal(kw("Show [8K]").score, 30)
+  assert.equal(kw("Show [720p]").score, 10)
+  assert.equal(kw("Show [480p]").score, 0, "below 720p: 0")
+  // Japanese subtitles: +10, but not for 日常 / 日本 in titles
+  for (const t of ["Show [JP]", "Show [JPN]", "Show [日字]", "Show 日文字幕", "Show [日语]", "Show [日語]", "Show [Japanese]"]) assert.equal(kw(t).score, 10, t)
+  for (const t of ["日常 - 02", "Nichijou 日本語", "日本 Show", "Show [RAW]"]) assert.equal(kw(t).score, 0, t)
   assert.equal(kw("Screen [A1080F2E]").score, 0, "no false matches inside words / CRCs")
   const parts = kw("[Team] Show [简繁内封][1080p]").parts.map((p) => p.label)
   assert.deepEqual(parts, ["简体中文", "1080p"])
 })
 
-test("teams, oversize, invalid patterns", () => {
+test("teams, invalid patterns", () => {
   const rules = { ...AV, teams: [{ name: "Team", score: 5 }, { name: "Other", score: 9 }] }
-  assert.equal(scoreFile(file(), rules, MEMBER, 0).score, 5)
-  assert.equal(scoreFile(file({ team: "team" }), rules, MEMBER, 0).score, 0, "exact team name")
-  assert.equal(score(file({ size_bytes: 3 * GB })), -10)
-  assert.equal(scoreFile(file({ size_bytes: 3 * GB }), AV, MEMBER, 0).score, 0, "no limit")
-  assert.equal(scoreFile(file(), { ...AV, keywords: [{ label: "bad", pattern: "(", score: 5 }] }, MEMBER, 0).score, 0)
+  assert.equal(scoreFile(file(), rules, MEMBER).score, 5)
+  assert.equal(scoreFile(file({ team: "team" }), rules, MEMBER).score, 0, "exact team name")
+  assert.equal(scoreFile(file(), { ...AV, keywords: [{ label: "bad", pattern: "(", score: 5 }] }, MEMBER).score, 0)
 })
 
-test("ranking: blocked last, score, then newest", () => {
+test("ranking: score, then newest, then input order (policy is filtered by the backend)", () => {
   const items = [
     file({ path: "old.mkv", published_at: "2026-10-01T00:00:00Z" }),
     file({ path: "new.mkv", published_at: "2026-10-10T00:00:00Z" }),
-    file({ path: "blocked.mkv", access: { action: "login", reason: "" }, swarm: sw({ server_complete: true, wt_seeders: 9 }) }),
     file({ path: "seeded.mkv", published_at: "2026-09-01T00:00:00Z", swarm: sw({ wt_seeders: 1 }) }),
     file({ path: "dead.mkv", published_at: "2026-10-18T00:00:00Z", swarm: sw({ bt_seeders: 0, wt_seeders: 0 }) }),
+    file({ path: "new2.mkv", published_at: "2026-10-10T00:00:00Z" }),
   ]
-  const order = rankFiles(items, AV, MEMBER, 2 * GB).map((s) => s.file.path)
-  assert.deepEqual(order, ["seeded.mkv", "new.mkv", "old.mkv", "dead.mkv", "blocked.mkv"])
-  assert.match(describeScore(rankFiles(items, AV, MEMBER, 2 * GB)[0]), /推荐分 5：WebRTC 做种 1 \+5/)
-  assert.match(describeScore(rankFiles(items, AV, MEMBER, 0).at(-1)!), /不可播放/)
+  const order = rankFiles(items, AV, MEMBER).map((s) => s.file.path)
+  assert.deepEqual(order, ["seeded.mkv", "new.mkv", "new2.mkv", "old.mkv", "dead.mkv"])
+  assert.match(describeScore(rankFiles(items, AV, MEMBER)[0]), /推荐分 5：WebRTC 做种 1 \+5/)
 })
