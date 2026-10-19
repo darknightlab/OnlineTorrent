@@ -122,11 +122,13 @@ func (s *Server) adminPutRankRules(w http.ResponseWriter, r *http.Request) error
 	return nil
 }
 
-// rankRules is the stored rule set (defaults when unset or invalid).
+// rankRules is the stored rule set, normalised (all fields present; defaults when unset
+// or invalid).
 func (s *Server) rankRules() json.RawMessage {
-	raw := s.St.Raw(store.KeyRankRules)
-	if _, err := rank.Parse(raw); err != nil {
+	r, err := rank.Parse(s.St.Raw(store.KeyRankRules))
+	if err != nil {
 		return rank.DefaultJSON()
 	}
-	return raw
+	b, _ := json.Marshal(r)
+	return b
 }

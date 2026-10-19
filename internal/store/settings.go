@@ -175,6 +175,14 @@ func (s *Store) seedSettings(ctx context.Context) error {
 			return err
 		}
 	}
+	// recommendation rules still equal to an earlier built-in default (never edited by an
+	// admin): replace with the current default
+	var cur string
+	if err := s.W.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, KeyRankRules).Scan(&cur); err == nil && rank.IsLegacyDefault([]byte(cur)) {
+		if _, err := s.W.ExecContext(ctx, `UPDATE settings SET value = ? WHERE key = ?`, string(rank.DefaultJSON()), KeyRankRules); err != nil {
+			return err
+		}
+	}
 	return s.reloadSettings(ctx)
 }
 

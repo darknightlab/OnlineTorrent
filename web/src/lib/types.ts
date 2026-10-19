@@ -50,24 +50,28 @@ export interface SwarmStats {
   checked_at: string | null
 }
 
-/** 推荐规则（GET /site 的 rank_rules，后台 GET/PUT /admin/rank-rules） */
+/** 推荐规则（GET /site 的 rank_rules，后台 GET/PUT /admin/rank-rules）；说明见 docs/research/rank-rules.md */
 export interface RankRules {
   availability: {
     /** 服务器已缓存加分 */
     server_complete: number
-    /** 每个 WebTorrent 做种者加分，最多 wt_cap */
+    /** WebTorrent 做种者：系数与上限 */
     wt_seeder: number
     wt_cap: number
-    /** 每个 BT 做种者加分，最多 bt_cap（仅对能让服务器做种的用户） */
+    /** BT 做种者：系数与上限（仅对能让服务器做种的用户） */
     bt_seeder: number
     bt_cap: number
+    /** linear：每人 系数 分；log：系数 × log2(1 + 人数) */
+    curve: "linear" | "log"
     /** 对当前用户无可用来源时的扣分 */
     dead: number
   }
-  /** 正则（不区分大小写）匹配 种子标题 + 文件路径 */
-  keywords: { label: string; pattern: string; score: number }[]
+  /** 正则（不区分大小写）匹配 种子标题 + 文件路径；同一 group（非空）只取命中的最高分 */
+  keywords: { label: string; pattern: string; score: number; group?: string }[]
   /** 字幕组名称精确匹配 */
   teams: { name: string; score: number }[]
+  /** 小文件加分：≤ full_below_mb 得 max，≥ zero_above_mb 得 0，中间线性 */
+  size: { max: number; full_below_mb: number; zero_above_mb: number }
   /** 文件超过「自动选种大小上限」时的分值（负数） */
   oversize: number
 }

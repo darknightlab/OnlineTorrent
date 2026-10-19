@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/toast"
 import { ErrorState, Spinner, errorMessage } from "@/components/states"
 import { api } from "@/lib/api"
+import { useSiteOrFallback } from "@/lib/queries"
 import { scoreFile, type Viewer } from "@/lib/rank"
 import type { RankRules, RankRulesResponse, SwarmStats } from "@/lib/types"
 import { cn } from "@/lib/utils"
@@ -32,11 +33,12 @@ function patternError(p: string): string | null {
   return null
 }
 
-const AVAIL: { key: keyof RankRules["availability"]; label: string; hint: string }[] = [
-  { key: "server_complete", label: "服务器已缓存", hint: "某台 qB 已完整下载（可 WebRTC 做种 / WebSeed）" },
-  { key: "wt_seeder", label: "每个 WebTorrent 做种者", hint: "wss tracker 统计的做种人数" },
+type NumKey = Exclude<keyof RankRules["availability"], "curve">
+const AVAIL: { key: NumKey; label: string; hint: string }[] = [
+  { key: "server_complete", label: "服务器已缓存", hint: "某台 qB 已完整下载（可 WebRTC 做种 / WebSeed）。只作小加分，否则更好的新版本出现后推荐不会换" },
+  { key: "wt_seeder", label: "WebTorrent 做种系数", hint: "wss tracker 统计的做种人数；曲线见下" },
   { key: "wt_cap", label: "WebTorrent 加分上限", hint: "≥ 0" },
-  { key: "bt_seeder", label: "每个 BT 做种者", hint: "仅对能让服务器做种的用户（接口权限 seed）" },
+  { key: "bt_seeder", label: "BT 做种系数", hint: "仅对能让服务器做种的用户（接口权限 seed）" },
   { key: "bt_cap", label: "BT 加分上限", hint: "≥ 0" },
   { key: "dead", label: "无人做种", hint: "游客类用户：WebRTC 做种 0 且服务器未缓存；有做种 / WebSeed 权限的用户：所有来源都为 0。未统计过的不扣分" },
 ]
@@ -73,7 +75,11 @@ export default function RankRulesPage() {
       f(n)
       return n
     })
-  const invalid = errors.some(Boolean) || draft.keywords.some((k) => !k.label.trim()) || draft.teams.some((t) => !t.name.trim())
+  const invalid =
+    errors.some(Boolean) ||
+    draft.keywords.some((k) => !k.label.trim()) ||
+    draft.teams.some((t) => !t.name.trim()) ||
+    (draft.size.max !== 0 && draft.size.zero_above_mb <= draft.size.full_below_mb)
 
   return (
     <div className="pb-20">
@@ -102,6 +108,31 @@ export default function RankRulesPage() {
                 onChange={(v) => set((r) => void (r.availability[a.key] = v))}
               />
             ))}
+            <div className="grid gap-1">
+              <span className="text-[13px] font-medium">做种人数曲线</span>
+              <div role="radiogroup" aria-label="做种人数曲线" className="inline-flex w-fit rounded-lg border bg-muted p-0.5">
+                {(
+                  [
+                    ["log", "对数"],
+                    ["linear", "线性"],
+                  ] as const
+                ).map(([v, l]) => (
+                  <button
+                    key={v}
+                    type="button"
+                    role="radio"
+                    aria-checked={draft.availability.curve === v}
+                    onClick={() => set((r) => void (r.availability.curve = v))}
+                    className={cn("h-8 rounded-md px-3 text-xs font-medium", draft.availability.curve === v ? "bg-card text-primary-text shadow-sm" : "text-muted-foreground hover:text-foreground")}
+                  >
+                    {l}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                对数：系数 × log₂(1 + 人数)，1 人得 1 倍、3 人 2 倍、7 人 3 倍；线性：每人 系数 分。都不超过上限
+              </p>
+            </div>
           </div>
         </Card>
 
@@ -109,13 +140,13 @@ export default function RankRulesPage() {
           <div className="flex items-center justify-between gap-2 px-4 py-3 sm:px-5">
             <div>
               <h2 className="text-sm font-semibold">关键词</h2>
-              <p className="text-xs text-muted-foreground">正则（不区分大小写）匹配「种子标题 + 文件路径」，命中即加分；可为负数</p>
+              <p className="text-xs text-muted-foreground">正则（不区分大小写）匹配「种子标题 + 文件路径」，命中即加分，可为负数；同一分组只取命中的最高分（如「简繁」只按简体计）</p>
             </div>
             <Button
               variant="soft"
               size="sm"
               disabled={draft.keywords.length >= MAX_KEYWORDS}
-              onClick={() => set((r) => void r.keywords.push({ label: "", pattern: "", score: 1 }))}
+              onClick={() => set((r) => void r.keywords.push({ label: "", pattern: "", score: 1, group: "" }))}
             >
               <Plus />
               添加
@@ -123,9 +154,9 @@ export default function RankRulesPage() {
           </div>
           {draft.keywords.length === 0 && <p className="px-4 py-4 text-[13px] text-muted-foreground sm:px-5">没有关键词规则</p>}
           {draft.keywords.map((k, i) => (
-            <div key={i} className="grid grid-cols-[minmax(0,1fr)_5.5rem_auto] items-start gap-2 px-4 py-3 sm:grid-cols-[9rem_minmax(0,1fr)_6rem_auto] sm:px-5">
+            <div key={i} className="grid grid-cols-[minmax(0,1fr)_5.5rem_5.5rem_auto] items-start gap-2 px-4 py-3 sm:grid-cols-[9rem_minmax(0,1fr)_6.5rem_6rem_auto] sm:px-5">
               <Input aria-label="名称" placeholder="名称，如 HEVC" value={k.label} maxLength={40} onChange={(e) => set((r) => void (r.keywords[i].label = e.target.value))} />
-              <div className="col-span-3 row-start-2 min-w-0 sm:col-span-1 sm:row-start-auto">
+              <div className="col-span-4 row-start-2 min-w-0 sm:col-span-1 sm:row-start-auto">
                 <Input
                   aria-label="正则"
                   placeholder="正则，如 hevc|[hx]\.?265"
@@ -136,8 +167,17 @@ export default function RankRulesPage() {
                 />
                 {errors[i] && <p className="mt-1 text-xs text-destructive-text">{errors[i]}</p>}
               </div>
-              <ScoreInput aria-label="分值" className="col-start-2 row-start-1 sm:col-start-auto sm:row-start-auto" value={k.score} onChange={(v) => set((r) => void (r.keywords[i].score = v))} />
-              <Button variant="ghost" size="icon" aria-label="删除" className="col-start-3 row-start-1 sm:col-start-auto sm:row-start-auto" onClick={() => set((r) => void r.keywords.splice(i, 1))}>
+              <Input
+                aria-label="分组"
+                placeholder="分组"
+                title="同一分组只取命中的最高分；留空 = 不分组"
+                className="col-start-2 row-start-1 sm:col-start-auto sm:row-start-auto"
+                value={k.group ?? ""}
+                maxLength={20}
+                onChange={(e) => set((r) => void (r.keywords[i].group = e.target.value))}
+              />
+              <ScoreInput aria-label="分值" className="col-start-3 row-start-1 sm:col-start-auto sm:row-start-auto" value={k.score} onChange={(v) => set((r) => void (r.keywords[i].score = v))} />
+              <Button variant="ghost" size="icon" aria-label="删除" className="col-start-4 row-start-1 sm:col-start-auto sm:row-start-auto" onClick={() => set((r) => void r.keywords.splice(i, 1))}>
                 <Trash2 />
               </Button>
             </div>
@@ -168,8 +208,32 @@ export default function RankRulesPage() {
         </Card>
 
         <Card className="divide-y">
-          <h2 className="px-4 py-3 text-sm font-semibold sm:px-5">文件大小</h2>
           <div className="px-4 py-3 sm:px-5">
+            <h2 className="text-sm font-semibold">文件大小</h2>
+            <p className="text-xs text-muted-foreground">小文件对 P2P 与服务器流量更友好：不超过「满分大小」得满分，达到「不加分大小」为 0，中间线性；大小未知不加分</p>
+          </div>
+          <div className="grid gap-x-6 gap-y-3 px-4 py-3 sm:grid-cols-2 sm:px-5 xl:grid-cols-4">
+            <NumberField id="size-max" label="小文件加分（满分）" hint="0 = 关闭" value={draft.size.max} min={-1000} onChange={(v) => set((r) => void (r.size.max = v))} />
+            <NumberField
+              id="size-full"
+              label="满分大小（MB）"
+              hint="不超过此大小得满分"
+              value={draft.size.full_below_mb}
+              min={0}
+              max={1048576}
+              step={50}
+              onChange={(v) => set((r) => void (r.size.full_below_mb = Math.round(v)))}
+            />
+            <NumberField
+              id="size-zero"
+              label="不加分大小（MB）"
+              hint="达到此大小不再加分；须大于满分大小"
+              value={draft.size.zero_above_mb}
+              min={0}
+              max={1048576}
+              step={50}
+              onChange={(v) => set((r) => void (r.size.zero_above_mb = Math.round(v)))}
+            />
             <NumberField
               id="oversize"
               label="超过自动选种大小上限"
@@ -213,18 +277,36 @@ function ScoreInput({ value, onChange, className, ...rest }: { value: number; on
     <Input
       {...rest}
       type="number"
-      inputMode="numeric"
+      inputMode="decimal"
       min={-1000}
       max={1000}
-      step={1}
+      step={0.5}
       className={cn("tabular-nums", className)}
       value={String(value)}
-      onChange={(e) => onChange(e.target.value === "" || e.target.value === "-" ? 0 : Math.trunc(Number(e.target.value)) || 0)}
+      onChange={(e) => onChange(Number(e.target.value) || 0)}
     />
   )
 }
 
-function NumberField({ id, label, hint, value, min, onChange }: { id: string; label: string; hint: string; value: number; min: number; onChange: (v: number) => void }) {
+function NumberField({
+  id,
+  label,
+  hint,
+  value,
+  min,
+  max = 1000,
+  step = 0.5,
+  onChange,
+}: {
+  id: string
+  label: string
+  hint: string
+  value: number
+  min: number
+  max?: number
+  step?: number
+  onChange: (v: number) => void
+}) {
   return (
     <div className="grid gap-1">
       <label htmlFor={id} className="text-[13px] font-medium">
@@ -233,13 +315,13 @@ function NumberField({ id, label, hint, value, min, onChange }: { id: string; la
       <Input
         id={id}
         type="number"
-        inputMode="numeric"
+        inputMode="decimal"
         min={min}
-        max={1000}
-        step={1}
+        max={max}
+        step={step}
         className="max-w-36 tabular-nums"
         value={String(value)}
-        onChange={(e) => onChange(Math.trunc(Number(e.target.value)) || 0)}
+        onChange={(e) => onChange(Number(e.target.value) || 0)}
       />
       <p className="text-xs leading-relaxed text-muted-foreground">{hint}</p>
     </div>
@@ -253,10 +335,12 @@ const VIEWERS: { label: string; v: Viewer }[] = [
 
 /** 试算：输入标题与做种人数，按草稿规则给出分数 */
 function TryIt({ rules }: { rules: RankRules }) {
+  const maxAuto = useSiteOrFallback().max_auto_size_bytes
   const [title, setTitle] = useState("[Team] Show - 02 [WebRip 1080p HEVC-10bit AAC][简繁内封]")
   const [bt, setBt] = useState("23")
   const [wt, setWt] = useState("0")
   const [server, setServer] = useState(false)
+  const [mb, setMb] = useState("320")
   const swarm: SwarmStats = {
     bt_seeders: bt === "" ? null : Number(bt),
     bt_leechers: 0,
@@ -280,13 +364,17 @@ function TryIt({ rules }: { rules: RankRules }) {
             <Input type="number" min={0} className="w-20" value={wt} onChange={(e) => setWt(e.target.value)} placeholder="未知" />
           </label>
           <label className="flex items-center gap-1.5">
+            大小 MB
+            <Input type="number" min={0} className="w-24" value={mb} onChange={(e) => setMb(e.target.value)} placeholder="未知" />
+          </label>
+          <label className="flex items-center gap-1.5">
             <input type="checkbox" checked={server} onChange={(e) => setServer(e.target.checked)} />
             服务器已缓存
           </label>
         </div>
         <ul className="grid gap-1.5">
           {VIEWERS.map(({ label, v }) => {
-            const s = scoreFile({ torrent_title: title, path: "", team: "", size_bytes: 0, published_at: "", access: { action: "allow", reason: "" }, swarm }, rules, v, 0)
+            const s = scoreFile({ torrent_title: title, path: "", team: "", size_bytes: (Number(mb) || 0) * 1024 ** 2, published_at: "", access: { action: "allow", reason: "" }, swarm }, rules, v, maxAuto)
             return (
               <li key={label} className="flex flex-wrap items-center gap-1.5 text-[13px]">
                 <span className="w-44 shrink-0 text-muted-foreground">{label}</span>

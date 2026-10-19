@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
+	"reflect"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -17,25 +19,44 @@ import (
 
 // Availability scores (swarm stats).
 type Availability struct {
-	ServerComplete int `json:"server_complete"` // a qB server has the whole torrent
-	WTSeeder       int `json:"wt_seeder"`       // per WebTorrent seeder …
-	WTCap          int `json:"wt_cap"`          // … at most
-	BTSeeder       int `json:"bt_seeder"`       // per BT seeder (only viewers who can make the server seed) …
-	BTCap          int `json:"bt_cap"`          // … at most
-	Dead           int `json:"dead"`            // no reachable source for this viewer
+	ServerComplete float64 `json:"server_complete"` // a qB server has the whole torrent
+	WTSeeder       float64 `json:"wt_seeder"`       // WebTorrent seeders: coefficient …
+	WTCap          float64 `json:"wt_cap"`          // … and cap
+	BTSeeder       float64 `json:"bt_seeder"`       // BT seeders (only viewers who can make the server seed): coefficient …
+	BTCap          float64 `json:"bt_cap"`          // … and cap
+	// Curve: "linear" = coefficient per seeder, "log" = coefficient × log2(1 + seeders)
+	// (1 → 1×, 3 → 2×, 7 → 3×). Missing = linear (rules saved before the field existed).
+	Curve string  `json:"curve"`
+	Dead  float64 `json:"dead"` // no reachable source for this viewer
 }
 
+// Seeder curves.
+const (
+	CurveLinear = "linear"
+	CurveLog    = "log"
+)
+
 // Keyword adds Score when Pattern (case-insensitive regex) matches title + file path.
+// Keywords sharing a non-empty Group only count once: the highest matching score.
 type Keyword struct {
-	Label   string `json:"label"`
-	Pattern string `json:"pattern"`
-	Score   int    `json:"score"`
+	Label   string  `json:"label"`
+	Pattern string  `json:"pattern"`
+	Score   float64 `json:"score"`
+	Group   string  `json:"group"`
 }
 
 // Team adds Score for an exact team name.
 type Team struct {
-	Name  string `json:"name"`
-	Score int    `json:"score"`
+	Name  string  `json:"name"`
+	Score float64 `json:"score"`
+}
+
+// SizeBonus favours small files (P2P and server traffic): Max for files ≤ FullBelowMB,
+// 0 from ZeroAboveMB, linear in between; unknown sizes get nothing. Max 0 = off.
+type SizeBonus struct {
+	Max         float64 `json:"max"`
+	FullBelowMB int     `json:"full_below_mb"`
+	ZeroAboveMB int     `json:"zero_above_mb"`
 }
 
 // Rules is the whole rule set.
@@ -43,7 +64,8 @@ type Rules struct {
 	Availability Availability `json:"availability"`
 	Keywords     []Keyword    `json:"keywords"`
 	Teams        []Team       `json:"teams"`
-	Oversize     int          `json:"oversize"` // file larger than play.max_auto_size_mb
+	Size         SizeBonus    `json:"size"`
+	Oversize     float64      `json:"oversize"` // file larger than play.max_auto_size_mb
 }
 
 // Limits.
@@ -52,24 +74,52 @@ const (
 	MaxTeams      = 200
 	MaxLabelLen   = 40
 	MaxPatternLen = 200
+	MaxGroupLen   = 20
 	MaxTeamLen    = 80
 	MaxScore      = 1000
+	MaxSizeMB     = 1 << 20
 )
 
-// Default returns the built-in rules.
+// Default returns the built-in rules (rationale and the scenarios they were tuned on:
+// docs/research/rank-rules.md, web/src/lib/rank.scenarios.test.ts). Keep in sync with
+// DEFAULT_RANK_RULES in web/src/lib/rank.ts.
 func Default() Rules {
 	return Rules{
-		Availability: Availability{ServerComplete: 30, WTSeeder: 5, WTCap: 30, BTSeeder: 1, BTCap: 20, Dead: -100},
+		Availability: Availability{ServerComplete: 2, WTSeeder: 2, WTCap: 6, BTSeeder: 1, BTCap: 4, Curve: CurveLog, Dead: -100},
 		Keywords: []Keyword{
-			{Label: "HEVC", Pattern: `hevc|[hx]\.?265`, Score: 3},
-			{Label: "1080p", Pattern: `1080|1920`, Score: 3},
-			{Label: "4K", Pattern: `2160|\b4k\b`, Score: 1},
-			{Label: "简体", Pattern: `简|chs|\bsc\b|\bgb\b`, Score: 2},
-			{Label: "繁体", Pattern: `繁|cht|\btc\b|big5`, Score: 1},
+			{Label: "简体中文", Pattern: `简|chs|\bsc\b|\bgb\b|zh-?hans`, Score: 25, Group: "字幕"},
+			{Label: "繁体中文", Pattern: `繁|cht|\btc\b|big5|zh-?hant`, Score: 12, Group: "字幕"},
+			{Label: "1080p", Pattern: `1080[pi]?\b|1920x1080`, Score: 10, Group: "分辨率"},
+			{Label: "4K", Pattern: `2160p?\b|3840x2160|\b4k\b`, Score: 5, Group: "分辨率"},
+			{Label: "720p", Pattern: `720p\b|1280x720`, Score: 4, Group: "分辨率"},
+			{Label: "HEVC", Pattern: `hevc|[hx]\.?265`, Score: 2},
 		},
 		Teams:    []Team{},
+		Size:     SizeBonus{Max: 6, FullBelowMB: 300, ZeroAboveMB: 1500},
 		Oversize: -10,
 	}
+}
+
+// legacyDefaults are earlier built-in defaults as stored in the settings table. A stored
+// value equal to one of them was never edited by an admin and is upgraded to Default().
+var legacyDefaults = []string{
+	// v1 (2026-10, 7d2effb): server_complete +30 dominated, no size bonus
+	`{"availability":{"server_complete":30,"wt_seeder":5,"wt_cap":30,"bt_seeder":1,"bt_cap":20,"dead":-100},"keywords":[{"label":"HEVC","pattern":"hevc|[hx]\\.?265","score":3},{"label":"1080p","pattern":"1080|1920","score":3},{"label":"4K","pattern":"2160|\\b4k\\b","score":1},{"label":"简体","pattern":"简|chs|\\bsc\\b|\\bgb\\b","score":2},{"label":"繁体","pattern":"繁|cht|\\btc\\b|big5","score":1}],"teams":[],"oversize":-10}`,
+}
+
+// IsLegacyDefault reports whether raw equals (as JSON) an earlier built-in default.
+func IsLegacyDefault(raw []byte) bool {
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return false
+	}
+	for _, l := range legacyDefaults {
+		var d any
+		if json.Unmarshal([]byte(l), &d) == nil && reflect.DeepEqual(v, d) {
+			return true
+		}
+	}
+	return false
 }
 
 // DefaultJSON is Default encoded (the setting's default value).
@@ -79,7 +129,7 @@ func DefaultJSON() json.RawMessage {
 }
 
 // Parse decodes and validates rules (unknown fields are an error) and returns them
-// normalised (trimmed strings, non-nil lists).
+// normalised (trimmed strings, non-nil lists, curve set).
 func Parse(raw []byte) (Rules, error) {
 	var r Rules
 	dec := json.NewDecoder(bytes.NewReader(raw))
@@ -93,25 +143,39 @@ func Parse(raw []byte) (Rules, error) {
 	return r, r.normalize()
 }
 
-func score(name string, v int) error {
-	if v < -MaxScore || v > MaxScore {
+func score(name string, v float64) error {
+	if math.IsNaN(v) || v < -MaxScore || v > MaxScore {
 		return fmt.Errorf("%s 须在 %d 到 %d 之间", name, -MaxScore, MaxScore)
 	}
 	return nil
 }
 
 func (r *Rules) normalize() error {
-	a := r.Availability
+	a := &r.Availability
 	for _, c := range []struct {
 		n string
-		v int
-	}{{"服务器已缓存加分", a.ServerComplete}, {"每个 WebTorrent 做种者加分", a.WTSeeder}, {"每个 BT 做种者加分", a.BTSeeder}, {"无人做种扣分", a.Dead}, {"超过大小上限扣分", r.Oversize}} {
+		v float64
+	}{{"服务器已缓存加分", a.ServerComplete}, {"WebTorrent 做种系数", a.WTSeeder}, {"BT 做种系数", a.BTSeeder}, {"无人做种扣分", a.Dead},
+		{"超过大小上限扣分", r.Oversize}, {"小文件加分", r.Size.Max}} {
 		if err := score(c.n, c.v); err != nil {
 			return err
 		}
 	}
 	if a.WTCap < 0 || a.WTCap > MaxScore || a.BTCap < 0 || a.BTCap > MaxScore {
 		return fmt.Errorf("加分上限须在 0 到 %d 之间", MaxScore)
+	}
+	switch a.Curve {
+	case "":
+		a.Curve = CurveLinear
+	case CurveLinear, CurveLog:
+	default:
+		return errors.New("做种人数曲线须为 linear 或 log")
+	}
+	if r.Size.FullBelowMB < 0 || r.Size.ZeroAboveMB < 0 || r.Size.FullBelowMB > MaxSizeMB || r.Size.ZeroAboveMB > MaxSizeMB {
+		return fmt.Errorf("小文件加分的大小须在 0 到 %d MB 之间", MaxSizeMB)
+	}
+	if r.Size.Max != 0 && r.Size.ZeroAboveMB <= r.Size.FullBelowMB {
+		return errors.New("小文件加分：「不加分的大小」须大于「满分的大小」")
 	}
 	if len(r.Keywords) > MaxKeywords {
 		return fmt.Errorf("关键词最多 %d 个", MaxKeywords)
@@ -134,6 +198,10 @@ func (r *Rules) normalize() error {
 		}
 		if err := score(n+"分值", k.Score); err != nil {
 			return err
+		}
+		k.Group = strings.TrimSpace(k.Group)
+		if utf8.RuneCountInString(k.Group) > MaxGroupLen {
+			return fmt.Errorf("%s（%s）：分组名不超过 %d 字", n, k.Label, MaxGroupLen)
 		}
 	}
 	if len(r.Teams) > MaxTeams {

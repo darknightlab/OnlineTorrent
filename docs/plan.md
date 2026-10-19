@@ -84,7 +84,7 @@
 - **Tracker 管理 / 做种统计 / 推荐规则（2026-10）**：
   - tracker 由本站管理：设置 `webtorrent.trackers`（wss，公开）+ `bt.trackers`（udp/http）；推给 qB（seed、元数据队列）时 = wss + BT + 种子自带 announce（`torrent_metainfo.announce`），去重最多 30，并 addTrackers 补齐已在 qB 的种子；不再依赖 qB 的「自动添加 tracker」。
   - 做种统计 `internal/swarm`：UDP BEP 15 / HTTP / wss scrape，按 tracker 批量、全部并行、各 tracker 限速；**只按需**：API 返回的种子数据缺失或超过 30 分钟才查询，1.5 秒预算（1.2 秒时先写已响应部分），其余后台完成，in-flight 去重；不做全库定时查询（库里可能有几万种子）。计数跨 tracker 取最大值。Nyaa RSS 的 seeders/leechers 作初始值。存映射库 `swarm_stats`（迁移 8）。tracker 状态被动记录（最后一次实际使用的结果），没有主动探测。
-  - 推荐：`internal/rank` 只定义与校验规则（`rank.rules`，/site 公开）；打分在前端 `web/src/lib/rank.ts`（依赖用户权限：游客看 WebRTC 节点与服务器缓存，会员还看 BT 做种者）；单集页按分排序、自动播放第一个。后台页「Tracker」「推荐规则」。
+  - 推荐：`internal/rank` 只定义与校验规则（`rank.rules`，/site 公开）；打分在前端 `web/src/lib/rank.ts`（依赖用户权限：游客看 WebRTC 节点与服务器缓存，会员还看 BT 做种者）；单集页按分排序、自动播放第一个。后台页「Tracker」「推荐规则」。默认值第二版（服务器缓存只作小加分、做种人数对数加分、简体 > 繁体 > 清晰度 > 小文件，关键词分组）见 [research/rank-rules.md](research/rank-rules.md)；库中未改过的第一版默认值启动时自动升级。
   - 待改进：tracker 状态只在内存（重启清空）；服务器缓存状态依赖 qB `torrents/info` 全量快照（1 分钟）；条目页 100 个种子首次打开要 scrape 100 个（单个 UDP 包 74 个，所以每个 tracker 2 个包）。
 
 ## TODO（低优先级）

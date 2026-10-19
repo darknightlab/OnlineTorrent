@@ -7,6 +7,31 @@ import (
 	"testing"
 )
 
+// A stored rule set equal to the v1 built-in default is upgraded on start; edited ones stay.
+func TestRankRulesLegacyUpgrade(t *testing.T) {
+	ctx := context.Background()
+	st := newStore(t)
+	v1 := `{"availability":{"server_complete":30,"wt_seeder":5,"wt_cap":30,"bt_seeder":1,"bt_cap":20,"dead":-100},"keywords":[{"label":"HEVC","pattern":"hevc|[hx]\\.?265","score":3},{"label":"1080p","pattern":"1080|1920","score":3},{"label":"4K","pattern":"2160|\\b4k\\b","score":1},{"label":"简体","pattern":"简|chs|\\bsc\\b|\\bgb\\b","score":2},{"label":"繁体","pattern":"繁|cht|\\btc\\b|big5","score":1}],"teams":[],"oversize":-10}`
+	put := func(v string) {
+		if _, err := st.W.ExecContext(ctx, `UPDATE settings SET value = ? WHERE key = ?`, v, KeyRankRules); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(v1)
+	if err := st.seedSettings(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(st.Raw(KeyRankRules)), `"curve":"log"`) {
+		t.Fatalf("not upgraded: %s", st.Raw(KeyRankRules))
+	}
+	edited := strings.Replace(v1, `"server_complete":30`, `"server_complete":10`, 1)
+	put(edited)
+	_ = st.seedSettings(ctx)
+	if string(st.Raw(KeyRankRules)) != edited {
+		t.Fatalf("customised rules replaced: %s", st.Raw(KeyRankRules))
+	}
+}
+
 func TestTrackerAndRankSettings(t *testing.T) {
 	ctx := context.Background()
 	st := newStore(t)

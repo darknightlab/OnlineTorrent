@@ -246,22 +246,27 @@ qB 拿到元数据后，后端把文件列表写入本地库并刮削（每个 i
 - tracker 状态是**被动**的：只记录每个已配置 tracker 最后一次实际使用（上述按需查询）时的结果，从不为检测主动发请求；保存在内存（重启后为「尚未使用」）。
 
 ## 推荐规则
-`/site.rank_rules`（后台「推荐规则」编辑，设置键 `rank.rules`，不在 `/admin/settings` 中）。单集页在浏览器里给每个文件打分（`web/src/lib/rank.ts`，纯函数），按「当前用户可播放（策略 allow）→ 总分 → 发布时间新 → 原顺序」排序，自动播放第一个；策略不允许的始终排最后、不会被自动播放。自动选中后在本页固定（做种人数刷新导致重新排序时不切换）。
+`/site.rank_rules`（后台「推荐规则」编辑，设置键 `rank.rules`，不在 `/admin/settings` 中；`/site` 返回规范化后的完整对象）。单集页在浏览器里给每个文件打分（`web/src/lib/rank.ts`，纯函数），按「当前用户可播放（策略 allow）→ 总分 → 发布时间新 → 原顺序」排序，自动播放第一个；策略不允许的始终排最后、不会被自动播放。自动选中后在本页固定（做种人数刷新导致重新排序时不切换）。默认值的依据与 39 个场景见 [research/rank-rules.md](research/rank-rules.md)。
 ```json
-{ "availability": { "server_complete": 30,         // 服务器已缓存
-                    "wt_seeder": 5, "wt_cap": 30,  // 每个 WebTorrent 做种者，最多 +30
-                    "bt_seeder": 1, "bt_cap": 20,  // 每个 BT 做种者，最多 +20 —— 只对有做种权限（POST …/seed）的用户
-                    "dead": -100 },                // 无人做种，见下
-  "keywords": [ {"label": "HEVC", "pattern": "hevc|[hx]\\.?265", "score": 3},       // 不区分大小写，匹配 种子标题 + 文件路径
-                {"label": "1080p", "pattern": "1080|1920", "score": 3},
-                {"label": "4K", "pattern": "2160|\\b4k\\b", "score": 1},
-                {"label": "简体", "pattern": "简|chs|\\bsc\\b|\\bgb\\b", "score": 2},
-                {"label": "繁体", "pattern": "繁|cht|\\btc\\b|big5", "score": 1} ],
+{ "availability": { "server_complete": 2,            // 服务器已缓存（小加分）
+                    "wt_seeder": 2, "wt_cap": 6,     // WebTorrent 做种：系数、上限
+                    "bt_seeder": 1, "bt_cap": 4,     // BT 做种（只对有做种权限 POST …/seed 的用户）
+                    "curve": "log",                  // log：系数 × log2(1+人数)；linear：每人 系数 分（缺省 = linear）
+                    "dead": -100 },                  // 无人做种，见下
+  "keywords": [ {"label": "简体中文", "pattern": "简|chs|\\bsc\\b|\\bgb\\b|zh-?hans", "score": 25, "group": "字幕"},  // 不区分大小写，匹配 种子标题 + 文件路径
+                {"label": "繁体中文", "pattern": "繁|cht|\\btc\\b|big5|zh-?hant", "score": 12, "group": "字幕"},       // 同一 group 只取命中的最高分
+                {"label": "1080p", "pattern": "1080[pi]?\\b|1920x1080", "score": 10, "group": "分辨率"},
+                {"label": "4K", "pattern": "2160p?\\b|3840x2160|\\b4k\\b", "score": 5, "group": "分辨率"},
+                {"label": "720p", "pattern": "720p\\b|1280x720", "score": 4, "group": "分辨率"},
+                {"label": "HEVC", "pattern": "hevc|[hx]\\.?265", "score": 2, "group": ""} ],
   "teams": [ {"name": "字幕组名（精确匹配）", "score": 5} ],   // 默认 []
+  "size": { "max": 6, "full_below_mb": 300, "zero_above_mb": 1500 },  // 小文件加分：≤300 MB 满分，≥1500 MB 0，中间线性；大小未知不加
   "oversize": -10 }   // 文件大于 play.max_auto_size_mb
 ```
-- 无人做种（`dead`）：没有做种权限也没有 WebSeed 权限的用户（游客类）：`wt_seeders == 0` 且服务器未缓存；有做种或 WebSeed 权限的用户：所有来源都为 0（BT 0、WebRTC 0、服务器未缓存）。从未统计（`checked_at` 为 null）或对应 tracker 都没响应（计数 null）时可用性记 0、不扣分。HEVC / 10-bit 不再降权。
-- 校验（PUT 400 `bad_request`）：未知字段报错；分值 −1000…1000，上限 0…1000；关键词 ≤ 30 个（名称 ≤ 40 字、正则 ≤ 200 字），字幕组 ≤ 200 个（名称 ≤ 80 字、不重复）；正则须为 Go RE2 与 JavaScript（`i` 标志、无 `u`）共同支持的子集：能被 RE2 编译（因此没有前后查找、反向引用），且不能用 `(?…)`（`(?:` 除外）、`\A \z \Q \E \C`、`\p{…}`、`\x{…}`、`[[:alpha:]]`。
+- 分数可为小数（显示取整，tooltip 给明细）。
+- 无人做种（`dead`）：没有做种或 WebSeed 权限的用户（游客类）：`wt_seeders == 0` 且服务器未缓存；有做种或 WebSeed 权限的用户：所有来源都为 0（BT 0、WebRTC 0、服务器未缓存）。从未统计（`checked_at` 为 null）或对应 tracker 都没响应（计数 null）时可用性记 0、不扣分。
+- 校验（PUT 400 `bad_request`）：未知字段报错；分值 / 系数 −1000…1000，上限 0…1000；`curve` 为 `linear|log`；`size` 的两个大小 0…1048576 MB，`max ≠ 0` 时 `zero_above_mb > full_below_mb`；关键词 ≤ 30 个（名称 ≤ 40 字、正则 ≤ 200 字、分组 ≤ 20 字），字幕组 ≤ 200 个（名称 ≤ 80 字、不重复）；正则须为 Go RE2 与 JavaScript（`i` 标志、无 `u`）共同支持的子集：能被 RE2 编译（因此没有前后查找、反向引用），且不能用 `(?…)`（`(?:` 除外）、`\A \z \Q \E \C`、`\p{…}`、`\x{…}`、`[[:alpha:]]`。
+- 升级：库中的 `rank.rules` 若仍等于旧版内置默认值（JSON 相等，即管理员没改过），启动时替换为当前默认值；改过的保留。
 
 ## 后台 `/admin/*`（仅 admin）
 - `GET /admin/permissions` → `{"roles":["guest","member","vip"], "items":[{key, method, path, group, label, access, default_roles, granted:{guest,member,vip}}]}`

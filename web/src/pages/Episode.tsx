@@ -273,7 +273,7 @@ export function SourceList({
                   )}
                   {sc && (
                     <span className={cn("block", sc.score < 0 && "text-destructive-text")} title={describeScore(sc)}>
-                      {sc.allowed ? `${sc.score > 0 ? "+" : ""}${sc.score} 分` : "不可播放"}
+                      {sc.allowed ? `${sc.score > 0 ? "+" : ""}${Math.round(sc.score)} 分` : "不可播放"}
                     </span>
                   )}
                 </span>

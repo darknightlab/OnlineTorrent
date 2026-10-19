@@ -2,6 +2,8 @@ package rank
 
 import (
 	"encoding/json"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -11,12 +13,65 @@ func TestDefaultValid(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Availability.ServerComplete != 30 || r.Availability.Dead != -100 || len(r.Keywords) != 5 || r.Oversize != -10 {
+	a := r.Availability
+	if a.ServerComplete != 2 || a.Dead != -100 || a.Curve != CurveLog || len(r.Keywords) != 6 || r.Oversize != -10 || r.Size.Max != 6 {
 		t.Fatalf("%+v", r)
 	}
-	// HEVC is a bonus now, not a penalty
-	if r.Keywords[0].Label != "HEVC" || r.Keywords[0].Score <= 0 {
-		t.Fatal("HEVC")
+	// the dead penalty stays decisive: more than every bonus together
+	sum := a.ServerComplete + a.WTCap + a.BTCap + r.Size.Max
+	groups := map[string]float64{}
+	for _, k := range r.Keywords {
+		if k.Group == "" {
+			sum += k.Score
+		} else {
+			groups[k.Group] = max(groups[k.Group], k.Score)
+		}
+	}
+	for _, v := range groups {
+		sum += v
+	}
+	if -a.Dead <= sum {
+		t.Fatalf("dead %v not decisive vs max bonus %v", a.Dead, sum)
+	}
+	// subtitle preference beats every availability bonus (scenario 25 / 38)
+	if 25-12 <= a.ServerComplete+a.WTCap+a.BTCap-1 {
+		t.Fatal("简/繁 gap must exceed the availability margin")
+	}
+}
+
+// testdata/default.json is the shared golden copy: web/src/lib/rank.test.ts checks that
+// DEFAULT_RANK_RULES equals it, so Go and TS defaults can't drift apart.
+func TestDefaultGolden(t *testing.T) {
+	b, err := os.ReadFile("testdata/default.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got, want any
+	_ = json.Unmarshal(DefaultJSON(), &got)
+	if err := json.Unmarshal(b, &want); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("Default() differs from testdata/default.json:\n%s", DefaultJSON())
+	}
+}
+
+func TestLegacyDefault(t *testing.T) {
+	if !IsLegacyDefault([]byte(legacyDefaults[0])) {
+		t.Fatal("v1 literal")
+	}
+	if IsLegacyDefault(DefaultJSON()) {
+		t.Fatal("current default is not legacy")
+	}
+	// v1 with a single edit is a customised rule set: kept
+	edited := strings.Replace(legacyDefaults[0], `"server_complete":30`, `"server_complete":10`, 1)
+	if IsLegacyDefault([]byte(edited)) || IsLegacyDefault([]byte("{")) {
+		t.Fatal("edited / invalid")
+	}
+	// legacy rules still parse (no curve / size / group): linear, size off
+	r, err := Parse([]byte(legacyDefaults[0]))
+	if err != nil || r.Availability.Curve != CurveLinear || r.Size.Max != 0 {
+		t.Fatalf("%+v %v", r, err)
 	}
 }
 
