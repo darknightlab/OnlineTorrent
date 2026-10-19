@@ -104,7 +104,6 @@ export interface ScheduleItem {
   episodes_aired: number
   bgm_id: number | null
   moe_tag_id: string | null
-  latest_torrent: Torrent | null
   /** 最新一集的集数（映射库已知时） */
   latest_episode?: number | null
 }

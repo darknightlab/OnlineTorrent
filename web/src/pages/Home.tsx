@@ -46,7 +46,7 @@ function ScheduleSection() {
     })
   // 默认只显示有资源（本地已收录，或字幕组发布站有标签）的番（无资源的多为国产/少儿动画，点进去也看不了）
   const visible = useMemo(
-    () => (data ? (showAll ? data.items : data.items.filter((i) => i.latest_torrent || i.latest_episode || i.moe_tag_id)) : []),
+    () => (data ? (showAll ? data.items : data.items.filter((i) => i.latest_episode || i.moe_tag_id)) : []),
     [data, showAll],
   )
   const hiddenCount = (data?.items.length ?? 0) - visible.length

@@ -75,8 +75,11 @@ const SUMMARIES = [
   "古老的王国即将迎来变革。被流放的少女军师带领一支弱小的军队，在乱世中开辟出一条生路。",
 ]
 
+/** mock 内部用：每部番的最新种子（生成种子列表 / 单集资源用；接口不返回） */
+export type MockSubject = Subject & { latest_torrent: Torrent | null }
+
 export function buildSubjects(now = Date.now()) {
-  return seed.subjects.map((a, i): Subject => {
+  return seed.subjects.map((a, i): MockSubject => {
     const { last, next } = airTimes(a.weekday, a.air_time, now)
     const begin = new Date(`${a.begin}T00:00:00+08:00`).getTime()
     const episodes = Math.max(0, Math.floor((last - begin) / (7 * DAY)) + 1)
@@ -128,9 +131,9 @@ export function buildSubjects(now = Date.now()) {
   })
 }
 
-export function toScheduleItem(a: Subject): ScheduleItem {
-  const { summary: _s, tags: _t, external: _e, meta_tags: _m, nsfw: _n, score: _sc, rank: _r, eps: _ep, ...rest } = a
-  void [_s, _t, _e, _m, _n, _sc, _r, _ep]
+export function toScheduleItem(a: MockSubject): ScheduleItem {
+  const { summary: _s, tags: _t, external: _e, meta_tags: _m, nsfw: _n, score: _sc, rank: _r, eps: _ep, latest_torrent: _lt, ...rest } = a
+  void [_s, _t, _e, _m, _n, _sc, _r, _ep, _lt]
   return rest
 }
 

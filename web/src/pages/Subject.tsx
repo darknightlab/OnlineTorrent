@@ -66,7 +66,7 @@ export default function SubjectPage() {
   const a = data.subject
   const title = displayTitle(a)
   const status = airStatus(a, now)
-  const latest = a.latest_torrent ?? data.torrents[0]
+  const latest = data.torrents[0]
   // 已播集数（映射库最新一集 / 时间表估算取较大者）
   const epCount = airedCount(a)
   // 播放按钮：有资源的最新正片；都没有资源时从第 1 话开始（已播出的话）

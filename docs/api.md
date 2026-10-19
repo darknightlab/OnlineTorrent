@@ -107,7 +107,6 @@ URL 与 API 中用来指代某一集（Go：`meta.ParseEpisodeKey`，`internal/m
     "next_air_at": "2026-10-17T14:00:00Z",
     "episodes_aired": 2,           // 估算
     "bgm_id": 123456, "moe_tag_id": "5ff…",   // bgm_id 可为 null
-    "latest_torrent": null,         // 或 Torrent（见下）：本地库中映射到该番的最新一集里自动推荐的种子（受信来源、AVC、1080p、大小合适优先）
     "latest_episode": 2             // 映射库已知的最新一集（正片，可为 null）→ 前端卡片直达 /subject/…/episode/{latest_episode}
   }]
 }

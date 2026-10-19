@@ -325,21 +325,7 @@ func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) error {
 		httpx.JSON(w, 200, catalog.Schedule{GeneratedAt: store.Now(), Items: []*catalog.ScheduleItem{}})
 		return nil
 	}
-	// attach per-user access to latest torrents
-	out := catalog.Schedule{GeneratedAt: sc.GeneratedAt, Season: sc.Season, Items: make([]*catalog.ScheduleItem, 0, len(sc.Items))}
-	u := userOf(r)
-	for _, it := range sc.Items {
-		c := *it
-		if it.LatestTorrent != nil {
-			t := *it.LatestTorrent
-			if d, err := s.Policy.Decide(r.Context(), u, t.Subject()); err == nil {
-				a := d.Access()
-				t.Access = &a
-			}
-			c.LatestTorrent = &t
-		}
-		out.Items = append(out.Items, &c)
-	}
+	out := catalog.Schedule{GeneratedAt: sc.GeneratedAt, Season: sc.Season, Items: sc.Items}
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	httpx.JSON(w, 200, out)
 	return nil

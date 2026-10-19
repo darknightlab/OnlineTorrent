@@ -2,7 +2,6 @@ package catalog
 
 import (
 	"context"
-	"github.com/darknightlab/onlinetorrent/internal/rank"
 	"net/http"
 	"net/url"
 	"sort"
@@ -31,7 +30,6 @@ type ScheduleItem struct {
 	BgmID         *int64            `json:"bgm_id"`
 	MoeTagID      *string           `json:"moe_tag_id"`
 	External      map[string]string `json:"external,omitempty"`
-	LatestTorrent *Torrent          `json:"latest_torrent"`
 	LatestEpisode *float64          `json:"latest_episode"`
 }
 
@@ -123,7 +121,6 @@ func (c *Catalog) rebuildSchedule(ctx context.Context) {
 		c.log.Warn("schedule: works", "err", err)
 		return
 	}
-	maxBytes := int64(c.st.Num(store.KeyMaxAutoSize)) << 20
 	var items []*ScheduleItem
 	for _, w := range works {
 		if w.Type != "tv" && w.Type != "web" {
@@ -139,7 +136,7 @@ func (c *Catalog) rebuildSchedule(ctx context.Context) {
 		}
 		items = append(items, it)
 	}
-	// phase 1: publish immediately, carrying over latest torrents from the previous build
+	// phase 1: publish immediately, carrying over latest episodes from the previous build
 	if prev := c.Schedule(); prev != nil {
 		old := map[string]*ScheduleItem{}
 		for _, it := range prev.Items {
@@ -147,7 +144,7 @@ func (c *Catalog) rebuildSchedule(ctx context.Context) {
 		}
 		for _, it := range items {
 			if o := old[it.Key]; o != nil {
-				it.LatestTorrent, it.LatestEpisode = o.LatestTorrent, o.LatestEpisode
+				it.LatestEpisode = o.LatestEpisode
 			}
 		}
 	}
@@ -156,62 +153,34 @@ func (c *Catalog) rebuildSchedule(ctx context.Context) {
 	// covers: resolve api.bgm.tv image redirects once (they can take ~20s) and store the final URL
 	c.resolveCovers(ctx, works, items)
 
-	// phase 2: latest torrent per anime, from the local catalogue
-	c.fillLatest(ctx, items, maxBytes)
+	// phase 2: latest episode per anime, from the file mappings
+	c.fillLatest(ctx, items)
 	c.publishSchedule(now, items)
 	c.log.Info("schedule rebuilt", "items", len(items))
 }
 
-// fillLatest sets each item's latest episode (highest main episode with mapped files, the same
-// data as the episode list) and the torrent the episode page would auto-play for it
-// (rank.Order, guest view: user-pasted magnets need login). Access per viewer is recomputed
-// when the item is served.
-func (c *Catalog) fillLatest(ctx context.Context, items []*ScheduleItem, maxBytes int64) {
+// fillLatest sets each item's latest episode: the highest main episode with mapped files (the
+// same data as the episode list). Cards link to that episode page; which file plays is decided
+// there (internal/rank), not here.
+func (c *Catalog) fillLatest(ctx context.Context, items []*ScheduleItem) {
 	for _, it := range items {
-		t, ep, err := c.latestFor(ctx, it.Key, maxBytes)
+		keys, err := c.meta.EpisodeKeys(ctx, it.Key)
 		if err != nil {
 			c.log.Warn("schedule: latest", "work", it.Key, "err", err)
 			continue
 		}
-		if t != nil {
-			it.LatestTorrent, it.LatestEpisode = t, ep
+		var best *float64
+		for _, k := range keys {
+			if k.Key.Kind == meta.KeyMain && k.Key.Number > 0 && k.Files > 0 && (best == nil || k.Key.Number > *best) {
+				n := k.Key.Number
+				best = &n
+			}
 		}
+		it.LatestEpisode = best
 	}
 }
 
-func (c *Catalog) latestFor(ctx context.Context, workKey string, maxBytes int64) (*Torrent, *float64, error) {
-	keys, err := c.meta.EpisodeKeys(ctx, workKey)
-	if err != nil {
-		return nil, nil, err
-	}
-	var best *meta.EpisodeKey
-	for i := range keys {
-		k := keys[i].Key
-		if k.Kind == meta.KeyMain && k.Number > 0 && keys[i].Files > 0 && (best == nil || k.Number > best.Number) {
-			best = &k
-		}
-	}
-	if best == nil {
-		return nil, nil, nil
-	}
-	files, err := c.meta.EpisodeFiles(ctx, workKey, *best)
-	if err != nil || len(files) == 0 {
-		return nil, nil, err
-	}
-	cs := make([]rank.Candidate, len(files))
-	for i, f := range files {
-		cs[i] = rank.Candidate{Name: f.Title + " " + f.Path, Size: f.Size, PublishedAt: f.PublishedAt, Allowed: f.Trusted}
-	}
-	pick := files[rank.Order(cs, maxBytes)[0]]
-	rec, err := c.meta.CatalogByHash(ctx, pick.Infohash)
-	if err != nil || rec == nil {
-		return nil, nil, err
-	}
-	ep := best.Number
-	return FromCatalog(rec), &ep, nil
-}
-
-// RefreshLatest recomputes the latest torrents of the current schedule (called by the
+// RefreshLatest recomputes the latest episodes of the current schedule (called by the
 // crawler after it ingested new torrents).
 func (c *Catalog) RefreshLatest(ctx context.Context) {
 	c.rebuildMu.Lock()
@@ -221,7 +190,7 @@ func (c *Catalog) RefreshLatest(ctx context.Context) {
 		return
 	}
 	items := cloneItems(prev.Items)
-	c.fillLatest(ctx, items, int64(c.st.Num(store.KeyMaxAutoSize))<<20)
+	c.fillLatest(ctx, items)
 	c.publishSchedule(time.Now(), items)
 }
 

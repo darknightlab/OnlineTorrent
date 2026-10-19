@@ -198,7 +198,8 @@ function episodeList(a: Subject): EpisodeListItem[] {
 /** 条目的全部种子：最新一集 + 往期 + 标题相关 */
 function subjectTorrents(a: Subject): Torrent[] {
   const name = (a.title_cn || a.title).slice(0, 4)
-  const own = [...(a.latest_torrent ? [a.latest_torrent] : []), ...(pastEpisodes.get(a.key) ?? [])]
+  const lt = (a as Partial<fx.MockSubject>).latest_torrent
+  const own = [...(lt ? [lt] : []), ...(pastEpisodes.get(a.key) ?? [])]
   const related = torrents.filter((t) => t.title.includes(name) && !own.includes(t))
   return [...own, ...related]
 }

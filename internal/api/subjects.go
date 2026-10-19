@@ -65,14 +65,6 @@ func (s *Server) subjectCard(r *http.Request, work *meta.Work, detail bool) subj
 	if item == nil {
 		item = &catalog.ScheduleItem{Key: work.Key, SubjectID: work.ID, Title: work.Title, TitleCN: work.TitleCN, Cover: s.Cat.CoverFor(work)}
 	}
-	if t := item.LatestTorrent; t != nil {
-		lt := *t
-		if d, err := s.Policy.Decide(r.Context(), userOf(r), lt.Subject()); err == nil {
-			a := d.Access()
-			lt.Access = &a
-		}
-		item.LatestTorrent = &lt
-	}
 	out := subjectOut{ScheduleItem: item, Summary: work.Summary, Type: work.Type, Official: work.Official, External: work.External,
 		Tags: work.Tags, MetaTags: work.MetaTags, NSFW: work.NSFW, Score: work.Score, Rank: work.Rank, Eps: work.Eps}
 	if out.Tags == nil {
