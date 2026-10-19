@@ -133,12 +133,36 @@ export function fileKind(name: string): FileKind {
 
 export const isPlayable = (k: FileKind) => k === "video" || k === "audio" || k === "image"
 
-/** 浏览器大概率无法原生解码的文件 */
+/** 浏览器是否声明能解码某种编码（canPlayType 返回 "probably"/"maybe" 视为支持；无 DOM 时视为支持） */
+function canDecode(type: string): boolean {
+  if (typeof document === "undefined") return true
+  try {
+    return document.createElement("video").canPlayType(type) !== ""
+  } catch {
+    return true
+  }
+}
+
+/**
+ * 当前浏览器确实无法原生解码的文件：先按文件名猜编码，再用浏览器自己的 canPlayType 确认，
+ * 只有浏览器明确不支持时才返回（现代 Chrome / Edge / Safari 大多能硬解 HEVC、10bit，不再误报）。
+ */
 export function likelyUnsupported(name: string): string | null {
   const n = name.toLowerCase()
-  if (/\b(hevc|x265|h\.?265)\b/.test(n)) return "HEVC/H.265"
-  if (/\b(e?ac-?3|dts|truehd|flac)\b/.test(n) && extOf(n) === "mkv") return "AC3/DTS/FLAC 音轨"
-  if (/\b10-?bit\b|\bhi10p?\b/.test(n)) return "10bit"
+  // 容器本身浏览器就不支持
   if (["avi", "flv", "ts", "m2ts"].includes(extOf(n))) return extOf(n).toUpperCase()
+  if (/\b(hevc|x265|h\.?265)\b/.test(n)) {
+    const tenBit = /\b10-?bit\b|\bma10p?\b|\bhi10p?\b|main ?10/.test(n)
+    // hvc1.2 = Main 10 profile；hvc1.1 = Main
+    if (!canDecode(tenBit ? 'video/mp4; codecs="hvc1.2.4.L120.B0"' : 'video/mp4; codecs="hvc1.1.6.L120.B0"')) return tenBit ? "HEVC 10bit" : "HEVC/H.265"
+  } else if (/\b10-?bit\b|\bhi10p?\b/.test(n)) {
+    // H.264 High 10：几乎没有浏览器能解码
+    if (!canDecode('video/mp4; codecs="avc1.6E0028"')) return "H.264 10bit"
+  }
+  if (extOf(n) === "mkv") {
+    if (/\b(e?ac-?3)\b/.test(n) && !canDecode('audio/mp4; codecs="ac-3"')) return "AC3 音轨"
+    if (/\b(dts|truehd)\b/.test(n)) return "DTS/TrueHD 音轨"
+    if (/\bflac\b/.test(n) && !canDecode('audio/mp4; codecs="flac"')) return "FLAC 音轨"
+  }
   return null
 }
