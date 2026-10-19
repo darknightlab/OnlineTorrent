@@ -14,11 +14,17 @@ import {
   checkTorrentPrototype,
   checkWire,
   installReaders,
+  installEdgeFetch,
   installWireFix,
+  setEdgeToken,
+  patchWebSeed,
   type PieceCtor,
+  type WebSeedHandle,
   type TorrentLike,
 } from "./store/internals"
 import { infoHashFromMagnet } from "./store/policy"
+import { applyRanges, bitsFromRanges, countPieces, resetToRanges } from "@/lib/webseed"
+import type { WebSeedAvail, WebSeedUpdate } from "./types"
 
 const SW_URL = "/sw.min.js"
 /** 首尾 piece 的优先级（与旧版一致），便于尽快拿到 moov/时长信息 */
@@ -40,6 +46,8 @@ let streamPromise: Promise<boolean> | null = null
 
 async function getClient(iceServers: RTCIceServer[]) {
   if (!clientPromise) {
+    // webtorrent 的浏览器包加载时就取走 self.fetch：先装上边缘节点令牌注入（见 internals.ts）
+    installEdgeFetch()
     clientPromise = import("webtorrent/dist/webtorrent.min.js").then(({ default: WebTorrent }) => {
       const client = new WebTorrent({ tracker: { rtcConfig: { iceServers } } })
       client.on("error", (e) => console.error("[webtorrent]", e))
@@ -261,13 +269,8 @@ class WTSession implements Session {
       t.on("infoHash", () => {
         if (ih && t.infoHash !== ih) this.log("error", `服务器返回的种子文件与磁力不符（${t.infoHash}）`)
       })
-      for (const url of this.webseeds) {
-        try {
-          t.addWebSeed(url)
-        } catch {
-          /* ignore */
-        }
-      }
+      // 元数据到了以后 webseed 才会被 patch（attachWebSeed 需要种子已有 _peers）
+      for (const [url, e] of this.webseeds) this.attachWebSeed(t, url, e)
       return true
     } finally {
       this.swapping = false
@@ -391,23 +394,78 @@ class WTSession implements Session {
     return this.blobURL
   }
 
-  private webseeds = new Set<string>()
+  /** WebSeed → 服务器可提供的分块（null = 全部，旧协议 / 文件已完整） */
+  private webseeds = new Map<string, { bits: Uint8Array | null; pieces: number; handle: WebSeedHandle | null }>()
 
-  addWebSeed(url: string) {
+  addWebSeed(url: string, avail?: WebSeedAvail) {
     if (this.destroyed || this.webseeds.has(url)) return false
-    this.webseeds.add(url)
+    const n = this.torrent?.pieces?.length ?? 0
+    let bits: Uint8Array | null = null
+    let pieces = 0
+    if (avail?.pieces && avail.have && !avail.complete) {
+      if (n && avail.pieces !== n) {
+        this.log("warn", `WebSeed 分块数与种子不符（${avail.pieces} ≠ ${n}），不启用`)
+        return false
+      }
+      pieces = avail.pieces
+      bits = bitsFromRanges(pieces, avail.have)
+    }
+    const e = { bits, pieces, handle: null as WebSeedHandle | null }
+    this.webseeds.set(url, e)
+    if (avail?.token) setEdgeToken(url, avail.token)
+    return this.attachWebSeed(this.torrent, url, e)
+  }
+
+  setWebSeedToken(url: string, token: string) {
+    if (!this.destroyed && this.webseeds.has(url)) setEdgeToken(url, token)
+  }
+
+  private attachWebSeed(t: WTTorrent, url: string, e: { bits: Uint8Array | null; handle: WebSeedHandle | null }) {
     try {
-      this.torrent.addWebSeed(url)
-      return true
-    } catch (e) {
-      this.log("warn", `WebSeed 添加失败：${String(e)}`)
+      t.addWebSeed(url)
+    } catch (err) {
+      this.log("warn", `WebSeed 添加失败：${String(err)}`)
       return false
     }
+    if (!e.bits) return true
+    try {
+      // 只宣告服务器已有的分块（qB 还在下载时），之后由 updateWebSeed 增减
+      e.handle = patchWebSeed(t as unknown as TorrentLike, url, e.bits)
+    } catch (err) {
+      if (err instanceof IncompatibleError) this.setFatal(err.message)
+      else this.log("warn", `WebSeed 分块宣告失败：${String(err)}`)
+      return false
+    }
+    return true
+  }
+
+  updateWebSeed(url: string, ev: WebSeedUpdate) {
+    const e = this.webseeds.get(url)
+    if (!e) return
+    if (ev.complete) {
+      if (!e.bits) return
+      ev = { reset: [0, e.pieces - 1] }
+    }
+    if (!e.bits) return // 已宣告全部
+    if (ev.reset) {
+      const { added, removed } = resetToRanges(e.bits, e.pieces, ev.reset)
+      e.handle?.add(added)
+      e.handle?.remove(removed)
+    }
+    if (ev.have) e.handle?.add(applyRanges(e.bits, e.pieces, ev.have, true))
+    if (ev.lost) e.handle?.remove(applyRanges(e.bits, e.pieces, ev.lost, false))
+  }
+
+  webSeedPieces(url: string) {
+    const e = this.webseeds.get(url)
+    if (!e) return null
+    return e.bits ? { have: countPieces(e.bits, e.pieces), of: e.pieces } : { have: this.torrent?.pieces?.length ?? 0, of: this.torrent?.pieces?.length ?? 0 }
   }
 
   destroy() {
     if (this.destroyed) return
     this.destroyed = true
+    for (const url of this.webseeds.keys()) setEdgeToken(url, null)
     this.listeners.metadata.clear()
     this.listeners.log.clear()
     this.listeners.fatal.clear()

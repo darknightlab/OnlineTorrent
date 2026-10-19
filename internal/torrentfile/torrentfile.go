@@ -120,6 +120,9 @@ func (d *bdecoder) value(top bool) (any, error) {
 type TorrentFile struct {
 	Path string
 	Size int64
+	// Pad: BEP 47 padding file (attr contains "p"). Kept in Files so offsets and indexes
+	// match WebTorrent / libtorrent; its content is all zeros.
+	Pad bool
 }
 
 // Metainfo is the parsed part of a .torrent we use.
@@ -131,6 +134,9 @@ type Metainfo struct {
 	// Announce: the torrent's own trackers (announce-list tiers flattened in order, else
 	// announce), deduplicated, at most maxAnnounce valid-looking URLs.
 	Announce []string
+	// PieceLength and Pieces (concatenated 20-byte SHA-1 hashes) of the v1 info dict.
+	PieceLength int64
+	Pieces      []byte
 }
 
 const maxAnnounce = 50
@@ -201,6 +207,10 @@ func ParseTorrent(b []byte) (*Metainfo, error) {
 	}
 	sum := sha1.Sum(b[d.infoStart:d.infoEnd])
 	m := &Metainfo{Infohash: hex.EncodeToString(sum[:]), Announce: announceList(root)}
+	m.PieceLength, _ = info["piece length"].(int64)
+	if pcs, _ := info["pieces"].([]byte); len(pcs)%20 == 0 {
+		m.Pieces = pcs
+	}
 	m.Name = str(info, "name.utf-8")
 	if m.Name == "" {
 		m.Name = str(info, "name")
@@ -231,7 +241,8 @@ func ParseTorrent(b []byte) (*Metainfo, error) {
 			if m.Name != "" {
 				p = cleanSeg(m.Name) + "/" + p // qB / WebTorrent file paths include the torrent name
 			}
-			m.Files = append(m.Files, TorrentFile{Path: p, Size: size})
+			attr, _ := f["attr"].([]byte)
+			m.Files = append(m.Files, TorrentFile{Path: p, Size: size, Pad: strings.ContainsRune(string(attr), 'p')})
 			m.Size += size
 		}
 	} else {

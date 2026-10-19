@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/darknightlab/onlinetorrent/internal/edge"
 	"github.com/darknightlab/onlinetorrent/internal/httpx"
 	"github.com/darknightlab/onlinetorrent/internal/policy"
 	"github.com/darknightlab/onlinetorrent/internal/qb"
@@ -27,6 +28,9 @@ func (s *Server) adminRoutes(mux *http.ServeMux) {
 	adm("PUT", "/api/v1/admin/qb-servers/id/{id}", "qB 服务器 · 修改", s.adminSaveQB)
 	adm("DELETE", "/api/v1/admin/qb-servers/id/{id}", "qB 服务器 · 删除", s.adminDeleteQB)
 	adm("POST", "/api/v1/admin/qb-servers/id/{id}/test", "qB 服务器 · 新建/操作", s.adminTestQB)
+	adm("POST", "/api/v1/admin/qb-servers/id/{id}/edge-token", "qB 服务器 · 边缘节点令牌", s.adminEdgeToken)
+	adm("DELETE", "/api/v1/admin/qb-servers/id/{id}/edge-token", "qB 服务器 · 边缘节点令牌", s.adminEdgeUnbind)
+	adm("POST", "/api/v1/admin/edge/rotate-key", "qB 服务器 · 边缘节点令牌", s.adminRotateEdgeKey)
 	adm("GET", "/api/v1/admin/sources", "抓取源 · 查看", s.adminListSources)
 	adm("GET", "/api/v1/admin/sources/schema", "抓取源 · 查看", s.adminSourceSchema)
 	adm("POST", "/api/v1/admin/sources", "抓取源 · 新建/操作", s.adminCreateSource)
@@ -127,8 +131,10 @@ func (s *Server) adminPutSettings(w http.ResponseWriter, r *http.Request) error 
 type qbView struct {
 	store.QBServer
 	qb.Status
-	HasPass   bool `json:"has_password"`
-	HasAPIKey bool `json:"has_api_key"`
+	HasPass   bool        `json:"has_password"`
+	HasAPIKey bool        `json:"has_api_key"`
+	EdgeBound bool        `json:"edge_bound"`
+	Edge      edge.Status `json:"edge"`
 }
 
 func (s *Server) qbViews(r *http.Request) ([]qbView, error) {
@@ -138,8 +144,11 @@ func (s *Server) qbViews(r *http.Request) ([]qbView, error) {
 	}
 	out := []qbView{}
 	for _, c := range cfgs {
-		v := qbView{QBServer: c, HasPass: c.Password != "", HasAPIKey: c.APIKey != ""}
+		v := qbView{QBServer: c, HasPass: c.Password != "", HasAPIKey: c.APIKey != "", EdgeBound: c.EdgeBound()}
 		v.Password, v.APIKey = "", ""
+		if v.EdgeBound {
+			v.Edge = s.edgeStatus(r.Context(), c.ID)
+		}
 		if sv := s.Pool.Get(c.ID); sv != nil {
 			v.Status = sv.Status()
 		}

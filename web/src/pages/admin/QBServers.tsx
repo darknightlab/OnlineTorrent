@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Loader2, Pencil, Plus, Plug, Trash2 } from "lucide-react"
+import { KeyRound, Loader2, Pencil, Plus, Plug, RadioTower, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog"
 import { Field, Input } from "@/components/ui/input"
@@ -9,10 +9,10 @@ import { toast } from "@/components/ui/toast"
 import { errorMessage } from "@/components/states"
 import { api, toList } from "@/lib/api"
 import type { QBServer, QBServerInput } from "@/lib/types"
-import { timeAgo } from "@/lib/format"
+import { formatBytes, timeAgo } from "@/lib/format"
 import { AdminHeader, DataView, Mono, StatusDot, type Column } from "./components"
 
-const EMPTY: QBServerInput = { name: "", url: "", username: "", password: "", api_key: "", category: "projectk", enabled: true, seeding_time_limit_min: 1440, ratio_limit: -2, max_active: 0, add_wss_trackers: true }
+const EMPTY: QBServerInput = { name: "", url: "", username: "", password: "", api_key: "", category: "projectk", enabled: true, seeding_time_limit_min: 1440, ratio_limit: -2, max_active: 0, add_wss_trackers: true, edge_url: "", edge_api: false }
 const KEY = ["admin", "qb"]
 
 export default function QBServers() {
@@ -20,6 +20,7 @@ export default function QBServers() {
   const q = useQuery({ queryKey: KEY, queryFn: api.admin.qbServers })
   const [editing, setEditing] = useState<QBServer | "new" | null>(null)
   const [testing, setTesting] = useState<number | null>(null)
+  const [edgeOf, setEdgeOf] = useState<QBServer | null>(null)
   const invalidate = () => qc.invalidateQueries({ queryKey: KEY })
 
   const toggle = useMutation({
@@ -76,6 +77,11 @@ export default function QBServers() {
         </div>
       ),
     },
+    {
+      key: "edge",
+      header: "边缘节点",
+      cell: (s) => <EdgeCell s={s} />,
+    },
     { key: "limits", header: "做种限制", cell: (s) => <span className="text-xs tabular-nums text-muted-foreground">{s.seeding_time_limit_min} 分 · 比率 {s.ratio_limit} · 并发 {s.max_active}{s.add_wss_trackers ? " · 补 wss" : ""}</span> },
     { key: "enabled", header: "启用", cell: (s) => <Switch checked={s.enabled} onCheckedChange={() => toggle.mutate(s)} aria-label={`启用 ${s.name}`} /> },
   ]
@@ -106,6 +112,9 @@ export default function QBServers() {
               {testing === s.id ? <Loader2 className="animate-spin" /> : <Plug />}
               测试
             </Button>
+            <Button variant="ghost" size="icon-sm" aria-label={`${s.name} 的边缘节点`} title="边缘节点" onClick={() => setEdgeOf(s)}>
+              <RadioTower />
+            </Button>
             <Button variant="ghost" size="icon-sm" aria-label={`编辑 ${s.name}`} onClick={() => setEditing(s)}>
               <Pencil />
             </Button>
@@ -122,7 +131,116 @@ export default function QBServers() {
         )}
       />
       {editing && <QBDialog server={editing === "new" ? null : editing} onClose={() => setEditing(null)} onSaved={invalidate} />}
+      {edgeOf && <EdgeDialog server={edgeOf} onClose={() => setEdgeOf(null)} onChanged={invalidate} />}
     </div>
+  )
+}
+
+function EdgeCell({ s }: { s: QBServer }) {
+  if (!s.edge_bound) return <span className="text-xs text-muted-foreground">未绑定</span>
+  const e = s.edge
+  if (!e?.connected) return <span className="text-xs text-destructive-text">未连接{s.edge_api ? "（qB API 不可用）" : ""}</span>
+  return (
+    <div className="max-w-64 text-xs">
+      <span className="text-primary-text">已连接</span>
+      <span className="text-muted-foreground">
+        {e.rtt_ms ? ` · ${Math.round(e.rtt_ms)} ms` : ""} · 已提供 {formatBytes(e.bytes_served)}
+      </span>
+      <p className="text-[11px] text-muted-foreground">
+        {e.since && `连接于 ${timeAgo(e.since)}`}
+        {e.version && ` · ${e.version}`}
+        {e.host && ` · ${e.host}`}
+      </p>
+      {!s.edge_url && <p className="text-[11px] text-destructive-text">未设置公开地址，浏览器不会使用它</p>}
+    </div>
+  )
+}
+
+function EdgeDialog({ server, onClose, onChanged }: { server: QBServer; onClose: () => void; onChanged: () => void }) {
+  const [issued, setIssued] = useState<{ token: string; connect_url: string } | null>(null)
+  const gen = useMutation({
+    mutationFn: () => api.admin.edgeToken(server.id),
+    onSuccess: (r) => {
+      setIssued(r)
+      onChanged()
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  })
+  const unbind = useMutation({
+    mutationFn: () => api.admin.edgeUnbind(server.id),
+    onSuccess: () => {
+      toast.success("已解除绑定，边缘节点已断开")
+      onChanged()
+      onClose()
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  })
+  const rotate = useMutation({
+    mutationFn: () => api.admin.rotateEdgeKey(),
+    onSuccess: () => toast.success("已更换签名密钥（旧密钥签发的访问令牌在过期前仍有效）"),
+    onError: (e) => toast.error(errorMessage(e)),
+  })
+  const e = server.edge
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent
+        title={`${server.name} · 边缘节点`}
+        description="边缘节点（otd edge）运行在 qB 所在主机上，直接读取 qB 的下载目录，向浏览器提供 WebSeed（含未下完文件中已校验的分块）；它主动连接本站，不需要开放入站端口给本站。"
+      >
+        <div className="grid gap-3 text-sm">
+          <div className="rounded-md border px-3 py-2.5">
+            {!server.edge_bound ? (
+              <span className="text-muted-foreground">尚未生成令牌</span>
+            ) : e?.connected ? (
+              <div className="grid gap-0.5">
+                <span className="text-primary-text">已连接{e.since && `（${timeAgo(e.since)}）`}</span>
+                <span className="text-xs text-muted-foreground">
+                  版本 {e.version || "-"} · 主机 {e.host || "-"} · 来源 {e.remote || "-"} · 延迟 {e.rtt_ms ? `${Math.round(e.rtt_ms)} ms` : "-"}
+                </span>
+                <span className="text-xs text-muted-foreground">
+                  已提供 {formatBytes(e.bytes_served)} · {e.requests} 次请求 · 监听 {e.listen || "-"}
+                  {e.stats_error && ` · 统计不可用：${e.stats_error}`}
+                </span>
+              </div>
+            ) : (
+              <span className="text-destructive-text">已生成令牌，边缘节点未连接</span>
+            )}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            公开地址：{server.edge_url ? <Mono>{server.edge_url}</Mono> : "未设置（在「编辑」中填写，否则浏览器不会使用该边缘节点）"}
+            {server.edge_api && " · qB API 经边缘节点访问"}
+          </p>
+          {issued && (
+            <div className="grid gap-2 rounded-md border border-primary/40 bg-primary/5 p-3">
+              <p className="text-xs">令牌只显示这一次，请写入边缘节点的环境变量（旧令牌已失效）：</p>
+              <Field label="OTD_EDGE_TOKEN" htmlFor="edge-tok">
+                <Input id="edge-tok" readOnly value={issued.token} className="font-mono text-xs" onFocus={(ev) => ev.currentTarget.select()} />
+              </Field>
+              <Field label="OTD_MAIN" htmlFor="edge-main">
+                <Input id="edge-main" readOnly value={issued.connect_url} className="font-mono text-xs" onFocus={(ev) => ev.currentTarget.select()} />
+              </Field>
+            </div>
+          )}
+          <DialogFooter className="mt-1 flex-wrap">
+            <Button variant="ghost" onClick={() => confirm("更换所有边缘节点共用的访问令牌签名密钥？") && rotate.mutate()} disabled={rotate.isPending}>
+              更换签名密钥
+            </Button>
+            {server.edge_bound && (
+              <Button variant="outline" className="text-destructive-text" onClick={() => confirm("解除绑定？边缘节点将断开且无法重连。") && unbind.mutate()} disabled={unbind.isPending}>
+                解除绑定
+              </Button>
+            )}
+            <Button
+              onClick={() => (!server.edge_bound || confirm("重新生成令牌？当前边缘节点会断开，需要换上新令牌。")) && gen.mutate()}
+              disabled={gen.isPending}
+            >
+              {gen.isPending ? <Loader2 className="animate-spin" /> : <KeyRound />}
+              {server.edge_bound ? "重新生成令牌" : "生成令牌"}
+            </Button>
+          </DialogFooter>
+        </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -185,6 +303,16 @@ function QBDialog({ server, onClose, onSaved }: { server: QBServer | null; onClo
               <Input id="qb-max" type="number" min={0} value={f.max_active} onChange={set("max_active")} />
             </Field>
           </div>
+          <Field label="边缘节点公开地址" htmlFor="qb-edge-url" hint="可选。该服务器的边缘节点经 Cloudflare 对外的地址，浏览器直接从这里获取 WebSeed">
+            <Input id="qb-edge-url" type="url" value={f.edge_url} onChange={set("edge_url")} placeholder="https://edge-ams.projectk.org" />
+          </Field>
+          <label className="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5 text-sm">
+            <span>
+              qB API 经边缘节点访问
+              <span className="block text-xs text-muted-foreground">开启后不再直连上面的 WebUI 地址（qB 不必对外开放）；边缘节点断开时该服务器离线</span>
+            </span>
+            <Switch checked={f.edge_api} onCheckedChange={(v) => setF((s) => ({ ...s, edge_api: v }))} aria-label="qB API 经边缘节点访问" />
+          </label>
           <label className="flex items-center justify-between gap-3 rounded-md border px-3 py-2.5 text-sm">
             <span>
               添加后补 wss tracker

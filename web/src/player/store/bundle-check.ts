@@ -2,7 +2,29 @@
 // 用于 webtorrent-compat.test.ts（prebuild / npm test）与 scripts/check-built-webtorrent.ts（postbuild）。
 // 除源码层面的检查外，尽量做行为检查：用假 wire 驱动 _onWireWithMetadata，看 HAVE_ALL 与 'request' 处理的实际表现。
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { checkBundleSource, checkPieceCtor, checkTorrentMetadata, checkTorrentPrototype, checkWire, installWireFix } from "./internals.ts"
+import { checkBundleSource, checkPieceCtor, checkTorrentMetadata, checkTorrentPrototype, checkWire, installEdgeFetch, installWireFix, patchWebSeed, setEdgeToken } from "./internals.ts"
+
+/** fetch calls seen by the recorder (installFetchRecorder) */
+export interface FetchRecord {
+  url: string
+  auth: string | null
+}
+
+/**
+ * Must run BEFORE the webtorrent bundle is imported (it captures self.fetch at load):
+ * replaces fetch with a recorder (answers 503) wrapped by installEdgeFetch, like the engine does.
+ */
+export function installFetchRecorder(): FetchRecord[] {
+  const log: FetchRecord[] = []
+  const g = globalThis as unknown as { fetch: typeof fetch }
+  g.fetch = (async (input: Request | string | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url
+    log.push({ url, auth: new Headers(init?.headers).get("authorization") })
+    return new Response("not here", { status: 503 })
+  }) as typeof fetch
+  installEdgeFetch(g)
+  return log
+}
 
 class Mem {
   chunkLength: number
@@ -62,7 +84,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
  * 加载好的 WebTorrent 构造器 + 包源码 → 不兼容项列表（空 = 兼容）。
  * node 里运行浏览器包需要 globalThis.self 与 Uint8Array.prototype.toBase64（node ≥ 25）。
  */
-export async function checkWebTorrentBundle(WebTorrent: any, code: string, label: string): Promise<string[]> {
+export async function checkWebTorrentBundle(WebTorrent: any, code: string, label: string, fetchLog?: FetchRecord[]): Promise<string[]> {
   const p: string[] = []
   const add = (where: string, list: string[]) => list.forEach((x) => p.push(`[${label} ${where}] ${x}`))
   add("源码", checkBundleSource(code))
@@ -130,6 +152,72 @@ export async function checkWebTorrentBundle(WebTorrent: any, code: string, label
       "webseed wire",
     )
     add("Wire", checkWire(wire))
+
+    // 行为 4：WebSeed 只宣告服务器有的分块（patchWebSeed），之后 HAVE / lt_donthave 增减
+    const url2 = "http://127.0.0.1:9/patched/"
+    t.addWebSeed(url2)
+    const n = t.pieces.length
+    const bits = new Uint8Array(Math.ceil(n / 8))
+    bits[0] = 0b11000000 // pieces 0, 1
+    let handle: ReturnType<typeof patchWebSeed> | null = null
+    try {
+      handle = patchWebSeed(t, url2, bits)
+    } catch (e) {
+      p.push(`[${label} WebSeed] ${String((e as Error).message)}`)
+    }
+    if (handle) {
+      const tw = () => t._peers.get(url2)?.wire
+      const pp = (i: number) => !!tw()?.peerPieces?.get(i)
+      const waitFor = async (cond: () => boolean, what: string) => {
+        for (let k = 0; k < 200; k++) {
+          if (cond()) return true
+          await sleep(10)
+        }
+        p.push(`[${label} 行为] WebSeed ${what}`)
+        return false
+      }
+      if (await waitFor(() => pp(0) && pp(1), "初始 bitfield 没有到达 torrent 一侧的 wire")) {
+        if (pp(2) || pp(n - 1)) p.push(`[${label} 行为] WebSeed 仍宣告了服务器没有的分块（bitfield 未被替换）`)
+        bits[0] |= 0b00100000
+        handle.add([2])
+        await waitFor(() => pp(2), "add() 之后 torrent 一侧没有收到 HAVE")
+        const conn = t._peers.get(url2).conn
+        await waitFor(() => !!conn.lt_donthave?._peerSupports, "lt_donthave 扩展握手没有完成")
+        bits[0] &= ~0b10000000
+        handle.remove([0])
+        await waitFor(() => !pp(0), "remove() 之后 torrent 一侧没有收到 lt_donthave")
+        // WebConn 请求失败后的重新宣告（have）只放行服务器仍有的分块
+        conn.have(0)
+        conn.have(1)
+        await sleep(50)
+        if (pp(0)) p.push(`[${label} 行为] WebSeed 重新宣告了服务器没有的分块`)
+      }
+    }
+
+    // 行为 5：边缘节点的 WebSeed 请求带 Authorization（installEdgeFetch 在 import 之前装好），其他地址不带
+    if (fetchLog) {
+      const edgeURL = `http://edge.test/webseed/hash/${t.infoHash}/`
+      setEdgeToken(edgeURL, "tok-1")
+      t.addWebSeed(edgeURL)
+      const all = new Uint8Array(Math.ceil(n / 8)).fill(255)
+      try {
+        patchWebSeed(t, edgeURL, all)
+      } catch (e) {
+        p.push(`[${label} WebSeed] ${String((e as Error).message)}`)
+      }
+      t.select(0, n - 1, 1)
+      let rec: FetchRecord | undefined
+      for (let k = 0; k < 300 && !rec; k++) {
+        rec = fetchLog.find((r) => r.url.startsWith(edgeURL))
+        if (!rec) await sleep(10)
+      }
+      if (!rec) p.push(`[${label} 行为] WebSeed 请求没有经过 self.fetch（加载时捕获的 fetch）`)
+      else if (rec.auth !== "Bearer tok-1") p.push(`[${label} 行为] 边缘节点 WebSeed 请求没有带上访问令牌（Authorization: ${rec.auth}）`)
+      const other = fetchLog.find((r) => !r.url.startsWith(edgeURL))
+      if (other?.auth) p.push(`[${label} 行为] 非边缘节点的请求也带上了 Authorization`)
+      t.deselect(0, n - 1)
+      setEdgeToken(edgeURL, null)
+    }
   } catch (e) {
     p.push(`[${label}] 检查失败：${String((e as Error)?.message ?? e)}`)
   } finally {

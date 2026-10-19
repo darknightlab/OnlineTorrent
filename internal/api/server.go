@@ -17,10 +17,12 @@ import (
 	"github.com/darknightlab/onlinetorrent/internal/catalog"
 	"github.com/darknightlab/onlinetorrent/internal/clef"
 	"github.com/darknightlab/onlinetorrent/internal/crawl"
+	"github.com/darknightlab/onlinetorrent/internal/edge"
 	"github.com/darknightlab/onlinetorrent/internal/httpx"
 	"github.com/darknightlab/onlinetorrent/internal/meta"
 	"github.com/darknightlab/onlinetorrent/internal/policy"
 	"github.com/darknightlab/onlinetorrent/internal/qb"
+	"github.com/darknightlab/onlinetorrent/internal/seedsrc"
 	"github.com/darknightlab/onlinetorrent/internal/store"
 	"github.com/darknightlab/onlinetorrent/internal/swarm"
 )
@@ -36,6 +38,7 @@ type Server struct {
 	Pool    *qb.Pool
 	Swarm   *swarm.Service // tracker health + swarm stats (may be nil)
 	Clef    *clef.Service  // decision model (may be nil)
+	Edges   *edge.Hub      // edge node connections (may be nil; see NewEdgeHub)
 	Policy  *policy.Engine
 	Log     *slog.Logger
 	WebFS   fs.FS // built SPA (may be nil in dev)
@@ -46,8 +49,21 @@ type Server struct {
 
 	sessions sync.Map // session token → sessEntry (30s cache; webseed requests are very frequent)
 	wsAllow  sync.Map // webseed policy decisions (role|ih|gen → wsAllowEntry)
-	xsCache  sync.Map // infohash → xsEntry: qB has the metadata (magnet xs= in /play)
-	xsCount  atomic.Uint64
+
+	// progressive webseed (webseed_progressive.go): seed sources (default: the qB pool;
+	// SeedSources overrides it, e.g. in tests) and piece layouts per infohash
+	SeedSources func() []seedsrc.Source
+	seedsOnce   sync.Once
+	seedSet     *seedsrc.Set
+	layouts     sync.Map // infohash → layoutEntry
+
+	// EdgeTokenTTL overrides the edge token lifetime setting (tests).
+	EdgeTokenTTL time.Duration
+	edgeKeysMu   sync.Mutex
+	edgeKeys     *edgeKeyRing // token-signing keys for edge nodes (edge.go)
+
+	xsCache sync.Map // infohash → xsEntry: qB has the metadata (magnet xs= in /play)
+	xsCount atomic.Uint64
 
 	sseMu sync.Mutex
 	sse   map[string]int // concurrent SSE streams per client
@@ -94,6 +110,10 @@ func (s *Server) Handler() http.Handler {
 	s.checked = map[string]uint64{}
 	mux := http.NewServeMux()
 	s.routes(mux)
+	if s.Edges != nil {
+		// edge nodes authenticate with their token (no session / route permission)
+		mux.Handle("GET /api/v1/edge/connect", s.Edges)
+	}
 	metaH := s.Meta.Handler(func(r *http.Request) (string, bool) {
 		u := userOf(r)
 		if u == nil || u.Role != store.RoleAdmin || !csrfOK(r) {
@@ -317,6 +337,10 @@ type sessEntry struct {
 // sessionUser resolves a session cookie, caching the result for 30s (a disabled user or
 // changed role takes effect within that window; logout drops the entry immediately).
 func (s *Server) sessionUser(r *http.Request, tok string) *store.User {
+	return s.sessionUserCtx(r.Context(), tok)
+}
+
+func (s *Server) sessionUserCtx(ctx context.Context, tok string) *store.User {
 	if v, ok := s.sessions.Load(tok); ok {
 		e := v.(sessEntry)
 		if time.Now().Before(e.exp) {
@@ -324,7 +348,7 @@ func (s *Server) sessionUser(r *http.Request, tok string) *store.User {
 		}
 		s.sessions.Delete(tok)
 	}
-	u, err := s.St.SessionUser(r.Context(), tok)
+	u, err := s.St.SessionUser(ctx, tok)
 	if err != nil {
 		return nil // invalid tokens are not cached (bounded memory)
 	}

@@ -75,6 +75,7 @@
 
 ## 已实现的补充（计划外）
 - **HTTP WebSeed**：实测欧洲 qB → 国内浏览器的 WebRTC 只有 ~50KB/s（高 RTT 下 SCTP 窗口受限）。利用 qB 5.3 的 `torrents/downloadFile`（支持 Range），由 otd 提供签名的 BEP19 webseed（`/webseed/{exp}.{sig}/{ih}/`），经 Cloudflare 实测 ~9MB/s。后台可设：开关、最低用户等级（默认会员，可作为大会员权益）、延迟秒数（先 P2P 再 HTTP）。只服务 qB 已完整下载的文件。
+- **WebSeed 边下边供 / 边缘节点（2026-10）**：qB 的 `torrents/downloadFile` 对未下完的文件一律返回 409（实测，qB 5.3.0beta1 / libtorrent 2.1.1）。曾尝试让 otd 以 BT 节点身份连 qB 读分块，热门种子受 qB 每种子连接上限 / 上传槽（choke）限制，已整体移除。现在的做法是**边缘节点**（`otd edge`，同一镜像）：跑在 qB 所在主机上，只读挂载 qB 的下载目录，直接向浏览器提供 WebSeed（含未完成文件 `.!qB` 中已校验的分块，整块 SHA-1 复核），经 Cloudflare 对外；它主动连本站的 WebSocket 隧道（`internal/tunnel`：多路复用、按流的窗口流控、大流量低优先级、25 s 心跳），隧道只走控制流量：qB WebUI 转发（`edge_api`，主站的 qB 客户端不变）、可用分块查询、公钥下发、状态统计——**数据不经主站**。鉴权用主站签发的短期 Ed25519 令牌（`internal/edgetoken`，按边缘节点 + 种子，不含用户身份），边缘节点离线验证。没有边缘节点的服务器照旧由主站代理完整文件。SSE 按 WebSeed 地址推送 `ready` / `seed` / `have` / `lost` / `complete` / `token` / `done`，浏览器按地址把 WebSeed 宣告的分块换成对应的 bitfield（webtorrent 内部接口，构建期 + 运行时兼容检查），并经 fetch 包装给边缘节点请求加令牌。前端订阅永不放弃（15 s → 5 min 退避）。代码：`internal/edge`（agent = 边缘节点，hub = 主站侧，disk = 读盘）、`internal/seedsrc`（`Source`：本站 `QB` / `Edge`）、`internal/api/edge.go`。详见 api.md「HTTP WebSeed」、deploy.md「边缘节点」。
 - **HTTP 元数据（磁力 `xs=`，2026-10）**：浏览器 WebTorrent 必须先从节点（ut_metadata）拿到元数据，WebSeed 和就绪推送也依赖它；校园网等对称 NAT / UDP 受限的用户与 qB 建不起 WebRTC 连接，页面停在「正在获取种子信息…」。现在服务器保存 .torrent 原文（映射库 `torrent_metainfo`，来源：抓取源 .torrent、qB `torrents/export`、bangumi.moe 按需下载），`GET /api/v1/torrents/hash/{ih}/torrent` 提供，play 返回的磁力带 `xs=` 指向它；未知磁力由前端在做种后轮询收录状态、拿到种子文件后重新添加。bangumi.moe：抓取只读 JSON，不预先下载 .torrent（每页 30+ 个，大多没人看），改为第一次被请求时按需下载并缓存。详见 api.md。
 - ~~时间表自动选种优先 AVC/H.264，HEVC/10bit 降权~~ → 2026-10 起改为前端按后台「推荐规则」打分（见下方「Tracker 管理 / 做种统计 / 推荐规则」）。
 - **浏览器分块缓存（2026-10）**：OPFS 每个 piece 一个文件（`ot-pieces/<ih>/<index>`，另存 meta.json 与 .torrent），预算 = min(`max_push_size_bytes`, 25% 配额)，QuotaExceededError 时收缩到已用的 90%。淘汰顺序：旧版 / 未知 OPFS 条目 → 不在播放的种子（整种 LRU）→ 播放中种子读位置之后最远的 piece → 读前窗口之外最远的 piece；读前窗口、首尾 piece、正在读写的 piece 不淘汰。替换 WebTorrent 的文件迭代器为窗口化读取（被淘汰的区间重读时按需重下），不发 HAVE_ALL + lt_donthave + 对缺失 piece 回 reject；离开播放页保留数据，再次打开用缓存的 .torrent 与启动 bitfield 秒开。多 tab 用 Web Locks，第二个 tab 用临时目录。依赖 WebTorrent 内部接口：`npm run build`/`npm test` 会跑 `src/player/store/webtorrent-compat.test.ts`，升级后不兼容直接构建失败；运行时检查不通过则播放器报错「播放器内核不兼容：…」（不回退）。端到端测试：`npm run e2e:chunkstore`。详见 research/chunk-store.md。
@@ -88,6 +89,10 @@
   - 待改进：tracker 状态只在内存（重启清空）；服务器缓存状态依赖 qB `torrents/info` 全量快照（1 分钟）；条目页 100 个种子首次打开要 scrape 100 个（单个 UDP 包 74 个，所以每个 tracker 2 个包）。
 
 ## TODO（低优先级）
+- **边缘节点 v2**：
+  - 浏览器 → 边缘节点目前经 Cloudflare；同一局域网 / 同运营商的用户可考虑直连（需证书与入站端口），按网络选择地址。
+  - 将来允许用户在家里运行边缘节点（为此令牌里没有用户身份）：不再给完整的 qB WebUI 转发，改为受限命令集（添加 / 删除本站分类的种子、查询状态）；节点主人的配额与允许列表（哪些种子、多少流量）；按节点记录可靠性（失败率、哈希校验失败次数 → 自动停用）；经隧道推送的令牌吊销列表（按 `sid` / 角色）。
+  - 分块读取的 LRU（同一分块被多个观众请求时只读盘、校验一次）。
 - 浏览器分块缓存按稀有度淘汰：同等距离下优先淘汰 swarm 里副本多的 piece（`_rarityMap` 作次级排序键，见 web/src/player/store/policy.ts `pickVictim`）
 - dandanplay 弹幕（需 AppId/Secret，用户暂无账号）
 - 番剧页按集分组（映射库已有文件级集数，前端目前是种子列表 + 字幕组筛选）

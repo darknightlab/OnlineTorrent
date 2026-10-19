@@ -354,3 +354,44 @@ func (c *Client) CreateCategory(ctx context.Context, name string) error {
 	}
 	return err
 }
+
+// PieceStates returns torrents/pieceStates: one entry per piece, 0 = not downloaded,
+// 1 = downloading, 2 = downloaded (verified). Empty while metadata is missing; unknown
+// hash → ErrNoTorrent.
+func (c *Client) PieceStates(ctx context.Context, hash string) ([]int, error) {
+	b, status, err := c.do(ctx, http.MethodGet, "torrents/pieceStates", url.Values{"hash": {hash}})
+	if status == http.StatusNotFound {
+		return nil, ErrNoTorrent
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []int
+	return out, json.Unmarshal(b, &out)
+}
+
+// Properties is a subset of torrents/properties.
+type Properties struct {
+	SavePath  string `json:"save_path"`
+	PieceSize int64  `json:"piece_size"`
+}
+
+// Properties returns torrents/properties (unknown hash → ErrNoTorrent).
+func (c *Client) Properties(ctx context.Context, hash string) (Properties, error) {
+	b, status, err := c.do(ctx, http.MethodGet, "torrents/properties", url.Values{"hash": {hash}})
+	if status == http.StatusNotFound {
+		return Properties{}, ErrNoTorrent
+	}
+	if err != nil {
+		return Properties{}, err
+	}
+	var p Properties
+	return p, json.Unmarshal(b, &p)
+}
+
+// NewClientTransport is NewClient with a custom transport (e.g. through an edge node).
+func NewClientTransport(base, user, pass, apiKey string, rt http.RoundTripper) *Client {
+	c := NewClient(base, user, pass, apiKey)
+	c.hc.Transport, c.hcStream.Transport = rt, rt
+	return c
+}

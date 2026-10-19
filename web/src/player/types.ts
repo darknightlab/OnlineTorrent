@@ -54,8 +54,17 @@ export interface Session {
   /** Service Worker 流式 URL；不可用时为 null */
   fileURL(fileIndex: number): string | null
   torrentFileURL(): string | null
-  /** 加入 HTTP WebSeed；同一 URL 只加一次，返回是否为新加入 */
-  addWebSeed(url: string): boolean
+  /**
+   * 加入 HTTP WebSeed；同一 URL 只加一次，返回是否为新加入。
+   * avail：服务器可提供的分块（qB 还在下载时）；省略 = 全部
+   */
+  addWebSeed(url: string, avail?: WebSeedAvail): boolean
+  /** 服务器可提供的分块变化（SSE have / lost / complete；重连后 reset） */
+  updateWebSeed?(url: string, ev: WebSeedUpdate): void
+  /** 换上边缘节点的新访问令牌（SSE token 事件；URL 不变） */
+  setWebSeedToken?(url: string, token: string): void
+  /** WebSeed 已宣告的分块数（日志用） */
+  webSeedPieces?(url: string): { have: number; of: number } | null
   /**
    * 元数据尚未获取时，改用服务器提供的 .torrent（GET /torrents/hash/{ih}/torrent）。
    * 返回是否已采用；已有元数据时不做任何事。mock 引擎不实现。
@@ -69,6 +78,23 @@ export interface Session {
   fatalError?(): string | null
   on<K extends keyof SessionEvents>(ev: K, cb: SessionEvents[K]): () => void
   destroy(): void
+}
+
+/** 分块区间：闭区间 [start, end] 依次展开 */
+export interface WebSeedAvail {
+  pieces: number | null
+  have: number[] | null
+  complete?: boolean
+  /** 边缘节点的访问令牌：对该 URL 的请求加 Authorization: Bearer（主站自己的 URL 没有） */
+  token?: string
+}
+
+export interface WebSeedUpdate {
+  have?: number[]
+  lost?: number[]
+  /** 与之完全一致（重连后服务器重发的 ready） */
+  reset?: number[]
+  complete?: boolean
 }
 
 export interface StartOptions {

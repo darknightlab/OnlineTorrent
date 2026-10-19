@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,7 +24,10 @@ import (
 // The URL is fixed (no signature / expiry). Every request is authorised with the login cookie
 // (same origin, so webtorrent's fetches carry it): the route permission
 // "GET /webseed/hash/{ih}/" (admin-editable, default members) plus the per-torrent policy.
-// Only files a qB server has fully downloaded are served; responses are not cacheable.
+// This URL serves complete files of qB servers without an edge node (torrents/downloadFile;
+// 503 + Retry-After when no such server has every piece of the range). Servers with an edge
+// node are served by the edge itself at its own URL (edge.go, webseed_progressive.go).
+// Responses are not cacheable.
 
 // webseedURLs returns the webseed URL for a torrent, or nil if webseeds are disabled.
 func (s *Server) webseedURLs(r *http.Request, ih string) []string {
@@ -47,7 +51,11 @@ func (s *Server) siteBase(r *http.Request) string {
 // many range requests per second and the decision only changes when admins edit rules.
 // Also used by GET /torrents/hash/{ih}/torrent (same per-torrent policy as playback).
 func (s *Server) webseedAllowed(r *http.Request, ih string) (bool, error) {
-	u := userOf(r)
+	return s.webseedAllowedFor(r.Context(), userOf(r), ih)
+}
+
+// webseedAllowedFor is webseedAllowed for a given user (edge nodes ask on behalf of a session).
+func (s *Server) webseedAllowedFor(ctx context.Context, u *store.User, ih string) (bool, error) {
 	key := roleOf(u) + "|" + ih + "|" + strconv.FormatUint(s.Policy.Generation(), 10)
 	if v, ok := s.wsAllow.Load(key); ok {
 		e := v.(wsAllowEntry)
@@ -56,11 +64,11 @@ func (s *Server) webseedAllowed(r *http.Request, ih string) (bool, error) {
 		}
 	}
 	// nothing without known metadata; then policy + content scope (playDecision)
-	sub, _, known := s.catalogSubject(r.Context(), ih)
+	sub, _, known := s.catalogSubject(ctx, ih)
 	d := policy.Decision{}
 	if known {
 		var err error
-		if d, err = s.playDecision(r.Context(), u, sub); err != nil {
+		if d, err = s.playDecision(ctx, u, sub); err != nil {
 			return false, err
 		}
 	}
@@ -93,6 +101,10 @@ func (s *Server) serveWebseed(w http.ResponseWriter, r *http.Request) error {
 	if !allowed {
 		return fail(http.StatusForbidden, "forbidden")
 	}
+	if s.serveWebseedProgressive(w, r, ih) {
+		return nil
+	}
+	// no .torrent layout available: whole-file lookup by name (complete files only)
 	srv, f, found := s.Pool.FindFile(r.Context(), ih, r.PathValue("path"))
 	if !found {
 		return fail(http.StatusNotFound, "file not available on any seed server yet")
@@ -119,14 +131,16 @@ func (s *Server) serveWebseed(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
-// webseedEvents streams Server-Sent Events until the requested file is fully available on a
-// seed server (then sends `ready` with freshly signed webseed URLs). This replaces client-side
-// probing, which made webtorrent hammer 404s while qB was still downloading.
+// webseedEvents streams Server-Sent Events about webseed availability (replaces client-side
+// probing, which made webtorrent hammer errors while qB was still downloading).
 //
 //	GET /api/v1/torrents/hash/{ih}/webseed/events[/file/{idx}]
 //
-// Events: waiting {progress} (on change), ready {webseeds}, unavailable {reason}, timeout {}.
-// A comment heartbeat is sent every 25s (Cloudflare closes idle streams after ~100s).
+// Events: waiting {progress} (no seed server has the metadata yet), ready {webseeds, pieces,
+// have, complete} (as soon as one has), have {ranges} / lost {ranges} (servable pieces
+// changed, ≤ 1/s), complete {} (end), unavailable {reason}. There is no overall deadline; a
+// comment heartbeat is sent every 25s (Cloudflare closes idle streams after ~100s).
+// See webseedStream.
 func (s *Server) webseedEvents(w http.ResponseWriter, r *http.Request) error {
 	if _, _, err := s.recordedSubject(r); err != nil {
 		return err
@@ -159,6 +173,10 @@ func (s *Server) webseedEvents(w http.ResponseWriter, r *http.Request) error {
 		}
 		return rc.Flush() == nil
 	}
+	ping := func() bool {
+		_, err := io.WriteString(w, ": ping\n\n")
+		return err == nil && rc.Flush() == nil
+	}
 	if _, err := io.WriteString(w, "retry: 15000\n\n"); err != nil {
 		return nil
 	}
@@ -168,54 +186,8 @@ func (s *Server) webseedEvents(w http.ResponseWriter, r *http.Request) error {
 		send("unavailable", map[string]string{"reason": "disabled"})
 		return nil
 	}
-	ctx := r.Context()
-	check := time.NewTicker(5 * time.Second)
-	beat := time.NewTicker(25 * time.Second)
-	defer check.Stop()
-	defer beat.Stop()
-	deadline := time.After(30 * time.Minute)
-	lastProgress := -1.0
-	notFound := 0
-	for {
-		ready, progress, found := s.Pool.FileProgress(ctx, ih, idx)
-		switch {
-		case ready:
-			urls := s.webseedURLs(r, ih)
-			if urls == nil {
-				send("unavailable", map[string]string{"reason": "disabled"})
-			} else {
-				send("ready", map[string]any{"webseeds": urls})
-			}
-			return nil
-		case !found:
-			// no server holds the torrent (e.g. nobody asked it to seed): give up after ~1 min
-			if notFound++; notFound >= 12 {
-				send("unavailable", map[string]string{"reason": "not_seeded"})
-				return nil
-			}
-		default:
-			notFound = 0
-			if progress != lastProgress {
-				lastProgress = progress
-				if !send("waiting", map[string]float64{"progress": progress}) {
-					return nil
-				}
-			}
-		}
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-deadline:
-			send("timeout", map[string]any{})
-			return nil
-		case <-beat.C:
-			if _, err := io.WriteString(w, ": ping\n\n"); err != nil || rc.Flush() != nil {
-				return nil
-			}
-			<-check.C
-		case <-check.C:
-		}
-	}
+	s.webseedStream(r.Context(), r, send, ping, ih, idx)
+	return nil
 }
 
 func (s *Server) sseAcquire(key string, limit int) bool {

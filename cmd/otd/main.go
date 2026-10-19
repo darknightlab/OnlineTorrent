@@ -2,6 +2,7 @@
 //
 //	otd [serve] -db /data/otd.db -meta-db /data/meta.db -addr 0.0.0.0:80
 //	otd user -db /data/otd.db -username NAME -password PW [-role admin]   (create or reset)
+//	otd edge                                                              (edge node, configured by env, see edgeCmd)
 package main
 
 import (
@@ -13,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -21,6 +23,7 @@ import (
 	"github.com/darknightlab/onlinetorrent/internal/catalog"
 	"github.com/darknightlab/onlinetorrent/internal/clef"
 	"github.com/darknightlab/onlinetorrent/internal/crawl"
+	"github.com/darknightlab/onlinetorrent/internal/edge"
 	"github.com/darknightlab/onlinetorrent/internal/meta"
 	"github.com/darknightlab/onlinetorrent/internal/policy"
 	"github.com/darknightlab/onlinetorrent/internal/qb"
@@ -41,8 +44,10 @@ func main() {
 		err = serve(args)
 	case "user":
 		err = userCmd(args)
+	case "edge":
+		err = edgeCmd(args)
 	default:
-		err = fmt.Errorf("unknown command %q (serve|user)", cmd)
+		err = fmt.Errorf("unknown command %q (serve|user|edge)", cmd)
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -107,6 +112,10 @@ func serve(args []string) error {
 	wg.Go(func() { cl.Run(ctx) })
 
 	srv := &api.Server{St: st, Meta: ms, Cat: cat, Crawl: cr, Pool: pool, Swarm: sw, Clef: cl, Policy: policy.New(st), Log: log, WebFS: web.FS(), BaseCtx: ctx}
+	// edge nodes connect to /api/v1/edge/connect (token-signing key is created on first start)
+	if _, err := srv.NewEdgeHub(); err != nil {
+		return err
+	}
 	hs := &http.Server{Addr: *addr, Handler: srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, WriteTimeout: 60 * time.Second, IdleTimeout: 120 * time.Second}
 	wg.Go(func() { srv.RunRecheck(ctx) })
@@ -202,4 +211,51 @@ func userCmd(args []string) error {
 	}
 	fmt.Printf("created user %s (id %d) role=%s\n", u.Username, u.ID, u.Role)
 	return nil
+}
+
+// edgeCmd runs an edge node next to a qB instance (see internal/edge and docs/deploy.md).
+//
+//	OTD_MAIN          wss://www.projectk.org/api/v1/edge/connect
+//	OTD_EDGE_TOKEN    token generated in 后台 → qB 服务器 → 边缘节点
+//	QB_URL            http://127.0.0.1:8888 (qB WebUI, same host)
+//	QB_USER, QB_PASS  qB WebUI login (unless qB bypasses auth for localhost)
+//	DATA_ROOT         only files below are served (default /Data/Torrent, mounted read-only)
+//	DATA_MAP          optional "qbPrefix=localPrefix[,…]" when qB's paths differ inside the edge
+//	EDGE_LISTEN       HTTP listen address (default :8890; TLS terminated by Cloudflare)
+//	EDGE_TRUST_PROXY  1 = client IP from CF-Connecting-IP (rate limiting / logs)
+//	EDGE_ALLOW_ORIGIN optional CORS origin override (default: the site origin from the main server)
+//	EDGE_VERIFY       0 = don't SHA-1 check whole pieces before serving them (default on)
+func edgeCmd(args []string) error {
+	fs := flag.NewFlagSet("edge", flag.ExitOnError)
+	_ = fs.Parse(args)
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	slog.SetDefault(log)
+	env := func(k, def string) string {
+		if v := strings.TrimSpace(os.Getenv(k)); v != "" {
+			return v
+		}
+		return def
+	}
+	var pathMap [][2]string
+	for _, m := range strings.Split(env("DATA_MAP", ""), ",") {
+		if from, to, ok := strings.Cut(strings.TrimSpace(m), "="); ok && from != "" && to != "" {
+			pathMap = append(pathMap, [2]string{from, to})
+		}
+	}
+	host, _ := os.Hostname()
+	cfg := edge.Config{
+		Main: env("OTD_MAIN", ""), Token: env("OTD_EDGE_TOKEN", ""),
+		QBURL: env("QB_URL", "http://127.0.0.1:8888"), QBUser: env("QB_USER", ""), QBPass: env("QB_PASS", ""),
+		DataRoot: env("DATA_ROOT", "/Data/Torrent"), PathMap: pathMap, Verify: env("EDGE_VERIFY", "1") != "0",
+		Listen: env("EDGE_LISTEN", ":8890"), TrustProxy: env("EDGE_TRUST_PROXY", "0") == "1", AllowOrigin: env("EDGE_ALLOW_ORIGIN", ""),
+		Host: host, Log: log,
+	}
+	a, err := edge.New(cfg)
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	log.Info("edge starting", "main", cfg.Main, "qb", cfg.QBURL, "data_root", cfg.DataRoot, "listen", cfg.Listen, "version", edge.BuildVersion())
+	return a.Run(ctx)
 }

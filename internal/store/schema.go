@@ -266,4 +266,12 @@ CREATE TABLE role_excluded_tags (
 DELETE FROM settings WHERE key = 'policy.user_magnet_action';
 ALTER TABLE metadata_jobs ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;
 `,
+	// 8: edge nodes ("边缘节点") next to qB servers: token (SHA-256 hash only), public webseed
+	// base URL, and whether the qB WebUI API is reached through the edge's tunnel.
+	`
+ALTER TABLE qb_servers ADD COLUMN edge_token_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE qb_servers ADD COLUMN edge_url TEXT NOT NULL DEFAULT '';
+ALTER TABLE qb_servers ADD COLUMN edge_api INTEGER NOT NULL DEFAULT 0;
+CREATE INDEX qb_servers_edge_token ON qb_servers(edge_token_hash) WHERE edge_token_hash <> '';
+`,
 }

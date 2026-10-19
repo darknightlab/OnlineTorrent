@@ -223,7 +223,7 @@ func TestUserMagnetSettingRemoved(t *testing.T) {
 	if _, err := st.W.Exec(`INSERT INTO settings(key, value) VALUES('policy.user_magnet_action', '"login"')`); err != nil {
 		t.Fatal(err)
 	}
-	if err := Migrate(ctx, st.W, migrations); err != nil {
+	if err := Migrate(ctx, st.W, migrations[:7]); err != nil { // up to migration 7 only (later ones already applied)
 		t.Fatal(err)
 	}
 	_ = st.R.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = 'policy.user_magnet_action'`).Scan(&n)
@@ -252,5 +252,42 @@ func TestRequestMetadataJobPriority(t *testing.T) {
 	}
 	if j, _ := st.GetMetadataJob(ctx, "aa"); j.Status != "pending" || j.Priority != 1 || j.Attempts != 0 {
 		t.Errorf("revived %+v", j)
+	}
+}
+
+func TestQBServerEdgeFields(t *testing.T) {
+	st := newStore(t)
+	ctx := context.Background()
+	id, err := st.SaveQBServer(ctx, QBServer{Name: "ams", URL: "http://qb", Enabled: true, EdgeURL: " https://edge.example/ ", EdgeAPI: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SaveQBServer(ctx, QBServer{Name: "x", URL: "http://qb", EdgeURL: "ftp://e"}); err == nil {
+		t.Fatal("non-http edge URL accepted")
+	}
+	if err := st.SetQBEdgeToken(ctx, id, "h1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.SetQBEdgeToken(ctx, 999, "h2"); err == nil {
+		t.Fatal("unknown server accepted")
+	}
+	got, ok, err := st.QBServerByEdgeToken(ctx, "h1")
+	if err != nil || !ok || got != id {
+		t.Fatalf("lookup: %d %v %v", got, ok, err)
+	}
+	if _, ok, _ := st.QBServerByEdgeToken(ctx, ""); ok {
+		t.Fatal("empty hash matched")
+	}
+	// saving the server (e.g. from the admin form) keeps the token; rotating replaces it
+	if _, err := st.SaveQBServer(ctx, QBServer{ID: id, Name: "ams", URL: "http://qb", EdgeURL: "https://edge.example"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = st.SetQBEdgeToken(ctx, id, "h3")
+	if _, ok, _ := st.QBServerByEdgeToken(ctx, "h1"); ok {
+		t.Fatal("old token still valid after rotation")
+	}
+	ls, _ := st.ListQBServers(ctx)
+	if len(ls) != 1 || ls[0].EdgeURL != "https://edge.example" || ls[0].EdgeAPI || !ls[0].EdgeBound() || ls[0].EdgeTokenHash != "h3" {
+		t.Fatalf("list = %+v", ls)
 	}
 }

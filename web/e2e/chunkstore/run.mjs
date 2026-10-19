@@ -38,8 +38,8 @@ await new Promise((res, rej) => {
   vite.stderr.on("data", (d) => (err += d))
   vite.on("exit", (c) => rej(new Error("vite exited " + c + ": " + err)))
 })
-const dbgPort = 9300 + Math.floor(Math.random() * 600)
-const prof = "/tmp/chunkstore-e2e-profile"
+const dbgPort = 19000 + Math.floor(Math.random() * 11000)
+const prof = `/tmp/chunkstore-e2e-profile-${process.pid}`
 fs.rmSync(prof, { recursive: true, force: true })
 const ch = spawn(CHROMIUM, ["--headless=new", "--no-sandbox", "--disable-gpu", `--remote-debugging-port=${dbgPort}`, `--user-data-dir=${prof}`, "--disable-features=WebRtcHideLocalIpsWithMdns", "about:blank"], { stdio: "ignore" })
 procs.push(ch)

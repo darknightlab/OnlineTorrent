@@ -4,7 +4,7 @@
 import { readFileSync, readdirSync } from "node:fs"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
-import { checkWebTorrentBundle } from "../src/player/store/bundle-check.ts"
+import { checkWebTorrentBundle, installFetchRecorder } from "../src/player/store/bundle-check.ts"
 
 const dist = path.resolve(process.argv[2] ?? "dist")
 const assets = path.join(dist, "assets")
@@ -22,8 +22,9 @@ if (!engines.some((e) => readFileSync(path.join(assets, e), "utf8").includes(chu
 
 ;(globalThis as { self?: unknown }).self ??= globalThis
 const file = path.join(assets, chunk)
+const fetchLog = installFetchRecorder() // before the import (the chunk captures self.fetch at load)
 const { default: WebTorrent } = await import(pathToFileURL(file).href)
-const problems = await checkWebTorrentBundle(WebTorrent, readFileSync(file, "utf8"), `dist/assets/${chunk}`)
+const problems = await checkWebTorrentBundle(WebTorrent, readFileSync(file, "utf8"), `dist/assets/${chunk}`, fetchLog)
 if (problems.length) fail(problems.map((p) => `  - ${p}`).join("\n"))
 console.log(`✓ WebTorrent 构建产物兼容（dist/assets/${chunk}）`)
 process.exit(0) // 浏览器包在 node 里可能留下定时器

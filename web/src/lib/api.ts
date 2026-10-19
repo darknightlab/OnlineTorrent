@@ -210,6 +210,9 @@ export const api = {
     updateQB: (id: number, b: Partial<QBServerInput>) => put<QBServer>(`/admin/qb-servers/id/${id}`, b),
     deleteQB: (id: number) => del<Record<string, never>>(`/admin/qb-servers/id/${id}`),
     testQB: (id: number) => post<QBServer>(`/admin/qb-servers/id/${id}/test`),
+    edgeToken: (id: number) => post<{ token: string; connect_url: string }>(`/admin/qb-servers/id/${id}/edge-token`),
+    edgeUnbind: (id: number) => del<ListLike<QBServer>>(`/admin/qb-servers/id/${id}/edge-token`),
+    rotateEdgeKey: () => post<{ keys: number }>("/admin/edge/rotate-key"),
 
     users: (q: string, page: number) => get<ListLike<AdminUser>>(`/admin/users${qs({ q, page })}`),
     updateUser: (id: number, b: AdminUserUpdate) => put<AdminUser>(`/admin/users/id/${id}`, b),

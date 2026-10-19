@@ -168,11 +168,35 @@ export function checkWire(w: any): string[] {
   return p
 }
 
+/**
+ * WebSeed 连接（webtorrent lib/webconn.js 的 WebConn，是一个假的远端 Wire）：patchWebSeed 依赖
+ * torrent._peers.get(url).conn、它在 'handshake' 后用 this.bitfield(全 1) 宣告分块、请求失败 10 s 后
+ * 用 this.have(i) 重新宣告，以及 lt_donthave 扩展。
+ */
+export function checkWebSeedConn(t: any, url: string): string[] {
+  const p: string[] = []
+  if (!(t?._peers instanceof Map)) return ["Torrent._peers（Map）"]
+  const conn = t._peers.get(url)?.conn
+  if (!conn) return ["Torrent._peers.get(url).conn（WebSeed 连接）"]
+  for (const k of ["bitfield", "have", "handshake", "on"]) if (!fn(conn, k)) p.push(`WebConn.${k}()`)
+  if (!fn(conn.lt_donthave, "donthave")) p.push("WebConn.lt_donthave.donthave()")
+  if (conn.connId !== url) p.push("WebConn.connId")
+  const init = src(Object.getPrototypeOf(conn), "_init")
+  if (!init) p.push("WebConn._init()")
+  else {
+    if (!/\.once\(\s*"handshake"/.test(init) || !/\.bitfield\(/.test(init)) p.push("WebConn 不再在 handshake 后用 bitfield() 宣告分块")
+    if (!/\.have\(/.test(init)) p.push("WebConn 请求失败后不再用 have() 重新宣告分块")
+  }
+  return p
+}
+
 /** dist 包源码层面的检查：ServerBase.serveFile 通过 file[Symbol.asyncIterator](range) 取数据 */
 export function checkBundleSource(code: string): string[] {
   const p: string[] = []
   if (!RE.serveIterator.test(normSource(code))) p.push("server.serveFile 不再用 file[Symbol.asyncIterator](range) 读取文件")
   if (!/lt_donthave/.test(code)) p.push("lt_donthave 扩展")
+  // WebSeed 的 fetch 在模块加载时取自 self.fetch（installEdgeFetch 必须在 import 之前）
+  if (!/=\s*self\.fetch\s*\|\|/.test(code)) p.push("WebSeed 请求不再使用加载时的 self.fetch（边缘节点令牌注入方式需要调整）")
   return p
 }
 
@@ -187,6 +211,107 @@ export class IncompatibleError extends Error {
 
 export function assertCompatible(problems: string[]) {
   if (problems.length) throw new IncompatibleError(problems)
+}
+
+// ---------------------------------------------------------------- 边缘节点访问令牌
+
+/**
+ * WebSeed 地址前缀 → 访问令牌。边缘节点（与主站不同源）要求 Authorization: Bearer <令牌>；
+ * 令牌由主站经 SSE 下发并在到期前刷新（setEdgeToken 覆盖即可，webtorrent 的 URL 不变）。
+ */
+const edgeTokens = new Map<string, string>()
+
+export function setEdgeToken(urlPrefix: string, token: string | null) {
+  if (token) edgeTokens.set(urlPrefix, token)
+  else edgeTokens.delete(urlPrefix)
+}
+
+export function edgeTokenFor(url: string): string | null {
+  let best: string | null = null
+  let bestLen = -1
+  for (const [prefix, tok] of edgeTokens) {
+    if (url.startsWith(prefix) && prefix.length > bestLen) {
+      best = tok
+      bestLen = prefix.length
+    }
+  }
+  return best
+}
+
+const WRAPPED = Symbol.for("ot.edgeFetch")
+
+/**
+ * 给全局 fetch 套一层：请求已登记的边缘节点地址时加 Authorization 头（凭据保持默认：跨源不带 Cookie）。
+ * webtorrent 的浏览器包在模块加载时就取走了 self.fetch（cross-fetch-ponyfill），
+ * 所以必须在 import webtorrent 之前调用（webtorrent-engine.ts 的 getClient）。可重复调用。
+ */
+export function installEdgeFetch(g: { fetch: typeof fetch } = globalThis as unknown as { fetch: typeof fetch }) {
+  const cur = g.fetch as typeof fetch & { [WRAPPED]?: boolean }
+  if (!cur || cur[WRAPPED]) return
+  const orig = cur.bind(g)
+  const wrapped = ((input: Request | string | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request)?.url
+    const tok = url ? edgeTokenFor(url) : null
+    if (!tok) return orig(input, init)
+    const headers = new Headers(init?.headers ?? (typeof input === "object" && "headers" in input ? (input as Request).headers : undefined))
+    headers.set("Authorization", `Bearer ${tok}`)
+    // webtorrent sets cache: "no-store", with which Chromium skips its CORS preflight cache —
+    // one extra round trip per piece. The edge answers Cache-Control: no-store anyway, so
+    // nothing is stored with the default mode either.
+    return orig(input, { ...init, headers, cache: init?.cache === "no-store" ? "default" : init?.cache })
+  }) as typeof fetch & { [WRAPPED]?: boolean }
+  wrapped[WRAPPED] = true
+  g.fetch = wrapped
+}
+
+// ---------------------------------------------------------------- WebSeed 分块宣告
+
+export interface WebSeedHandle {
+  /** 服务器新增可提供的分块 */
+  add(pieces: number[]): void
+  /** 服务器不再能提供的分块（例如边缘节点断开） */
+  remove(pieces: number[]): void
+}
+
+/**
+ * 让 WebSeed 只宣告服务器真正有的分块（webtorrent 默认对 WebSeed 宣告全部分块，qB 还在下载时
+ * 浏览器会请求服务器没有的分块，得到 503 后该块 10 s 内不再向它请求，并持续重试）。
+ * 必须在 torrent.addWebSeed(url) 之后同步调用（WebConn 的 handshake 处理是异步的，之后才发 bitfield）。
+ * bits：服务器可提供的分块（BitTorrent 顺序），调用方之后通过 add / remove 维护。
+ */
+export function patchWebSeed(t: TorrentLike, url: string, bits: Uint8Array): WebSeedHandle {
+  const problems = checkWebSeedConn(t, url)
+  if (problems.length) throw new IncompatibleError(problems)
+  const conn = (t as any)._peers.get(url).conn
+  const origBitfield = conn.bitfield.bind(conn)
+  const origHave = conn.have.bind(conn)
+  const has = (i: number) => (bits[i >> 3] & (128 >> (i & 7))) !== 0
+  let announced = false
+  // handshake 后的初始宣告：换成服务器的 bitfield
+  conn.bitfield = () => {
+    announced = true
+    origBitfield(bits.slice())
+  }
+  // WebConn 在请求失败 10 s 后 have(i) 重新宣告：只宣告服务器仍有的
+  conn.have = (i: number) => {
+    if (has(i)) origHave(i)
+  }
+  return {
+    add(pieces) {
+      if (!announced || conn.destroyed) return // 还没发 bitfield：bits 已更新，发 bitfield 时一并宣告
+      for (const i of pieces) if (has(i)) origHave(i)
+    },
+    remove(pieces) {
+      if (!announced || conn.destroyed) return
+      for (const i of pieces) {
+        try {
+          conn.lt_donthave.donthave(i)
+        } catch {
+          /* 对方还没完成扩展握手 */
+        }
+      }
+    },
+  }
 }
 
 // ---------------------------------------------------------------- 淘汰

@@ -27,8 +27,8 @@ await new Promise((res, rej) => {
   vite.stdout.on("data", (d) => /ready in/.test(String(d)) && res())
   vite.on("exit", (c) => rej(new Error("vite exited " + c)))
 })
-const dbg = 9300 + Math.floor(Math.random() * 600)
-const prof = "/tmp/chunkstore-real-profile"
+const dbg = 19000 + Math.floor(Math.random() * 11000)
+const prof = `/tmp/chunkstore-real-profile-${process.pid}`
 fs.rmSync(prof, { recursive: true, force: true })
 procs.push(spawn(CHROMIUM, ["--headless=new", "--no-sandbox", "--disable-gpu", `--remote-debugging-port=${dbg}`, `--user-data-dir=${prof}`, "--autoplay-policy=no-user-gesture-required", "about:blank"], { stdio: "ignore" }))
 let target

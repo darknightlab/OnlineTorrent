@@ -59,6 +59,12 @@ const (
 	KeyCleanupEnabled    = "qb.cleanup_enabled"
 	KeyQBAddTimeoutSec   = "qb.add_timeout_sec"
 	KeyWebseedEnabled    = "webseed.enabled"
+	// WebSeed: serve ranges of files qB is still downloading (pieces already verified).
+	KeyWebseedProgressive = "webseed.progressive"
+	// Edge nodes: Ed25519 signing key ring ({"current": seed, "previous": public key}, hidden)
+	// and the lifetime of the access tokens handed to browsers.
+	KeyEdgeSigningKeys  = "edge.signing_keys"
+	KeyEdgeTokenMinutes = "edge.token_minutes"
 )
 
 // Decision model (Cloudflare Workers AI Clef, internal/clef) settings.
@@ -207,6 +213,9 @@ func SettingsSchema() []SettingSpec {
 		{Key: KeyQBAddTimeoutSec, Group: "qBittorrent", Type: "number", Label: "推送超时（秒）", Default: 8},
 
 		{Key: KeyWebseedEnabled, Group: "WebSeed", Type: "bool", Label: "启用 HTTP WebSeed 加速", Description: "qB 下载完成的文件可经本站以 HTTP 方式补充传输（经 Cloudflare 隧道，消耗服务器上行流量）", Default: true},
+		{Key: KeyEdgeTokenMinutes, Group: "WebSeed", Type: "number", Label: "边缘节点访问令牌有效期（分钟）", Description: "浏览器访问边缘节点 WebSeed 所用的签名令牌的有效期；播放期间服务器在到期前自动推送新令牌", Default: 10},
+		{Key: KeyEdgeSigningKeys, Group: "WebSeed", Type: "json", Label: "边缘节点签名密钥", Default: map[string]any{}, Hidden: true},
+		{Key: KeyWebseedProgressive, Group: "WebSeed", Type: "bool", Label: "边下边供（qB 下载中即提供已下载部分）", Description: "qB 还没下完的文件，已校验的分块也经 WebSeed 提供（需要该 qB 服务器连接了边缘节点：边缘节点直接读 qB 的下载目录；没有边缘节点的服务器只提供下载完成的文件）。浏览器只请求服务器已有的分块", Default: true},
 	}, clefSettings()...)
 }
 

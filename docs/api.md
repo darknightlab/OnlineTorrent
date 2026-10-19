@@ -43,8 +43,9 @@
 | POST | `/api/v1/torrents/moe/{id}/play` | 按 bangumi.moe ID 打开（本地库中由 bangumi.moe 抓取源收录的种子） |
 | POST | `/api/v1/torrents/hash/{ih}/seed` / `report` | 服务器做种 / 举报 |
 | GET | `/api/v1/torrents/hash/{ih}/torrent` | 种子文件（.torrent，HTTP 元数据；磁力 `xs=` 指向这里） |
-| GET | `/api/v1/torrents/hash/{ih}/webseed/events[/file/{idx}]` | WebSeed 就绪推送（SSE） |
-| GET | `/webseed/hash/{ih}/[文件路径]` | HTTP WebSeed 文件（Cookie 鉴权） |
+| GET | `/api/v1/torrents/hash/{ih}/webseed/events[/file/{idx}]` | WebSeed 可用分块推送（SSE） |
+| GET | `/webseed/hash/{ih}/[文件路径]` | HTTP WebSeed 文件（本站：Cookie 鉴权，仅完整文件；边缘节点另见「HTTP WebSeed」） |
+| GET | `/api/v1/edge/connect` | 边缘节点隧道（WebSocket，`Authorization: Bearer <边缘节点令牌>`；不升级时只校验令牌：204 / 401） |
 | GET | `/meta/v1/torrents/hash/{ih}` | 文件级映射 |
 | PUT | `/meta/v1/torrents/hash/{ih}/files/{idx}` | 纠正映射（admin），body `{subject_id|work_key, episode_key | (episode, kind), status}` |
 | GET | `/meta/v1/subjects/{provider}/{id}` / `.../episodes` / `.../episodes/{key}/files` / `/meta/v1/subjects/search?q=` | 映射库条目 / 有文件的集 / 单集文件 |
@@ -232,11 +233,28 @@ qB 拿到元数据后，后端把文件列表写入本地库并刮削（每个 i
 - 写入时机：抓取源下载 .torrent 时；qB 元数据队列取到元数据后（删除前导出）；会员做种后的检查 / 每 10 分钟复查拿到元数据时。表中的种子文件不随 qB 删除。
 - 前端兜底：磁力没有 `xs=`（例如刚粘贴的未知磁力）且有做种权限时，播放页在会话仍无元数据时每 3 秒轮询 `GET /torrents/hash/{ih}`（最多 3 分钟），`ready` 后下载本接口的种子文件，移除会话中尚无元数据的种子并用种子文件重新添加（日志「已从服务器获取种子信息」）。
 
-### HTTP WebSeed（固定地址，Cookie 鉴权）
-- 文件：`GET /webseed/hash/{ih}/`（单文件种子）或 `/webseed/hash/{ih}/{种子内文件路径}`（多文件，webtorrent 自动拼接）。
-  不带签名/过期时间；每次请求用登录 Cookie 校验接口权限 `GET /webseed/hash/{ih}/{path...}`（后台「接口权限」可改，默认会员）+ 当前用户对该种子的策略。只提供 qB 已完整下载的文件，否则 404。`Cache-Control: private, no-store`。
-- 就绪推送（SSE）：`GET /api/v1/torrents/hash/{ih}/webseed/events[/file/{idx}]`（种子须先经 play 打开）。事件：`waiting {progress}`（进度变化时）、`ready {webseeds:[固定地址]}`、`unavailable {reason: disabled|not_seeded}`、`timeout {}`（30 分钟）；每 25 秒一条 `: ping` 心跳；每 IP 最多 6 条并发连接。
-- 前端：`/site.webseed = {enabled}`；播放开始即订阅推送（SSE 自己等待元数据与服务器文件就绪），收到 `ready` 才 `addWebSeed`，不做客户端探测。
+### HTTP WebSeed（固定地址；本站 + 边缘节点）
+WebSeed 有两类地址，SSE 按地址分别推送可用分块：
+
+- **本站** `https://{site}/webseed/hash/{ih}/…`：没有连接边缘节点的 qB 服务器，经 qB 的 `torrents/downloadFile` 代理，**只提供下载完成的文件**（qB 对未完成的文件一律 `409 File not fully downloaded`）。登录 Cookie 鉴权：接口权限 `GET /webseed/hash/{ih}/{path...}`（后台「接口权限」可改，默认会员）+ 当前用户对该种子的策略与内容范围。
+- **边缘节点** `{edge_url}/webseed/hash/{ih}/…`（如 `https://edge-ams.projectk.org`）：qB 所在主机上的 `otd edge`，直接读 qB 的下载目录，**下载中的文件也提供已校验的分块**（`pieceStates == 2`，未完成文件为 `<名称>.!qB`）。数据不经过本站。鉴权用本站签发的短期访问令牌（`Authorization: Bearer`，不用 Cookie），见下。
+
+两类地址的共同行为：`GET`/`HEAD`，`/webseed/hash/{ih}/`（单文件）或 `/webseed/hash/{ih}/{种子内文件路径}`（多文件，webtorrent 自动拼接；BEP 47 填充文件直接返回全零）；单个 `Range`（`206` + `Content-Range`），越界 `416`；`Cache-Control: private, no-store`；请求范围内有分块尚不可提供时 `503` + `Retry-After: 5`。设置 `webseed.enabled` 关闭全部 WebSeed；`webseed.progressive`（默认开）关闭后本站只用完整文件（边缘节点不受影响）。
+
+**边缘节点的访问令牌**（`internal/edgetoken`）：Ed25519 签名，base64url，约 147 字符；内容 = 角色、infohash、`aud`（边缘节点 id，令牌只在该节点有效）、`exp`（默认 10 分钟，设置 `edge.token_minutes`）、随机 `sid`；**不含用户 id / 用户名**。本站在 SSE 发出某个边缘节点地址之前做与本站 WebSeed 相同的判定（接口权限 + 策略 + 内容范围），不允许则不发地址也不发令牌；到期前（剩余 1/5 时）推送新令牌。签名私钥只在本站（首次启动生成，存于设置 `edge.signing_keys`，后台隐藏）；边缘节点经隧道拿到公钥离线验证（签名、`aud` = 自己的 id、infohash = 请求路径、`exp`，容许 60 秒时钟偏差），缺失 / 无效 / 过期 `401`（`WWW-Authenticate: Bearer`）。后台可更换签名密钥：新密钥立即用于签发，旧公钥继续被接受直到下一次更换（令牌只活几分钟，不会打断播放），新公钥立即推送给已连接的边缘节点。
+边缘节点的 CORS：`Access-Control-Allow-Origin` = 站点地址（`site.base_url` 的 origin，经隧道下发；可用 `EDGE_ALLOW_ORIGIN` 覆盖），其他 Origin `403`；预检允许 `GET, HEAD` 与请求头 `Authorization, Range, Cache-Control, User-Agent, If-Range, Pragma`，`Access-Control-Max-Age: 600`；暴露 `Content-Range, Content-Length, Accept-Ranges, Retry-After`；**不带** `Access-Control-Allow-Credentials`。每 IP 限速（突发 600、之后每 50 ms 1 次；`EDGE_TRUST_PROXY=1` 时 IP 取 `CF-Connecting-IP`），最多 64 个并发读取（超出 `503` + `Retry-After: 2`）。`GET /healthz`：与本站的隧道已连接 `200`，否则 `503`。
+
+- 可用性推送（SSE）：`GET /api/v1/torrents/hash/{ih}/webseed/events[/file/{idx}]`（种子须先经 play 打开）。分块区间 `ranges` 为闭区间依次展开，如 `[0,41,50,50]` = 第 0–41 块与第 50 块。事件：
+  - `waiting {progress}`：还没有服务器拥有该种子的元数据（进度变化时）；
+  - `ready {pieces, seeds: [{url, have: ranges, complete, token?, exp?}]}`：第一次有地址可用时发送；`url` 为 WebSeed 固定地址（以 `/` 结尾），本站地址 = 所有无边缘节点服务器的并集，每个边缘节点一个地址并带 `token`（`exp` 为 unix 秒）；
+  - `seed {url, have, complete, token?, exp?}`：之后又有新地址可用（如边缘节点连上）；
+  - `have {url, ranges}` / `lost {url, ranges}`：该地址可提供的分块增加 / 减少（如边缘节点断开 → 全部 `lost`），最多每秒一条；
+  - `complete {url}`：该地址已能提供全部分块；
+  - `token {url, token, exp}`：该边缘节点的新令牌；
+  - `done {}`：所有地址都能提供全部分块，流结束；
+  - `unavailable {reason: disabled|not_seeded|no_such_file|forbidden}`。
+  每 25 秒一条 `: ping` 心跳；每 IP 最多 6 条并发连接。可用分块每台服务器每秒最多查询一次（无边缘节点：qB `torrents/pieceStates`；有边缘节点：经隧道问边缘节点，边缘节点缓存 1 秒），所有观看者共享。
+- 前端：`/site.webseed = {enabled}`；播放开始即订阅推送，每个地址 `addWebSeed` 一次，并把 WebSeed 宣告给 webtorrent 的分块换成该地址的 `have`（webtorrent 默认对 WebSeed 宣告全部分块），之后按 `have` / `lost` 增减，只请求该地址已有的分块。边缘节点地址的请求由 fetch 包装加上 `Authorization: Bearer <令牌>`（webtorrent 浏览器包加载时取走 `self.fetch`，所以包装在加载 webtorrent 之前安装；`npm run build` / `npm test` 的兼容检查会验证请求确实带上令牌），`token` 事件直接换令牌，URL 不变。断线 / `unavailable` 后按 15 s、30 s、60 s … 最长 5 min 退避重连，页面重新可见或网络恢复时立即重连（重连后的 `ready` 同步分块并换令牌）；`not_seeded` 时有做种权限先重新请求做种。
 
 ### `POST /torrents/hash/{ih}/report` `{reason}` → `{}`  需登录。举报 → 进入审核队列（标题取自服务端记录，不接受客户端提供；reason 最长 500 字）
 
@@ -289,6 +307,9 @@ qB 拿到元数据后，后端把文件列表写入本地库并刮削（每个 i
 - `PUT /admin/permissions` `{"grants": {"POST /api/v1/torrents/hash/{ih}/seed": ["member"], ...}}` → 同 GET（只能改 configurable / user 类型；user 类型不能授权给 guest）
 - `GET/PUT /admin/settings` 全部站点设置（KV 对象，字段见 `GET` 返回）
 - `GET/POST /admin/qb-servers`，`PUT/DELETE /admin/qb-servers/id/{id}`，`POST /admin/qb-servers/id/{id}/test`
+  - 服务器字段 `edge_url`（边缘节点公开地址，`https://…`，可空）、`edge_api`（qB WebUI API 经边缘节点隧道访问，不再直连 `url`；边缘节点断开时该服务器离线）；列表另有 `edge_bound`（已生成令牌）与 `edge {connected, since, version, host, remote, rtt_ms, bytes_served, requests, listen, stats_error}`。
+  - `POST /admin/qb-servers/id/{id}/edge-token` → `{token, connect_url}`：生成 / 重新生成边缘节点令牌（`otde_` + 43 字符，只返回这一次，库里只存 SHA-256；旧令牌立即失效，已连接的边缘节点断开）。`DELETE` 同路径：解除绑定。
+  - `POST /admin/edge/rotate-key` → `{keys}`：更换浏览器访问令牌的签名密钥（见「HTTP WebSeed」）。
   QBServer: `{id,name,url,username,password(写入时),api_key(写入时),category,enabled,seeding_time_limit_min,ratio_limit,max_active,online,version,last_error,last_check_at}`
 - `GET /admin/users?q=&page=`，`PUT /admin/users/id/{id}` `{role?, vip_until?, disabled?}`（设 `role: "vip"` 且不传 `vip_until` = 永久大会员，会清空 vip_until）
 - `GET/POST /admin/invites`、`GET/POST /admin/redeem-codes`

@@ -6,7 +6,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
-import { checkWebTorrentBundle } from "./bundle-check.ts"
+import { checkWebTorrentBundle, installFetchRecorder } from "./bundle-check.ts"
 import {
   checkBundleSource,
   normSource,
@@ -80,9 +80,15 @@ const clientOpts = { dht: false, lsd: false, utp: false, tracker: false, webSeed
 test("webtorrent dist bundle (browser build) exposes the internals we use", async () => {
   ;(globalThis as any).self ??= globalThis
   const distPath = require.resolve("webtorrent/dist/webtorrent.min.js")
+  const realFetch = globalThis.fetch
+  const fetchLog = installFetchRecorder() // before the import: the bundle captures self.fetch at load
   const { default: WebTorrent } = await import("webtorrent/dist/webtorrent.min.js" as string)
   // 与 postbuild（scripts/check-built-webtorrent.ts，检查 Vite 实际输出的 chunk）相同的检查
-  report(await checkWebTorrentBundle(WebTorrent, readFileSync(distPath, "utf8"), "node_modules dist"), "dist")
+  try {
+    report(await checkWebTorrentBundle(WebTorrent, readFileSync(distPath, "utf8"), "node_modules dist", fetchLog), "dist")
+  } finally {
+    globalThis.fetch = realFetch
+  }
   const seedC = new WebTorrent(clientOpts)
   const c = new WebTorrent(clientOpts)
   try {
@@ -124,7 +130,7 @@ test("source checks survive re-minification (template-literal quotes, renamed lo
     pr._select = new Function("return function(e,t,n,i,r=!1){this._selections.insert({from:e,to:t,isStreamSelection:r})}")()
     assert.deepEqual(checkTorrentPrototype(pr), [], v)
   }
-  assert.deepEqual(checkBundleSource("let i=e[Symbol.asyncIterator](r),a=null;e.emit(`iterator`,{iterator:i,req:t,file:e},e=>{a=e});lt_donthave"), [])
+  assert.deepEqual(checkBundleSource("let i=e[Symbol.asyncIterator](r),a=null;e.emit(`iterator`,{iterator:i,req:t,file:e},e=>{a=e});lt_donthave;let Se=self.fetch||(()=>{})"), [])
   assert.equal(normSource("a(`x`,'y',\"z\")"), 'a("x","y","z")')
   const wire = { _onRequest: new Function("return function(e,t,n){if(this.amChoking){this.hasFast&&this.reject(e,t,n);return}this.emit(`request`,e,t,n,()=>{})}")() } as any
   assert.ok(!checkWire(wire).some((x) => /_onRequest/.test(x)))

@@ -1,26 +1,23 @@
 import { useEffect, useRef } from "react"
 import { api } from "@/lib/api"
-import type { WebseedEndEvent, WebseedReadyEvent } from "@/lib/types"
+import { PERM, can, useMe } from "@/lib/queries"
+import { WebseedSubscription, type EventSourceLike, type SubState } from "@/lib/webseed"
 import type { LogLevel, Session } from "@/player/types"
 
-/** 连续多少次连接错误（期间未收到任何事件）后放弃 */
-const MAX_ERRORS = 5
-
-function parse<T>(e: Event): T | null {
-  try {
-    return JSON.parse((e as MessageEvent).data) as T
-  } catch {
-    return null
-  }
-}
-
 /**
- * 服务器通过 SSE 推送 WebSeed 可用性：收到 ready 后才把（新签名的）WebSeed 加入种子，
- * 避免服务器还没有文件时 webtorrent 高频请求 webseed 得到 404。
+ * 服务器通过 SSE 推送 WebSeed 可用性（internal/api/webseed_progressive.go），按 WebSeed 地址分别处理：
+ * 主站自己的地址（只有下载完成的文件）和各边缘节点的地址（直接从 qB 的下载目录提供，边下边供）。
+ * - ready / seed：某个地址可用 → 加入 WebSeed，只宣告该地址已有的分块；边缘节点带访问令牌；
+ * - have / lost：该地址可提供的分块增减 → 更新宣告；
+ * - token：边缘节点的新令牌（到期前推送），换上即可（URL 不变）；
+ * - complete：该地址已有全部分块；done：全部地址都完整，订阅结束。
+ *
+ * 永不放弃：页面打开、文件未在本地完整、WebSeed 未 complete 时，断线 / timeout / unavailable 后
+ * 按 15 s、30 s、60 s … 最长 5 min 退避重连；页面重新可见或网络恢复时立即重连；
+ * not_seeded 时若有做种权限先重新请求做种。日志只在状态变化时输出。
  *
  * - armed：有 WebSeed 权限且已启用（由调用方判断）
  * - fileIndex：undefined = 元数据未就绪（不连接）；null = 任意 / 单文件；number = 正在播放的文件
- * - 文件切换时关闭并为新文件重连；会话销毁、浏览器内已下载完成、已启用 WebSeed 后不再连接
  */
 export function useWebseedEvents({
   session,
@@ -37,66 +34,83 @@ export function useWebseedEvents({
   done: boolean
   log: (level: LogLevel, msg: string) => void
 }) {
-  // 每个会话一份：是否已启用、各类日志是否已输出（只在状态变化时记一次）
-  const states = useRef(new WeakMap<Session, { enabled: boolean; waiting: boolean; ended: boolean; failed: boolean }>())
+  const me = useMe()
+  const canSeed = can(me.data, PERM.seed)
+  const canSeedRef = useRef(canSeed)
+  canSeedRef.current = canSeed
+  // 每个会话一份：已加入的 WebSeed、是否已 complete、上一条日志（只在变化时记）
+  const states = useRef(new WeakMap<Session, { urls: Set<string>; complete: boolean; last: string; edges: number }>())
 
   useEffect(() => {
     if (!session || !ih || !armed || done || fileIndex === undefined) return
-    const s = states.current.get(session) ?? { enabled: false, waiting: false, ended: false, failed: false }
-    states.current.set(session, s)
-    if (s.enabled) return
-    const es = new EventSource(api.webseedEventsURL(ih, fileIndex), { withCredentials: true })
-    let errors = 0
-    let closed = false
-    const close = () => {
-      if (closed) return
-      closed = true
-      es.close()
+    const st = states.current.get(session) ?? { urls: new Set<string>(), complete: false, last: "", edges: 0 }
+    states.current.set(session, st)
+    if (st.complete) return
+    const say = (level: LogLevel, msg: string, key: string) => {
+      if (st.last === key) return
+      st.last = key
+      log(level, msg)
     }
-    const onEvent = () => {
-      errors = 0
+    const sub = new WebseedSubscription(
+      {
+        open: () => new EventSource(api.webseedEventsURL(ih, fileIndex), { withCredentials: true }) as unknown as EventSourceLike,
+        setTimeout: (cb, ms) => window.setTimeout(cb, ms),
+        clearTimeout: (t) => window.clearTimeout(t as number),
+      },
+      {
+        seed: ({ url, pieces, have, complete, token }) => {
+          if (st.urls.has(url)) {
+            // 重连后服务器重发：同步分块、换上新令牌
+            if (token) session.setWebSeedToken?.(url, token)
+            session.updateWebSeed?.(url, complete ? { complete: true } : have ? { reset: have } : {})
+            return
+          }
+          if (!session.addWebSeed(url, { pieces, have, complete, token })) return
+          st.urls.add(url)
+          if (token) st.edges++
+          const info = session.webSeedPieces?.(url)
+          const where = token ? "边缘节点" : "本站"
+          const pct = info && info.have < info.of ? `，已有 ${Math.floor((info.have / Math.max(1, info.of)) * 100)}% 的数据，随下载进度增加` : ""
+          say("info", `已启用 HTTP WebSeed 加速（${where}${pct}）`, `enabled:${url}`)
+        },
+        have: (url, r) => session.updateWebSeed?.(url, { have: r }),
+        lost: (url, r) => session.updateWebSeed?.(url, { lost: r }),
+        complete: (url) => session.updateWebSeed?.(url, { complete: true }),
+        token: (url, token) => session.setWebSeedToken?.(url, token),
+        done: () => {
+          st.complete = true
+          if (st.urls.size) say("info", "WebSeed 已可提供全部数据", "complete")
+        },
+        waiting: () => say("info", "服务器正在获取该种子，就绪后自动启用 WebSeed", "waiting"),
+        unavailable: async (reason) => {
+          if (reason === "not_seeded" && canSeedRef.current) {
+            say("info", "服务器尚未做种该资源，已重新请求做种", "reseed")
+            try {
+              await api.seed(ih)
+            } catch {
+              /* 稍后重试 */
+            }
+            return
+          }
+          say("warn", `WebSeed 暂不可用${reason ? `（${reason}）` : ""}，稍后自动重试`, `unavailable:${reason}`)
+        },
+        state: (s: SubState, info) => {
+          if (s === "waiting-retry" && st.last !== "reseed" && !st.last.startsWith("unavailable"))
+            say("warn", `WebSeed 状态连接中断，${Math.round((info?.retryInMs ?? 0) / 1000)} 秒后自动重连`, "retry")
+          else if (s === "open" && st.last === "retry") say("info", "WebSeed 状态连接已恢复", "open")
+        },
+      },
+    )
+    sub.start()
+    const kick = () => {
+      if (document.visibilityState === "visible") sub.kick()
     }
-
-    es.addEventListener("ready", (e) => {
-      onEvent()
-      close()
-      const urls = (parse<WebseedReadyEvent>(e)?.webseeds ?? []).filter((u): u is string => typeof u === "string" && !!u)
-      let added = 0
-      for (const u of urls) if (session.addWebSeed(u)) added++
-      if (added > 0) {
-        s.enabled = true
-        log("info", "已启用 HTTP WebSeed 加速")
-      } else if (!urls.length && !s.ended) {
-        s.ended = true
-        log("warn", "服务器未提供可用的 WebSeed，仅使用 P2P 网络")
-      }
-    })
-    es.addEventListener("waiting", () => {
-      onEvent()
-      if (s.waiting) return
-      s.waiting = true
-      log("info", "服务器正在准备该文件，完成后自动启用 WebSeed")
-    })
-    const onEnd = (e: Event) => {
-      onEvent()
-      close()
-      if (s.ended) return
-      s.ended = true
-      const reason = parse<WebseedEndEvent>(e)?.reason
-      log("warn", `WebSeed 暂不可用，仅使用 P2P 网络${reason ? `（${reason}）` : ""}`)
+    document.addEventListener("visibilitychange", kick)
+    window.addEventListener("online", kick)
+    return () => {
+      document.removeEventListener("visibilitychange", kick)
+      window.removeEventListener("online", kick)
+      sub.stop()
     }
-    es.addEventListener("timeout", onEnd)
-    es.addEventListener("unavailable", onEnd)
-    es.onmessage = onEvent
-    es.onerror = () => {
-      if (closed) return
-      // CLOSED：浏览器不会再重连（如 HTTP 错误、非 text/event-stream）；否则允许自动重连若干次
-      if (es.readyState !== EventSource.CLOSED && ++errors < MAX_ERRORS) return
-      close()
-      if (s.failed) return
-      s.failed = true
-      log("warn", "WebSeed 状态连接失败，仅使用 P2P 网络")
-    }
-    return close
   }, [session, ih, armed, fileIndex, done, log])
 }

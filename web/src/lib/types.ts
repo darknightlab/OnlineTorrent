@@ -386,13 +386,33 @@ export interface QBServer {
   max_active: number
   /** 添加种子后补 wss tracker（默认开） */
   add_wss_trackers: boolean
+  /** 边缘节点的公开地址（浏览器直接从这里取 WebSeed），如 https://edge-ams.projectk.org */
+  edge_url: string
+  /** qB WebUI API 经边缘节点的隧道访问（不再直连 url） */
+  edge_api: boolean
   online: boolean
   version: string
   last_error: string
   last_check_at: string | null
+  /** 已生成边缘节点令牌 */
+  edge_bound?: boolean
+  edge?: EdgeStatus
 }
 
-export type QBServerInput = Omit<QBServer, "id" | "online" | "version" | "last_error" | "last_check_at">
+export interface EdgeStatus {
+  connected: boolean
+  since?: string
+  version?: string
+  host?: string
+  remote?: string
+  rtt_ms?: number
+  bytes_served: number
+  requests: number
+  listen?: string
+  stats_error?: string
+}
+
+export type QBServerInput = Omit<QBServer, "id" | "online" | "version" | "last_error" | "last_check_at" | "edge_bound" | "edge">
 
 export interface AdminUser extends User {
   disabled: boolean

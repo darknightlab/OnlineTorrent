@@ -23,11 +23,19 @@ type QBServer struct {
 	SeedingTimeLimitMin int     `json:"seeding_time_limit_min"`
 	RatioLimit          float64 `json:"ratio_limit"`
 	AddWSSTrackers      bool    `json:"add_wss_trackers"`
-	CreatedAt           string  `json:"created_at"`
+	// edge node: public base URL of its webseed (e.g. https://edge-ams.projectk.org) and
+	// whether the qB API goes through the edge's tunnel instead of URL
+	EdgeURL       string `json:"edge_url"`
+	EdgeAPI       bool   `json:"edge_api"`
+	EdgeTokenHash string `json:"-"`
+	CreatedAt     string `json:"created_at"`
 }
 
+// EdgeBound reports whether an edge token has been generated for the server.
+func (q QBServer) EdgeBound() bool { return q.EdgeTokenHash != "" }
+
 func (s *Store) ListQBServers(ctx context.Context) ([]QBServer, error) {
-	rows, err := s.R.QueryContext(ctx, `SELECT id,name,url,username,password,api_key,category,enabled,seeding_time_limit_min,ratio_limit,add_wss_trackers,created_at FROM qb_servers ORDER BY id`)
+	rows, err := s.R.QueryContext(ctx, `SELECT id,name,url,username,password,api_key,category,enabled,seeding_time_limit_min,ratio_limit,add_wss_trackers,edge_url,edge_api,edge_token_hash,created_at FROM qb_servers ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -35,11 +43,11 @@ func (s *Store) ListQBServers(ctx context.Context) ([]QBServer, error) {
 	var out []QBServer
 	for rows.Next() {
 		var q QBServer
-		var en, wss int
-		if err := rows.Scan(&q.ID, &q.Name, &q.URL, &q.Username, &q.Password, &q.APIKey, &q.Category, &en, &q.SeedingTimeLimitMin, &q.RatioLimit, &wss, &q.CreatedAt); err != nil {
+		var en, wss, eapi int
+		if err := rows.Scan(&q.ID, &q.Name, &q.URL, &q.Username, &q.Password, &q.APIKey, &q.Category, &en, &q.SeedingTimeLimitMin, &q.RatioLimit, &wss, &q.EdgeURL, &eapi, &q.EdgeTokenHash, &q.CreatedAt); err != nil {
 			return nil, err
 		}
-		q.Enabled, q.AddWSSTrackers = en != 0, wss != 0
+		q.Enabled, q.AddWSSTrackers, q.EdgeAPI = en != 0, wss != 0, eapi != 0
 		out = append(out, q)
 	}
 	return out, rows.Err()
@@ -54,19 +62,48 @@ func (s *Store) SaveQBServer(ctx context.Context, q QBServer) (int64, error) {
 	if q.Category == "" {
 		q.Category = "projectk"
 	}
+	q.EdgeURL = strings.TrimRight(strings.TrimSpace(q.EdgeURL), "/")
+	if q.EdgeURL != "" && !(strings.HasPrefix(q.EdgeURL, "https://") || strings.HasPrefix(q.EdgeURL, "http://")) {
+		return 0, errors.New("边缘节点地址需以 https:// 开头")
+	}
 	if q.ID == 0 {
-		res, err := s.W.ExecContext(ctx, `INSERT INTO qb_servers(name,url,username,password,api_key,category,enabled,seeding_time_limit_min,ratio_limit,add_wss_trackers,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-			q.Name, q.URL, q.Username, q.Password, q.APIKey, q.Category, boolInt(q.Enabled), q.SeedingTimeLimitMin, q.RatioLimit, boolInt(q.AddWSSTrackers), Now())
+		res, err := s.W.ExecContext(ctx, `INSERT INTO qb_servers(name,url,username,password,api_key,category,enabled,seeding_time_limit_min,ratio_limit,add_wss_trackers,edge_url,edge_api,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			q.Name, q.URL, q.Username, q.Password, q.APIKey, q.Category, boolInt(q.Enabled), q.SeedingTimeLimitMin, q.RatioLimit, boolInt(q.AddWSSTrackers), q.EdgeURL, boolInt(q.EdgeAPI), Now())
 		if err != nil {
 			return 0, err
 		}
 		return res.LastInsertId()
 	}
-	_, err := s.W.ExecContext(ctx, `UPDATE qb_servers SET name=?,url=?,username=?,category=?,enabled=?,seeding_time_limit_min=?,ratio_limit=?,add_wss_trackers=?,
+	_, err := s.W.ExecContext(ctx, `UPDATE qb_servers SET name=?,url=?,username=?,category=?,enabled=?,seeding_time_limit_min=?,ratio_limit=?,add_wss_trackers=?,edge_url=?,edge_api=?,
 		password = CASE WHEN ?='' THEN password ELSE ? END, api_key = CASE WHEN ?='' THEN api_key ELSE ? END WHERE id=?`,
-		q.Name, q.URL, q.Username, q.Category, boolInt(q.Enabled), q.SeedingTimeLimitMin, q.RatioLimit, boolInt(q.AddWSSTrackers),
+		q.Name, q.URL, q.Username, q.Category, boolInt(q.Enabled), q.SeedingTimeLimitMin, q.RatioLimit, boolInt(q.AddWSSTrackers), q.EdgeURL, boolInt(q.EdgeAPI),
 		q.Password, q.Password, q.APIKey, q.APIKey, q.ID)
 	return q.ID, err
+}
+
+// SetQBEdgeToken stores the hash of a server's edge token ("" unbinds the edge).
+func (s *Store) SetQBEdgeToken(ctx context.Context, id int64, hash string) error {
+	res, err := s.W.ExecContext(ctx, `UPDATE qb_servers SET edge_token_hash=? WHERE id=?`, hash, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// QBServerByEdgeToken returns the id of the server an edge token (hash) is bound to.
+func (s *Store) QBServerByEdgeToken(ctx context.Context, hash string) (int64, bool, error) {
+	if hash == "" {
+		return 0, false, nil
+	}
+	var id int64
+	err := s.R.QueryRowContext(ctx, `SELECT id FROM qb_servers WHERE edge_token_hash = ?`, hash).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, false, nil
+	}
+	return id, err == nil, err
 }
 
 func (s *Store) DeleteQBServer(ctx context.Context, id int64) error {

@@ -234,9 +234,9 @@ export const settings: SettingItem[] = [
 const iso = (msAgo: number) => new Date(Date.now() - msAgo).toISOString()
 
 export const qbServers: QBServer[] = [
-  { id: 1, name: "ams", url: "https://qbittorrent-ams.kawaii.cam", username: "admin", category: "动画/临时", enabled: true, seeding_time_limit_min: 4320, ratio_limit: 5, max_active: 40, add_wss_trackers: true, online: true, version: "v5.3.0beta1", last_error: "", last_check_at: iso(40_000) },
-  { id: 2, name: "pku", url: "https://pku.dnlab.net:8888", username: "admin", category: "动画/临时", enabled: true, seeding_time_limit_min: 2880, ratio_limit: 3, max_active: 20, add_wss_trackers: true, online: false, version: "v5.2.4", last_error: "libtorrent 2.0 不支持 WebTorrent；dial tcp: i/o timeout", last_check_at: iso(120_000) },
-  { id: 3, name: "zj", url: "https://zj.dnlab.net:8888", username: "admin", category: "临时", enabled: false, seeding_time_limit_min: 1440, ratio_limit: 2, max_active: 10, add_wss_trackers: false, online: false, version: "", last_error: "", last_check_at: null },
+  { id: 1, name: "ams", url: "https://qbittorrent-ams.kawaii.cam", username: "admin", category: "动画/临时", enabled: true, seeding_time_limit_min: 4320, ratio_limit: 5, max_active: 40, add_wss_trackers: true, edge_url: "https://edge-ams.example.com", edge_api: false, edge_bound: true, edge: { connected: true, since: "2026-01-01T00:00:00Z", version: "9c9fd33", host: "truenas-ams", rtt_ms: 12, bytes_served: 734003200, requests: 5120, listen: ":8890" }, online: true, version: "v5.3.0beta1", last_error: "", last_check_at: iso(40_000) },
+  { id: 2, name: "pku", url: "https://pku.dnlab.net:8888", username: "admin", category: "动画/临时", enabled: true, seeding_time_limit_min: 2880, ratio_limit: 3, max_active: 20, add_wss_trackers: true, edge_url: "", edge_api: false, online: false, version: "v5.2.4", last_error: "libtorrent 2.0 不支持 WebTorrent；dial tcp: i/o timeout", last_check_at: iso(120_000) },
+  { id: 3, name: "zj", url: "https://zj.dnlab.net:8888", username: "admin", category: "临时", enabled: false, seeding_time_limit_min: 1440, ratio_limit: 2, max_active: 10, add_wss_trackers: false, edge_url: "", edge_api: false, online: false, version: "", last_error: "", last_check_at: null },
 ]
 
 const NAMES = ["canoziia", "yotsuba", "kawaii", "miku", "nanako", "frieren", "himmel", "fern", "stark", "lain", "rei", "asuka", "shinji", "mikasa", "eren", "anya", "loid", "yor", "bocchi", "nijika", "ryo", "kita", "marin", "gojo", "nobara"]

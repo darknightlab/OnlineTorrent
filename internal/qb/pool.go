@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -57,6 +58,10 @@ func (s *Server) setStatus(st Status) {
 type Pool struct {
 	st  *store.Store
 	log *slog.Logger
+
+	// EdgeTransport, when set, carries the WebUI API of servers configured with EdgeAPI
+	// through their edge node's tunnel (internal/edge.Hub.Transport).
+	EdgeTransport func(serverID int64) http.RoundTripper
 
 	mu      sync.RWMutex
 	servers []*Server
@@ -155,13 +160,17 @@ func (p *Pool) Reload(ctx context.Context) error {
 	}
 	var next []*Server
 	for _, c := range cfgs {
-		if o, ok := old[c.ID]; ok && o.Cfg.URL == c.URL && o.Cfg.Username == c.Username && o.Cfg.Password == c.Password && o.Cfg.APIKey == c.APIKey {
+		if o, ok := old[c.ID]; ok && o.Cfg.URL == c.URL && o.Cfg.Username == c.Username && o.Cfg.Password == c.Password && o.Cfg.APIKey == c.APIKey && o.Cfg.EdgeAPI == c.EdgeAPI {
 			// same credentials: keep the logged-in client and last status, but never mutate
 			// the live Server (other goroutines read Cfg without locks)
 			next = append(next, &Server{Cfg: c, Client: o.Client, status: o.Status()})
 			continue
 		}
-		next = append(next, &Server{Cfg: c, Client: NewClient(c.URL, c.Username, c.Password, c.APIKey)})
+		client := NewClient(c.URL, c.Username, c.Password, c.APIKey)
+		if c.EdgeAPI && p.EdgeTransport != nil {
+			client = NewClientTransport(c.URL, c.Username, c.Password, c.APIKey, p.EdgeTransport(c.ID))
+		}
+		next = append(next, &Server{Cfg: c, Client: client})
 	}
 	p.servers = next
 	p.mu.Unlock()
