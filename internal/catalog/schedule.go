@@ -2,9 +2,9 @@ package catalog
 
 import (
 	"context"
+	"github.com/darknightlab/onlinetorrent/internal/rank"
 	"net/http"
 	"net/url"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -114,76 +114,6 @@ func (c *Catalog) ItemFor(w *meta.Work, now time.Time) (*ScheduleItem, bool) {
 	return it, true
 }
 
-var reHiRes = regexp.MustCompile(`(?i)1080|1920`)
-var reHEVC = regexp.MustCompile(`(?i)hevc|x\.?265|h\.?265|10-?bit|ma10p`)
-var reAVC = regexp.MustCompile(`(?i)\bavc\b|x\.?264|h\.?264`)
-var reCHS = regexp.MustCompile(`(?i)简|chs|\bgb\b|\bsc\b`)
-
-// PickLatest chooses the torrent to auto-play for the newest episode.
-func PickLatest(ts []*Torrent, maxBytes int64) (*Torrent, *float64) {
-	type cand struct {
-		t     *Torrent
-		ep    float64
-		score int
-	}
-	var cands []cand
-	maxEp := -1.0
-	for _, t := range ts {
-		p := meta.ParseTitle(t.Title)
-		if p.Episode == nil || p.Kind != "episode" {
-			continue
-		}
-		sc := 0
-		if maxBytes <= 0 || (t.SizeBytes > 0 && t.SizeBytes <= maxBytes) {
-			sc += 8
-		}
-		videos := 0
-		for _, f := range t.FileList {
-			if meta.IsVideo(f) {
-				videos++
-			}
-		}
-		if videos == 1 {
-			sc += 4
-		}
-		if reHiRes.MatchString(t.Title) {
-			sc += 2
-		}
-		// trusted sources skip the user-magnet floor (guests can play them)
-		if t.Trusted {
-			sc += 5
-		}
-		if reCHS.MatchString(t.Title) {
-			sc++
-		}
-		// browsers decode H.264 everywhere; HEVC/10-bit only on some platforms
-		if reHEVC.MatchString(t.Title) {
-			sc -= 3
-		} else if reAVC.MatchString(t.Title) {
-			sc += 3
-		}
-		cands = append(cands, cand{t, *p.Episode, sc})
-		if *p.Episode > maxEp {
-			maxEp = *p.Episode
-		}
-	}
-	var best *cand
-	for i := range cands {
-		c := &cands[i]
-		if c.ep != maxEp {
-			continue
-		}
-		if best == nil || c.score > best.score || (c.score == best.score && c.t.PublishedAt > best.t.PublishedAt) {
-			best = c
-		}
-	}
-	if best == nil {
-		return nil, nil
-	}
-	ep := best.ep
-	return best.t, &ep
-}
-
 func (c *Catalog) rebuildSchedule(ctx context.Context) {
 	c.rebuildMu.Lock()
 	defer c.rebuildMu.Unlock()
@@ -232,18 +162,53 @@ func (c *Catalog) rebuildSchedule(ctx context.Context) {
 	c.log.Info("schedule rebuilt", "items", len(items))
 }
 
-// fillLatest picks each item's latest torrent / episode from torrents mapped to the work.
+// fillLatest sets each item's latest episode (highest main episode with mapped files, the same
+// data as the episode list) and the torrent the episode page would auto-play for it
+// (rank.Order, guest view: user-pasted magnets need login). Access per viewer is recomputed
+// when the item is served.
 func (c *Catalog) fillLatest(ctx context.Context, items []*ScheduleItem, maxBytes int64) {
 	for _, it := range items {
-		list, err := c.meta.TorrentsByWork(ctx, it.Key, 40, true)
+		t, ep, err := c.latestFor(ctx, it.Key, maxBytes)
 		if err != nil {
-			c.log.Warn("schedule: torrents", "work", it.Key, "err", err)
+			c.log.Warn("schedule: latest", "work", it.Key, "err", err)
 			continue
 		}
-		if t, ep := PickLatest(FromCatalogList(list), maxBytes); t != nil {
+		if t != nil {
 			it.LatestTorrent, it.LatestEpisode = t, ep
 		}
 	}
+}
+
+func (c *Catalog) latestFor(ctx context.Context, workKey string, maxBytes int64) (*Torrent, *float64, error) {
+	keys, err := c.meta.EpisodeKeys(ctx, workKey)
+	if err != nil {
+		return nil, nil, err
+	}
+	var best *meta.EpisodeKey
+	for i := range keys {
+		k := keys[i].Key
+		if k.Kind == meta.KeyMain && k.Number > 0 && keys[i].Files > 0 && (best == nil || k.Number > best.Number) {
+			best = &k
+		}
+	}
+	if best == nil {
+		return nil, nil, nil
+	}
+	files, err := c.meta.EpisodeFiles(ctx, workKey, *best)
+	if err != nil || len(files) == 0 {
+		return nil, nil, err
+	}
+	cs := make([]rank.Candidate, len(files))
+	for i, f := range files {
+		cs[i] = rank.Candidate{Name: f.Title + " " + f.Path, Size: f.Size, PublishedAt: f.PublishedAt, Allowed: f.Trusted}
+	}
+	pick := files[rank.Order(cs, maxBytes)[0]]
+	rec, err := c.meta.CatalogByHash(ctx, pick.Infohash)
+	if err != nil || rec == nil {
+		return nil, nil, err
+	}
+	ep := best.Number
+	return FromCatalog(rec), &ep, nil
 }
 
 // RefreshLatest recomputes the latest torrents of the current schedule (called by the

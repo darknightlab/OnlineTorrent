@@ -2,6 +2,7 @@ package api
 
 import (
 	"errors"
+	"github.com/darknightlab/onlinetorrent/internal/rank"
 	"math"
 	"net/http"
 	"regexp"
@@ -246,47 +247,21 @@ func (s *Server) getEpisode(w http.ResponseWriter, r *http.Request) error {
 	}
 	u := userOf(r)
 	maxBytes := int64(s.St.Num(store.KeyMaxAutoSize)) << 20
-	type scored struct {
-		episodeFile
-		score int
-	}
-	list := make([]scored, 0, len(files))
+	list := make([]episodeFile, 0, len(files))
+	cs := make([]rank.Candidate, 0, len(files))
 	for _, f := range files {
 		sub := policy.Subject{Infohash: f.Infohash, Title: f.Title, Files: []string{f.Path}, Team: f.Team, Trusted: f.Trusted}
 		d, err := s.Policy.Decide(r.Context(), u, sub)
 		if err != nil {
 			return err
 		}
-		sc := 0
-		if d.Allowed {
-			sc += 100
-		}
-		if maxBytes <= 0 || (f.Size > 0 && f.Size <= maxBytes) {
-			sc += 8
-		}
-		name := f.Title + " " + f.Path
-		if reEpHEVC.MatchString(name) {
-			sc -= 3
-		} else if reEpAVC.MatchString(name) {
-			sc += 3
-		}
-		if reEpHi.MatchString(name) {
-			sc += 2
-		}
-		if reEpCHS.MatchString(name) {
-			sc++
-		}
-		list = append(list, scored{episodeFile{f, d.Access()}, sc})
+		list = append(list, episodeFile{f, d.Access()})
+		cs = append(cs, rank.Candidate{Name: f.Title + " " + f.Path, Size: f.Size, PublishedAt: f.PublishedAt, Allowed: d.Allowed})
 	}
-	sort.SliceStable(list, func(i, j int) bool {
-		if list[i].score != list[j].score {
-			return list[i].score > list[j].score
-		}
-		return list[i].PublishedAt > list[j].PublishedAt
-	})
+	// same ranking as the schedule card (internal/rank): items[0] is the auto-play pick
 	items := make([]episodeFile, len(list))
-	for i := range list {
-		items[i] = list[i].episodeFile
+	for i, j := range rank.Order(cs, maxBytes) {
+		items[i] = list[j]
 	}
 	out := map[string]any{"subject": s.subjectView(r, work), "key": key.String(), "kind": key.Kind, "number": key.Number, "label": key.Label(), "items": items}
 	if key.Kind == meta.KeyMain {
