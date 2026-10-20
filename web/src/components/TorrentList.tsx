@@ -1,9 +1,9 @@
 import { Link } from "react-router-dom"
-import { Clock, Files, HardDrive, Play } from "lucide-react"
-import { AccessBadge } from "./badges"
-import { SwarmInfo } from "./Swarm"
+import { ReleaseRowBody, releaseRowClass } from "./ReleaseRow"
+import { useSwarmViewer } from "./Swarm"
+import { DEFAULT_RANK_RULES, scoreFile, type RankInput, type Scored } from "@/lib/rank"
+import { useSiteOrFallback } from "@/lib/queries"
 import type { Torrent } from "@/lib/types"
-import { formatBytes, formatDateTime, timeAgo } from "@/lib/format"
 import { cn, watchHref } from "@/lib/utils"
 import { Skeleton } from "@/components/ui/skeleton"
 
@@ -15,102 +15,68 @@ export function stripTeam(title: string, team?: string | null) {
   return title
 }
 
-export function TorrentRow({ t, now }: { t: Torrent; now: number }) {
-  const blocked = t.access.action === "block"
-  const title = stripTeam(t.title, t.team?.name)
+/** 种子行（与单集页资源列表同一套样式，不显示「推荐」） */
+export function TorrentRow({ t, now, score }: { t: Torrent; now: number; score: Scored | null }) {
   return (
     <li>
-      <Link
-        to={watchHref(t.infohash)}
-        state={{ torrent: t }}
-        className={cn(
-          "group flex items-start gap-3 px-3 py-2.5 transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none sm:px-4 lg:items-center",
-          blocked && "opacity-70",
-        )}
-      >
-        <span
-          aria-hidden
-          className={cn(
-            "mt-0.5 hidden h-8 w-8 shrink-0 items-center justify-center rounded-full transition-colors sm:inline-flex lg:mt-0",
-            blocked ? "bg-muted text-muted-foreground" : "bg-primary-soft text-primary-text group-hover:bg-primary group-hover:text-white",
-          )}
-        >
-          <Play className="ml-px h-3.5 w-3.5 fill-current" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="line-clamp-2 wrap-anywhere text-[13px] leading-snug sm:text-sm lg:line-clamp-1" title={t.title}>
-            {t.team?.name && (
-              <span className="mr-1.5 inline-block translate-y-[-1px] rounded bg-accent-soft px-1.5 align-middle text-[11px] font-medium leading-[18px] text-accent-text">
-                {t.team.name}
-              </span>
-            )}
-            <span className="group-hover:text-primary-text">{title}</span>
-          </p>
-          <SwarmInfo swarm={t.swarm} className="mt-0.5 flex" />
-          {/* 移动端：元信息行 */}
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground lg:hidden">
-            <span className="inline-flex items-center gap-1 tabular-nums">
-              <HardDrive className="h-3 w-3" />
-              {formatBytes(t.size_bytes)}
-            </span>
-            {t.files > 0 && (
-              <span className="inline-flex items-center gap-1 tabular-nums">
-                <Files className="h-3 w-3" />
-                {t.files} 个文件
-              </span>
-            )}
-            <span className="inline-flex items-center gap-1">
-              <Clock className="h-3 w-3" />
-              {timeAgo(t.published_at, now)}
-            </span>
-            <AccessBadge access={t.access} />
-          </div>
-        </div>
-        {/* 桌面：列 */}
-        <div className="hidden shrink-0 items-center gap-4 text-xs tabular-nums text-muted-foreground lg:flex">
-          <span className="w-16 text-right">
-            <AccessBadge access={t.access} />
-          </span>
-          <span className="w-[4.5rem] text-right">{formatBytes(t.size_bytes)}</span>
-          <span className="w-12 text-right">{t.files > 0 ? `${t.files} 文件` : "—"}</span>
-          <span className="w-20 text-right" title={formatDateTime(t.published_at)}>
-            {timeAgo(t.published_at, now)}
-          </span>
-        </div>
+      <Link to={watchHref(t.infohash)} state={{ torrent: t }} className={releaseRowClass(false, t.access.action === "block")}>
+        <ReleaseRowBody
+          team={t.team?.name}
+          access={t.access}
+          tagText={t.title}
+          title={stripTeam(t.title, t.team?.name)}
+          titleAttr={t.title}
+          size={t.size_bytes}
+          publishedAt={t.published_at}
+          files={t.files}
+          swarm={t.swarm}
+          score={score}
+          now={now}
+        />
       </Link>
     </li>
   )
 }
 
+/** 种子 → 评分输入（与单集页同一套推荐规则） */
+const asRankInput = (t: Torrent): RankInput & { t: Torrent } => ({
+  t,
+  torrent_title: t.title,
+  path: "",
+  team: t.team?.name ?? "",
+  size_bytes: t.size_bytes,
+  published_at: t.published_at,
+  access: t.access,
+  swarm: t.swarm,
+})
+
+/** 种子列表：保持传入顺序，只显示分数 */
 export function TorrentList({ items, now = Date.now(), className }: { items: Torrent[]; now?: number; className?: string }) {
-  return <ul className={cn("divide-y", className)}>{items.map((t) => <TorrentRow key={t.id} t={t} now={now} />)}</ul>
+  const site = useSiteOrFallback()
+  const viewer = useSwarmViewer()
+  const rules = site.rank_rules ?? DEFAULT_RANK_RULES
+  return (
+    <ul className={cn("divide-y", className)}>
+      {items.map((t) => (
+        <TorrentRow key={t.id} t={t} now={now} score={scoreFile(asRankInput(t), rules, viewer)} />
+      ))}
+    </ul>
+  )
 }
 
 export function TorrentListSkeleton({ rows = 8 }: { rows?: number }) {
   return (
     <ul className="divide-y" aria-hidden>
       {Array.from({ length: rows }, (_, i) => (
-        <li key={i} className="flex items-center gap-3 px-4 py-3">
-          <Skeleton className="hidden h-8 w-8 rounded-full sm:block" />
+        <li key={i} className="flex items-center gap-3 px-3 py-3 sm:px-4">
           <div className="flex-1 space-y-1.5">
+            <Skeleton className="h-4 w-1/3" />
             <Skeleton className="h-3.5 w-[85%]" />
-            <Skeleton className="h-3 w-1/3 lg:hidden" />
+            <Skeleton className="h-3 w-1/4" />
           </div>
-          <Skeleton className="hidden h-3 w-48 lg:block" />
+          <Skeleton className="h-8 w-14" />
         </li>
       ))}
     </ul>
-  )
-}
-
-export function TorrentTableHead() {
-  return (
-    <div className="hidden items-center gap-4 border-b bg-muted/50 px-4 py-2 text-xs text-muted-foreground lg:flex">
-      <span className="ml-11 flex-1">标题</span>
-      <span className="w-16 text-right">权限</span>
-      <span className="w-[4.5rem] text-right">大小</span>
-      <span className="w-12 text-right">文件</span>
-      <span className="w-20 text-right">发布</span>
-    </div>
   )
 }

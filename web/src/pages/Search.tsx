@@ -3,7 +3,7 @@ import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-r
 import { ChevronDown, Magnet, SearchX, Search as SearchIcon, Tv } from "lucide-react"
 import { Container } from "@/components/layout/Container"
 import { TorrentSearchBox } from "@/components/TorrentSearchBox"
-import { TorrentList, TorrentListSkeleton, TorrentTableHead } from "@/components/TorrentList"
+import { TorrentList, TorrentListSkeleton } from "@/components/TorrentList"
 import { Cover } from "@/components/Cover"
 import { EmptyState, ErrorState, Pager } from "@/components/states"
 import { Button } from "@/components/ui/button"
@@ -102,7 +102,6 @@ export default function SearchPage() {
                 <Card className="overflow-hidden">
                   {torrents.length ? (
                     <>
-                      <TorrentTableHead />
                       <TorrentList items={torrents} now={now} />
                     </>
                   ) : (
@@ -213,7 +212,6 @@ function SearchSkeleton() {
       <div>
         <Skeleton className="mb-3 h-4 w-12" />
         <Card className="overflow-hidden">
-          <TorrentTableHead />
           <TorrentListSkeleton rows={8} />
         </Card>
       </div>

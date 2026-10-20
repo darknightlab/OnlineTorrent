@@ -1,8 +1,7 @@
 // 单集页（/subject/:provider/:id/episode/:key[/hash/:ih[/file/:index]]）的界面部件；页面逻辑见 watch/Playback.tsx
 import { Link } from "react-router-dom"
-import { ChevronRight, Film, HardDrive, Layers, ListVideo, Pin, Sparkles } from "lucide-react"
-import { AccessBadge } from "@/components/badges"
-import { SwarmInfo } from "@/components/Swarm"
+import { ChevronRight, Film, Layers, ListVideo, Pin, Sparkles } from "lucide-react"
+import { ReleaseRowBody, releaseRowClass } from "@/components/ReleaseRow"
 import { describeScore, type Scored } from "@/lib/rank"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -11,7 +10,7 @@ import { airedCount, EpisodeGrid, episodeFullLabel, useEpisodeChips, useEpisodeI
 import { displayTitle } from "@/lib/schedule"
 import { episodeLabel, formatEpisodeKey, type EpisodeKey } from "@/lib/episode"
 import type { EpisodeFile, EpisodeResponse, Subject } from "@/lib/types"
-import { formatBytes, formatDateTime, timeAgo, WEEKDAYS } from "@/lib/format"
+import { WEEKDAYS } from "@/lib/format"
 import { useNow } from "@/lib/hooks"
 import { cn, subjectHref } from "@/lib/utils"
 import type { PlayerParts } from "./watch/Player"
@@ -168,21 +167,6 @@ function baseName(path: string) {
   return i >= 0 ? path.slice(i + 1) : path
 }
 
-/** 从文件名 / 种子标题粗略解析 分辨率 · 来源 · 编码 · 容器 */
-function sourceTags(f: EpisodeFile) {
-  const t = `${f.path} ${f.torrent_title}`
-  const tags: string[] = []
-  const res = t.match(/\b(2160|1080|720|480)[pP]\b/)?.[1] ?? t.match(/\d{3,4}\s*[x×]\s*(2160|1080|720|480)\b/)?.[1]
-  if (res) tags.push(res === "2160" ? "4K" : `${res}P`)
-  const src = t.match(/\b(Baha|B-Global|CR|ABEMA|Netflix|AMZN|Bilibili|BDRip|BD|WEB-?DL|WebRip)\b/i)?.[1]
-  if (src) tags.push(src)
-  if (/\b(HEVC|[xh]\.?265)\b/i.test(t)) tags.push("HEVC")
-  else if (/\b(AVC|[xh]\.?264)\b/i.test(t)) tags.push("AVC")
-  const ext = f.path.match(/\.(mkv|mp4|webm|avi)$/i)?.[1]
-  if (ext) tags.push(ext.toUpperCase())
-  return tags
-}
-
 /** 资源的唯一键 */
 export const sourceKey = (f: Pick<EpisodeFile, "infohash" | "file_index">) => `${f.infohash}:${f.file_index}`
 
@@ -216,67 +200,39 @@ export function SourceList({
           const sc = i >= 0 ? ranked[i] : undefined
           return (
             <li key={pinned ? "extra" : sourceKey(f)} className="relative">
-              {active && <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-primary" />}
-              <button
-                type="button"
-                onClick={() => onSelect(f)}
-                aria-current={active ? "true" : undefined}
-                className={cn(
-                  "flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-muted/60 focus-visible:bg-muted/60 focus-visible:outline-none sm:px-4",
-                  active && "bg-primary-soft hover:bg-primary-soft",
-                  blocked && "opacity-70",
-                )}
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-center gap-1 overflow-hidden">
-                    {active && <Badge variant="default">播放中</Badge>}
-                    {pinned && (
-                      <Badge variant="accent-soft" title="通过链接指定的资源（尚未收录到本集）">
-                        <Pin />
-                        指定
-                      </Badge>
-                    )}
-                    {i === 0 && sc && (
-                      <Badge variant="soft" title={`自动推荐（${describeScore(sc)}）`}>
-                        <Sparkles />
-                        推荐
-                      </Badge>
-                    )}
-                    {f.team && (
-                      <Badge variant="accent-soft" className="max-w-[9rem] truncate">
-                        {f.team}
-                      </Badge>
-                    )}
-                    <AccessBadge access={f.access} />
-                    {sourceTags(f).map((t) => (
-                      <Badge key={t} variant="outline" className="border-foreground/15 px-1 font-normal">
-                        {t}
-                      </Badge>
-                    ))}
-                  </span>
-                  <span className={cn("mt-1 block truncate text-[13px] leading-snug", active ? "font-medium text-primary-text" : "text-foreground/85")} title={f.path}>
-                    {name}
-                  </span>
-                  {!pinned && <SwarmInfo swarm={f.swarm} dead={sc?.dead} className="mt-0.5 flex" />}
-                </span>
-                <span className="shrink-0 text-right text-[11px] leading-5 tabular-nums text-muted-foreground">
-                  {f.size_bytes > 0 && (
-                    <span className="flex items-center justify-end gap-1">
-                      <HardDrive className="h-3 w-3" />
-                      {formatBytes(f.size_bytes)}
-                    </span>
-                  )}
-                  {f.published_at && (
-                    <span className="block" title={formatDateTime(f.published_at)}>
-                      {timeAgo(f.published_at, now)}
-                    </span>
-                  )}
-                  {sc && (
-                    <span className={cn("block", sc.score < 0 && "text-destructive-text")} title={describeScore(sc)}>
-                      {`${sc.score > 0 ? "+" : ""}${Math.round(sc.score)} 分`}
-                    </span>
-                  )}
-                </span>
+              {active && <span aria-hidden className="absolute inset-y-0 left-0 z-10 w-0.5 bg-primary" />}
+              <button type="button" onClick={() => onSelect(f)} aria-current={active ? "true" : undefined} className={releaseRowClass(active, blocked)}>
+                <ReleaseRowBody
+                  lead={
+                    <>
+                      {active && <Badge variant="default">播放中</Badge>}
+                      {pinned && (
+                        <Badge variant="accent-soft" title="通过链接指定的资源（尚未收录到本集）">
+                          <Pin />
+                          指定
+                        </Badge>
+                      )}
+                      {i === 0 && sc && (
+                        <Badge variant="soft" title={`自动推荐（${describeScore(sc)}）`}>
+                          <Sparkles />
+                          推荐
+                        </Badge>
+                      )}
+                    </>
+                  }
+                  team={f.team}
+                  access={f.access}
+                  tagText={`${f.path} ${f.torrent_title}`}
+                  tagPath={f.path}
+                  title={name}
+                  titleAttr={f.path}
+                  size={f.size_bytes}
+                  publishedAt={f.published_at}
+                  swarm={pinned ? null : f.swarm}
+                  score={sc ?? null}
+                  active={active}
+                  now={now}
+                />
               </button>
             </li>
           )

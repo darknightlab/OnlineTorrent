@@ -4,7 +4,7 @@ import { CalendarClock, CalendarDays, Clapperboard, ExternalLink, Film, LayoutGr
 import { Container } from "@/components/layout/Container"
 import { Cover } from "@/components/Cover"
 import { airedCount, EpisodeGrid, EpisodeRows, episodeSummary, useEpisodeChips } from "@/components/EpisodeGrid"
-import { TorrentList, TorrentTableHead } from "@/components/TorrentList"
+import { TorrentList } from "@/components/TorrentList"
 import { EmptyState, ErrorState, SectionHeader } from "@/components/states"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -180,7 +180,6 @@ export default function SubjectPage() {
             </div>
           )}
           <Card className="overflow-hidden">
-            <TorrentTableHead />
             {torrents.length ? <TorrentList items={torrents} now={now} /> : <EmptyState icon={Film} title="暂无种子" description="字幕组发布后会自动出现在这里。" />}
           </Card>
         </section>
