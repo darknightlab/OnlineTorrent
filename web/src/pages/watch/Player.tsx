@@ -30,6 +30,7 @@ import { ReportDialog } from "./ReportDialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent } from "@/components/ui/dialog"
+import { BLEED, SideSection } from "@/pages/Episode"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
 import { errorMessage } from "@/components/states"
@@ -37,7 +38,7 @@ import { api, isApiError } from "@/lib/api"
 import { PERM, can, useMe, useSiteOrFallback, useSubject } from "@/lib/queries"
 import type { PlayResponse } from "@/lib/types"
 import type { PlayHint } from "./usePlayResolve"
-import { formatBytes, formatDuration, formatPercent, formatSpeed } from "@/lib/format"
+import { formatBytes, formatPercent, formatSpeed } from "@/lib/format"
 import { cn, copyText, episodeHref, subjectHref, subjectPath } from "@/lib/utils"
 import { canonicalEpisodeKey, episodeLabel, parseEpisodeKey } from "@/lib/episode"
 import { useDocumentTitle } from "@/lib/hooks"
@@ -118,7 +119,7 @@ export function Player({
   const [fatal, setFatal] = useState<string | null>(null)
   const [noPicture, setNoPicture] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
-  const [tab, setTab] = useState(panelSources ? "sources" : "files")
+  const [tab, setTab] = useState(panelSources ? "sources" : side ? "files" : "peers")
   // 「资源」弹窗：资源 / 文件 / 节点 / 详情 / 日志（页面上不再常驻）
   const [panelOpen, setPanelOpen] = useState(false)
   const openPanel = useCallback(() => setPanelOpen(true), [])
@@ -402,6 +403,17 @@ export function Player({
 
   const isMock = engine?.kind === "mock"
   const sortedFiles = useMemo(() => (snap ? [...snap.files].sort((a, b) => collator.compare(a.path, b.path)) : []), [snap])
+  // 文件列表：种子播放页在右栏，单集页在「资源」弹窗里
+  const filesInSide = !side
+  const fileList = !snap ? (
+    <PanelLoading text="等待种子信息…" />
+  ) : (
+    <ul className="divide-y">
+      {sortedFiles.map((f) => (
+        <FileRow key={f.index} f={f} active={f.index === current} onSelect={() => onSelectFile(f)} downloadURL={session?.fileURL(f.index) ?? null} />
+      ))}
+    </ul>
+  )
 
   const loginHref = `/login?next=${encodeURIComponent(here)}`
   const compactActions = (
@@ -438,7 +450,7 @@ export function Player({
   )
 
   return (
-    <div className={cn("grid gap-4", side && "lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-5 xl:grid-cols-[minmax(0,1fr)_400px]")}>
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-5 xl:grid-cols-[minmax(0,1fr)_400px]">
       <section className="min-w-0">
         {/* 播放区：移动端吸顶、全宽 */}
         <div ref={playerBox} className="sticky top-[env(safe-area-inset-top)] z-20 -mx-3 bg-black sm:-mx-4 sm:top-14 lg:static lg:mx-0 lg:overflow-hidden lg:rounded-xl">
@@ -541,84 +553,48 @@ export function Player({
         {renderInfo ? (
           renderInfo({ actions: compactActions, stats: compactStats })
         ) : (
-          <>
-            {/* 标题与操作 */}
-            <div className="mt-3 flex flex-col gap-3 sm:mt-4 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0">
-                <h1 className="line-clamp-2 wrap-anywhere text-[15px] font-semibold leading-snug sm:text-lg" title={title}>
-                  {title}
-                </h1>
-                <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1.5 text-xs text-muted-foreground">
-                  {hint?.team && <Badge variant="accent-soft">{hint.team}</Badge>}
-                  {showMeta && meta && metaPath && (
-                    <span className="inline-flex h-6 items-center overflow-hidden rounded bg-primary-soft font-medium text-primary-text">
-                      <Link to={subjectHref(meta)} className="inline-flex h-full items-center gap-1 px-1.5 hover:underline" title="番剧详情">
-                        <Tv className="h-3 w-3" />
-                        {subject.data ? subject.data.subject.title_cn || subject.data.subject.title : meta.title || "番剧详情"}
-                      </Link>
-                      {metaKey && (
-                        <Link to={episodeHref(meta, metaKey)} className="inline-flex h-full items-center border-l border-primary/20 px-1.5 hover:underline" title="本集所有资源">
-                          {meta.episode_label || episodeLabel(parseEpisodeKey(metaKey)!)}
-                        </Link>
-                      )}
-                    </span>
-                  )}
-                  {snap && <span className="tabular-nums">{formatBytes(snap.length)}</span>}
-                  {snap && <span>{snap.files.length} 个文件</span>}
-                  {direct && <Badge variant="warning">直连模式</Badge>}
-                </div>
-              </div>
-              <div className="flex shrink-0 gap-2">
-                <Button variant="soft" size="sm" onClick={share} className="flex-1 sm:flex-none">
-                  <Share2 />
-                  分享
-                </Button>
-                {file && url ? (
-                  <Button asChild variant="outline" size="sm" className="flex-1 sm:flex-none">
-                    <a href={url} download={file.name}>
-                      <Download />
-                      下载
-                    </a>
-                  </Button>
-                ) : (
-                  <Button variant="outline" size="sm" disabled className="flex-1 sm:flex-none">
-                    <Download />
-                    下载
-                  </Button>
-                )}
-                {canReport ? (
-                  <Button variant="ghost" size="sm" onClick={() => setReportOpen(true)} disabled={!infoHash} className="flex-1 text-muted-foreground sm:flex-none">
-                    <Flag />
-                    举报
-                  </Button>
-                ) : meReady && !loggedIn ? (
-                  <Button asChild variant="ghost" size="sm" className="flex-1 text-muted-foreground sm:flex-none">
-                    <Link to={loginHref} title="登录后可举报该资源">
-                      <Flag />
-                      举报
+          // 种子播放页：与单集页同样的布局（标题 · 信息行 · 统计与操作一行）
+          <div className="pt-3 lg:pt-4">
+            <h1 className="line-clamp-2 wrap-anywhere text-base font-semibold leading-snug lg:text-xl" title={title}>
+              {title}
+            </h1>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground lg:text-[13px]">
+              {hint?.team && <Badge variant="accent-soft">{hint.team}</Badge>}
+              {showMeta && meta && metaPath && (
+                <span className="inline-flex h-6 items-center overflow-hidden rounded bg-primary-soft font-medium text-primary-text">
+                  <Link to={subjectHref(meta)} className="inline-flex h-full items-center gap-1 px-1.5 hover:underline" title="番剧详情">
+                    <Tv className="h-3 w-3" />
+                    {subject.data ? subject.data.subject.title_cn || subject.data.subject.title : meta.title || "番剧详情"}
+                  </Link>
+                  {metaKey && (
+                    <Link to={episodeHref(meta, metaKey)} className="inline-flex h-full items-center border-l border-primary/20 px-1.5 hover:underline" title="本集所有资源">
+                      {meta.episode_label || episodeLabel(parseEpisodeKey(metaKey)!)}
                     </Link>
-                  </Button>
-                ) : null}
-              </div>
+                  )}
+                </span>
+              )}
+              {snap && (
+                <span className="tabular-nums">
+                  {formatBytes(snap.length)} · {snap.files.length} 个文件
+                </span>
+              )}
+              {direct && <Badge variant="warning">直连模式</Badge>}
             </div>
-
-            {/* 统计 */}
-            <dl className="mt-3 grid grid-cols-4 overflow-hidden rounded-lg border bg-card text-center sm:mt-4">
-              <Stat icon={ArrowDown} label="下载" value={formatSpeed(snap?.downloadSpeed ?? 0)} sub={formatBytes(snap?.downloaded ?? 0)} tone="text-primary-text" />
-              <Stat icon={ArrowUp} label="上传" value={formatSpeed(snap?.uploadSpeed ?? 0)} sub={formatBytes(snap?.uploaded ?? 0)} tone="text-accent-text" />
-              <Stat icon={Users} label="节点" value={String(snap?.numPeers ?? 0)} sub={snap?.peers.some((p) => p.type === "webSeed") ? "含 WebSeed" : "WebRTC"} />
-              <Stat
-                icon={ListTree}
-                label="进度"
-                value={formatPercent(file?.progress ?? snap?.progress ?? 0)}
-                sub={snap?.done ? "已完成" : snap ? `剩余 ${formatDuration(snap.timeRemaining)}` : "-"}
-              />
-            </dl>
-          </>
+            <div className="mt-2 flex items-center justify-between gap-2 border-b pb-2 lg:mt-3 lg:pb-3">
+              {compactStats}
+              <div className="-mr-2">{compactActions}</div>
+            </div>
+          </div>
         )}
       </section>
 
-      {side && <aside className="min-w-0 space-y-4 lg:space-y-5">{side}</aside>}
+      <aside className="min-w-0 space-y-4 lg:space-y-5">
+        {side ?? (
+          <SideSection id="files-title" icon={ListTree} title="文件" extra={snap ? `${snap.files.length} 个` : undefined}>
+            <div className={cn(BLEED, "border-y lg:-mx-4 lg:-mb-4 lg:max-h-[min(70vh,40rem)] lg:overflow-y-auto lg:border-b-0")}>{fileList}</div>
+          </SideSection>
+        )}
+      </aside>
 
       {/* 「资源」弹窗（全屏时挂在全屏元素里） */}
       <Dialog open={panelOpen} onOpenChange={setPanelOpen}>
@@ -631,10 +607,12 @@ export function Player({
                   资源
                 </TabsTrigger>
               )}
-              <TabsTrigger value="files">
-                <ListTree />
-                文件{snap ? ` ${snap.files.length}` : ""}
-              </TabsTrigger>
+              {!filesInSide && (
+                <TabsTrigger value="files">
+                  <ListTree />
+                  文件{snap ? ` ${snap.files.length}` : ""}
+                </TabsTrigger>
+              )}
               <TabsTrigger value="peers">
                 <Users />
                 节点
@@ -646,17 +624,7 @@ export function Player({
             </TabsList>
             <div className="h-[min(60dvh,32rem)] overflow-y-auto">
               {panelSources && <TabsContent value="sources">{panelSources(() => setPanelOpen(false))}</TabsContent>}
-              <TabsContent value="files">
-                {!snap ? (
-                  <PanelLoading text="等待种子信息…" />
-                ) : (
-                  <ul className="divide-y">
-                    {sortedFiles.map((f) => (
-                      <FileRow key={f.index} f={f} active={f.index === current} onSelect={() => onSelectFile(f)} downloadURL={session?.fileURL(f.index) ?? null} />
-                    ))}
-                  </ul>
-                )}
-              </TabsContent>
+              {!filesInSide && <TabsContent value="files">{fileList}</TabsContent>}
               <TabsContent value="peers">
                 <PeersPanel snap={snap} />
               </TabsContent>
@@ -756,19 +724,6 @@ function ActionButton({
     <button type="button" onClick={onClick} disabled={disabled} className={cls} title={title ?? label}>
       {inner}
     </button>
-  )
-}
-
-function Stat({ icon: Icon, label, value, sub, tone }: { icon: typeof Users; label: string; value: string; sub: string; tone?: string }) {
-  return (
-    <div className="min-w-0 border-r px-1 py-2.5 last:border-r-0 sm:px-3">
-      <dt className="flex items-center justify-center gap-1 text-[11px] text-muted-foreground">
-        <Icon className={cn("h-3.5 w-3.5", tone)} />
-        {label}
-      </dt>
-      <dd className="mt-0.5 truncate text-[13px] font-semibold tabular-nums sm:text-[15px]">{value}</dd>
-      <dd className="truncate text-[10px] tabular-nums text-muted-foreground sm:text-[11px]">{sub}</dd>
-    </div>
   )
 }
 

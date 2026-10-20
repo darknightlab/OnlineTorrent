@@ -156,7 +156,7 @@ export default function PlaybackPage() {
   if (!isEpisode) {
     const shareURL = (h: string | null, idx: number | null) => `${location.origin}${h ? watchHref(h, idx) : here}`
     return (
-      <Container className="py-0 sm:py-5">
+      <Container className="pb-6 lg:py-5">
         {ready ? (
           <Player
             key={ih}
@@ -170,8 +170,11 @@ export default function PlaybackPage() {
             onCurrentChange={setPlaying}
           />
         ) : (
-          <div className="pt-3 sm:pt-0">
-            {state.status !== "idle" && <PlayGate state={state} title={hint?.title} here={here} retry={retry} />}
+          // 还没有播放会话：同样的播放器外壳与布局（就绪后右栏是文件列表），状态提示在画面里
+          <div className={GRID}>
+            <section className="min-w-0">
+              <PlayerShell>{state.status !== "idle" && <PlayGate overlay state={state} title={hint?.title} here={here} retry={retry} />}</PlayerShell>
+            </section>
           </div>
         )}
       </Container>

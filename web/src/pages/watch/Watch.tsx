@@ -10,7 +10,8 @@ import { normalizeInfohash, parseTorrentInput, watchHref } from "@/lib/utils"
 import { StatusPage } from "@/pages/NotFound"
 import { usePlayAttempt, usePlayResolve, type PlayHint, type PlayPreload, type PlaySource, type ResolveState } from "./usePlayResolve"
 import { PlayGate } from "./PlayGate"
-import { Player } from "./Player"
+import { Player, PlayerShell } from "./Player"
+import { GRID } from "@/pages/Episode"
 
 /** 列表页跳转时附带的 location.state */
 export interface WatchLocationState {
@@ -91,7 +92,7 @@ function WatchView({
 
   if (state.status === "idle") return <IdleWatch />
   return (
-    <Container className="py-0 sm:py-5">
+    <Container className="pb-6 lg:py-5">
       {state.status === "ready" ? (
         <Player
           key={state.magnet}
@@ -104,8 +105,12 @@ function WatchView({
           onFileChange={onFileChange}
         />
       ) : (
-        <div className="pt-3 sm:pt-0">
-          <PlayGate state={state} title={hint?.title} here={here} retry={retry} />
+        <div className={GRID}>
+          <section className="min-w-0">
+            <PlayerShell>
+              <PlayGate overlay state={state} title={hint?.title} here={here} retry={retry} />
+            </PlayerShell>
+          </section>
         </div>
       )}
     </Container>
