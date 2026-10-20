@@ -19,10 +19,9 @@ import type { EpisodeFile, EpisodeResponse, TorrentStatus } from "@/lib/types"
 import { useDocumentTitle } from "@/lib/hooks"
 import { useEpisodeItem, episodeFullLabel } from "@/components/EpisodeGrid"
 import { canonicalEpisodeKey, formatEpisodeKey, parseEpisodeKey, type EpisodeKey } from "@/lib/episode"
-import { cn, episodeSourceHref, normalizeInfohash, watchHref } from "@/lib/utils"
+import { episodeSourceHref, normalizeInfohash, watchHref } from "@/lib/utils"
 import { StatusPage } from "@/pages/NotFound"
 import {
-  BLEED,
   EmptyEpisode,
   EpisodeInfo,
   EpisodeInfoSkeleton,
@@ -36,7 +35,7 @@ import {
 import { episodeRedirect } from "@/lib/playresolve"
 import { usePlayAttempt, usePlayResolve, type PlayHint } from "./usePlayResolve"
 import { PlayGate } from "./PlayGate"
-import { Player } from "./Player"
+import { Player, PlayerShell } from "./Player"
 import { hintOf, type WatchLocationState } from "./Watch"
 
 /** 做种后轮询收录状态：间隔与最长时间 */
@@ -205,11 +204,9 @@ export default function PlaybackPage() {
   const sideProps = epData
     ? { data: epData, ranked, ep: ep!, ih, fileIndex: fileIndex ?? playing, listed: !!listed, playName: ready ? state.play?.name : undefined, hint, selected, onSelect: select }
     : null
-  // 资源列表平时在播放器的「资源」弹窗里，页面上只留选集；只有确定无法播放时（需登录 / 大会员 / 被屏蔽 /
-  // 超时 / 出错，没有播放器）才在页面上列出资源以便换源。加载中不列，否则会先出现再消失
-  const gated = ["login", "vip", "blocked", "timeout", "error"].includes(state.status)
+  // 资源列表只在播放器的「资源」弹窗里（任何状态都有播放器外壳），页面上只留选集
   const side = sideProps ? (
-    <EpisodeSide {...sideProps} part={gated ? "all" : "episodes"} />
+    <EpisodeSide {...sideProps} part="episodes" />
   ) : epQ.error ? (
     <Card>
       <ErrorState error={epQ.error} onRetry={() => epQ.refetch()} />
@@ -217,6 +214,7 @@ export default function PlaybackPage() {
   ) : (
     <EpisodeSideSkeleton />
   )
+  const panelSources = sideProps ? (close: () => void) => <EpisodeSide {...sideProps} part="sources" onPicked={close} /> : undefined
   const info = (parts?: Parameters<typeof EpisodeInfo>[0]["parts"]) =>
     epData ? <EpisodeInfo subject={epData.subject} ep={ep!} parts={parts} /> : <EpisodeInfoSkeleton />
   const shareURL = (h: string | null, idx: number | null) => `${location.origin}${h ? sourceHref(h, idx) : here}`
@@ -237,22 +235,15 @@ export default function PlaybackPage() {
           poster={epData ? (epData.subject.cover ?? "") : undefined}
           renderInfo={(parts) => info(parts)}
           side={side}
-          panelSources={sideProps ? (close) => <EpisodeSide {...sideProps} part="sources" onPicked={close} /> : undefined}
+          panelSources={panelSources}
         />
       ) : (
         <div className={GRID}>
           <section className="min-w-0">
-            {state.status !== "idle" && (
-              <PlayGate
-                state={state}
-                title={hint?.title}
-                here={here}
-               
-                retry={retry}
-                docTitle={false}
-                className={cn(BLEED, "max-w-none rounded-none border-x-0 border-t-0 lg:rounded-xl lg:border")}
-              />
-            )}
+            {/* 还没有播放会话：同样的播放器外壳（「资源」按钮可用），状态提示在画面里 */}
+            <PlayerShell poster={epData?.subject.cover ?? undefined} panelSources={panelSources}>
+              {state.status !== "idle" && <PlayGate overlay state={state} title={hint?.title} here={here} retry={retry} docTitle={false} />}
+            </PlayerShell>
             {info()}
           </section>
           <aside className="min-w-0 space-y-4 lg:space-y-5">{side}</aside>

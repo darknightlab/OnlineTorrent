@@ -904,3 +904,48 @@ function InfoPanel({ snap, infoHash, magnet, torrentURL }: { snap: TorrentSnap |
   )
 }
 
+/**
+ * 还没有播放会话时（请求中 / 需登录 / 无权播放…）的播放器外壳：与 Player 同样的画面区域与控制栏
+ * （空的 ArtPlayer，「资源」按钮可用），children 为画面中央的状态提示。
+ */
+export function PlayerShell({ poster, panelSources, children }: { poster?: string; panelSources?: (close: () => void) => React.ReactNode; children?: React.ReactNode }) {
+  const [open, setOpen] = useState(false)
+  const openPanel = useCallback(() => setOpen(true), [])
+  const box = useRef<HTMLDivElement>(null)
+  const [fsHost, setFsHost] = useState<HTMLElement | null>(null)
+  useEffect(() => {
+    const on = () => {
+      const el = document.fullscreenElement as HTMLElement | null
+      setFsHost(el && box.current?.contains(el) ? el : null)
+    }
+    document.addEventListener("fullscreenchange", on)
+    return () => document.removeEventListener("fullscreenchange", on)
+  }, [])
+  return (
+    <div ref={box} className="sticky top-[env(safe-area-inset-top)] z-20 -mx-3 bg-black sm:-mx-4 sm:top-14 lg:static lg:mx-0 lg:overflow-hidden lg:rounded-xl">
+      <div className="relative aspect-video w-full overflow-hidden bg-black select-none">
+        {poster && (
+          <>
+            <div aria-hidden className="absolute inset-0 scale-110 bg-cover bg-center opacity-50 blur-2xl" style={{ backgroundImage: `url("${poster}")` }} />
+            <div aria-hidden className="absolute inset-0 bg-contain bg-center bg-no-repeat" style={{ backgroundImage: `url("${poster}")` }} />
+          </>
+        )}
+        <div aria-hidden className="absolute inset-0 bg-black/65" />
+        <ArtVideo url="" segments={EMPTY_SEGMENTS} speed={0} onPanel={panelSources ? openPanel : undefined} />
+        {/* 状态提示：不盖住底部控制栏；按钮可点 */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-12 top-0 z-10 flex items-center justify-center [&_a]:pointer-events-auto [&_button]:pointer-events-auto">
+          {children}
+        </div>
+      </div>
+      {panelSources && (
+        <Dialog open={open} onOpenChange={setOpen}>
+          <DialogContent container={fsHost} title="资源" className="gap-3 sm:max-w-2xl">
+            <div className="-mx-5 -mb-5 h-[min(60dvh,32rem)] min-w-0 overflow-y-auto border-t">{panelSources(() => setOpen(false))}</div>
+          </DialogContent>
+        </Dialog>
+      )}
+    </div>
+  )
+}
+
+const EMPTY_SEGMENTS = new Uint8Array(1)
