@@ -114,9 +114,10 @@ export function EpisodeInfo({ subject: s, ep, parts }: { subject: Subject; ep: E
         {meta}
       </p>
       {parts && (
-        <div className="mt-2 flex flex-col gap-2 lg:mt-3 lg:flex-row-reverse lg:items-center lg:justify-between lg:border-b lg:pb-3">
+        // 同一行：左边下载 / 上传 / 节点 / 进度，右边分享 / 下载 / 举报
+        <div className="mt-2 flex items-center justify-between gap-2 border-b pb-2 lg:mt-3 lg:pb-3">
           {parts.stats}
-          <div className="-mx-2 border-b pb-1 lg:mx-0 lg:-ml-2.5 lg:border-0 lg:pb-0">{parts.actions}</div>
+          <div className="-mr-2">{parts.actions}</div>
         </div>
       )}
     </div>

@@ -404,7 +404,7 @@ export function Player({
 
   const loginHref = `/login?next=${encodeURIComponent(here)}`
   const compactActions = (
-    <div className="flex items-center gap-1">
+    <div className="flex shrink-0 items-center sm:gap-1">
       <ActionButton icon={Share2} label="分享" onClick={share} />
       {file && url ? (
         <ActionButton icon={Download} label="下载" href={url} download={file.name} />
@@ -420,7 +420,7 @@ export function Player({
   )
   const progress = file?.progress ?? snap?.progress ?? 0
   const compactStats = (
-    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] tabular-nums text-muted-foreground sm:text-xs">
+    <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] tabular-nums text-muted-foreground sm:text-xs">
       <span className="inline-flex items-center gap-0.5" title={`已下载 ${formatBytes(snap?.downloaded ?? 0)}`}>
         <ArrowDown className="h-3 w-3 text-primary-text" />
         {formatSpeed(snap?.downloadSpeed ?? 0)}
@@ -746,29 +746,30 @@ function ActionButton({
   disabled?: boolean
 }) {
   const cls = cn(
-    "inline-flex min-w-14 flex-col items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] text-foreground/75 transition-colors hover:bg-muted hover:text-primary-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring lg:min-w-0 lg:flex-row lg:gap-1.5 lg:px-2.5 lg:text-[13px]",
+    // 手机：只有图标（文字给读屏 / 悬停提示）；sm 以上：图标 + 文字横排
+    "inline-flex h-9 w-9 items-center justify-center rounded-md text-foreground/75 transition-colors hover:bg-muted hover:text-primary-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-auto sm:gap-1.5 sm:px-2.5 sm:text-[13px]",
     disabled && "pointer-events-none opacity-45",
   )
   const inner = (
     <>
-      <Icon className="h-5 w-5 lg:h-[18px] lg:w-[18px]" strokeWidth={1.8} />
-      {label}
+      <Icon className="h-5 w-5 sm:h-[18px] sm:w-[18px]" strokeWidth={1.8} />
+      <span className="sr-only sm:not-sr-only">{label}</span>
     </>
   )
   if (to)
     return (
-      <Link to={to} className={cls} title={title}>
+      <Link to={to} className={cls} title={title ?? label}>
         {inner}
       </Link>
     )
   if (href)
     return (
-      <a href={href} download={download} className={cls} title={title}>
+      <a href={href} download={download} className={cls} title={title ?? label}>
         {inner}
       </a>
     )
   return (
-    <button type="button" onClick={onClick} disabled={disabled} className={cls} title={title}>
+    <button type="button" onClick={onClick} disabled={disabled} className={cls} title={title ?? label}>
       {inner}
     </button>
   )
