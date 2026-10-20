@@ -143,6 +143,28 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
       art.loading.show = false
     }
   }
+  // 手机全屏时锁定横屏（横向视频）；退出全屏时解除。不支持锁定的浏览器（如 iOS Safari 用系统播放器全屏，
+  // 本身会随设备旋转）静默忽略。ArtPlayer 自带的 autoOrientation 失败时会把异常显示在画面上，所以自己处理。
+  let locked = false
+  type LockableOrientation = ScreenOrientation & { lock?: (o: "landscape") => Promise<void> }
+  art.on("fullscreen", (on: boolean) => {
+    const so = screen.orientation as LockableOrientation | undefined
+    if (!mobile || !so?.lock) return
+    if (on) {
+      if (video.videoWidth > 0 && video.videoWidth < video.videoHeight) return // 竖屏视频不旋转
+      so.lock("landscape").then(
+        () => (locked = true),
+        () => {},
+      )
+    } else if (locked) {
+      locked = false
+      try {
+        so.unlock()
+      } catch {
+        /* ignore */
+      }
+    }
+  })
   art.on("video:play", () => {
     // 点击按钮后 play 事件立即触发（play() 的 Promise 要等到有数据才 resolve）
     needsTap = false
