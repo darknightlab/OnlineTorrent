@@ -580,6 +580,79 @@ func (s *Store) SetInviteDisabled(ctx context.Context, id int64, disabled bool) 
 	return err
 }
 
+// InvitePatch edits an invite; nil fields are left unchanged. ExpiresAt: "" = never expires,
+// otherwise RFC 3339 or a date (YYYY-MM-DD, end of that day UTC).
+type InvitePatch struct {
+	MaxUses   *int    `json:"max_uses"` // 0 = unlimited
+	Role      *string `json:"role"`
+	VIPDays   *int    `json:"vip_days"`
+	ExpiresAt *string `json:"expires_at"`
+	Note      *string `json:"note"`
+	Disabled  *bool   `json:"disabled"`
+}
+
+// UpdateInvite applies p to invite id (the code and the use count are not editable).
+func (s *Store) UpdateInvite(ctx context.Context, id int64, p InvitePatch) (*Invite, error) {
+	sets := []string{}
+	args := []any{}
+	if p.MaxUses != nil {
+		if *p.MaxUses < 0 {
+			return nil, errors.New("max_uses 需 ≥ 0（0 表示不限）")
+		}
+		sets, args = append(sets, "max_uses = ?"), append(args, *p.MaxUses)
+	}
+	if p.Role != nil {
+		if *p.Role != RoleMember && *p.Role != RoleVIP {
+			return nil, errors.New("邀请角色只能是 member 或 vip")
+		}
+		sets, args = append(sets, "role = ?"), append(args, *p.Role)
+	}
+	if p.VIPDays != nil {
+		if *p.VIPDays < 0 {
+			return nil, errors.New("vip_days 需 ≥ 0")
+		}
+		sets, args = append(sets, "vip_days = ?"), append(args, *p.VIPDays)
+	}
+	if p.ExpiresAt != nil {
+		var exp any
+		if v := strings.TrimSpace(*p.ExpiresAt); v != "" {
+			t, err := time.Parse(time.RFC3339, v)
+			if err != nil {
+				d, derr := time.Parse("2006-01-02", v)
+				if derr != nil {
+					return nil, errors.New("过期时间格式应为 YYYY-MM-DD")
+				}
+				t = d.Add(24*time.Hour - time.Second)
+			}
+			exp = t.UTC().Format(time.RFC3339)
+		}
+		sets, args = append(sets, "expires_at = ?"), append(args, exp)
+	}
+	if p.Note != nil {
+		sets, args = append(sets, "note = ?"), append(args, Trunc(*p.Note, MaxReasonBytes))
+	}
+	if p.Disabled != nil {
+		sets, args = append(sets, "disabled = ?"), append(args, boolInt(*p.Disabled))
+	}
+	if len(sets) > 0 {
+		res, err := s.W.ExecContext(ctx, `UPDATE invites SET `+strings.Join(sets, ", ")+` WHERE id = ?`, append(args, id)...)
+		if err != nil {
+			return nil, err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return nil, ErrNotFound
+		}
+	}
+	list, err := s.listInvites(ctx, s.W, `WHERE i.id = ?`, id)
+	if err != nil {
+		return nil, err
+	}
+	if len(list) == 0 {
+		return nil, ErrNotFound
+	}
+	return &list[0], nil
+}
+
 // ---- redeem codes ----
 
 type RedeemCode struct {

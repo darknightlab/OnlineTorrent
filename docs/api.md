@@ -312,6 +312,7 @@ WebSeed **只由边缘节点提供**：`{edge_url}/webseed/hash/{ih}/…`（如 
 - `GET /admin/users?q=&page=`，`PUT /admin/users/id/{id}` `{role?, vip_until?, disabled?}`（设 `role: "vip"` 且不传 `vip_until` = 永久大会员，会清空 vip_until）
 - `GET/POST /admin/invites`、`GET/POST /admin/redeem-codes`
   创建邀请 `{max_uses?, role, vip_days, expires_in_days, note}`：`max_uses` 省略为 1，0 为不限，负数 400；`vip_days` 需 ≥ 0。邀请码大写，使用时不区分大小写。
+- `PUT /admin/invites/id/{id}` 修改邀请 `{max_uses?, role?, vip_days?, expires_at?, note?, disabled?}`：省略的字段不变；`expires_at` 为 `""` 表示永不过期，否则 `YYYY-MM-DD`（当天 23:59:59 UTC）或 RFC 3339。代码本身与已用次数不可改；`max_uses` 不大于已用次数时即为用完。返回邀请列表。
 - `GET/POST /admin/rules`，`PUT/DELETE /admin/rules/id/{id}`
   Rule: `{id, name, enabled, priority, match: {"field":"title|file|infohash|team|tag|category","op":"contains|regex|equals","value":"..."}, action:"allow|login|vip|block", label:"political|porn|copyright|other|", note}`
 - `POST /admin/policy/test` `{title, infohash?, files?, tags?, team?}` → `{access, matched_rule}`

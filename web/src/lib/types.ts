@@ -436,6 +436,16 @@ export interface InviteCode {
   created_at: string
 }
 
+/** 修改邀请码：省略的字段不变；expires_at 为 "" 表示永不过期，否则 YYYY-MM-DD（当天结束） */
+export interface InvitePatch {
+  max_uses?: number
+  role?: "member" | "vip"
+  vip_days?: number
+  expires_at?: string
+  note?: string
+  disabled?: boolean
+}
+
 export interface InviteCreate {
   max_uses: number
   role: "member" | "vip"

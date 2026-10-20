@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -261,16 +262,22 @@ func (s *Server) adminCreateInvite(w http.ResponseWriter, r *http.Request) error
 }
 
 func (s *Server) adminUpdateInvite(w http.ResponseWriter, r *http.Request) error {
-	var in struct {
-		Disabled bool `json:"disabled"`
-	}
+	var in store.InvitePatch
 	if err := httpx.Decode(r, &in); err != nil {
 		return err
 	}
-	if err := s.St.SetInviteDisabled(r.Context(), pathID(r), in.Disabled); err != nil {
-		return err
+	v, err := s.St.UpdateInvite(r.Context(), pathID(r), in)
+	if errors.Is(err, store.ErrNotFound) {
+		return httpx.E(404, "not_found", "邀请码不存在")
 	}
-	s.audit(r, "invite.update", r.PathValue("id"), fmt.Sprintf("disabled=%v", in.Disabled))
+	if err != nil {
+		return httpx.Bad(err)
+	}
+	exp := "never"
+	if v.ExpiresAt != nil {
+		exp = *v.ExpiresAt
+	}
+	s.audit(r, "invite.update", v.Code, fmt.Sprintf("max_uses=%d role=%s vip_days=%d expires=%s disabled=%v", v.MaxUses, v.Role, v.VIPDays, exp, v.Disabled))
 	return s.adminListInvites(w, r)
 }
 

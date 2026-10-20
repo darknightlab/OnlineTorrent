@@ -1,7 +1,8 @@
 import { useState } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Copy, Link2, Loader2, Plus } from "lucide-react"
+import { Copy, Link2, Loader2, Pencil, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { Dialog, DialogContent, DialogFooter } from "@/components/ui/dialog"
 import { Card } from "@/components/ui/card"
 import { Field, Input, Select } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -10,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
 import { errorMessage } from "@/components/states"
 import { api, toList } from "@/lib/api"
-import type { InviteCode, InviteCreate, RedeemCode } from "@/lib/types"
+import type { InviteCode, InviteCreate, InvitePatch, RedeemCode } from "@/lib/types"
 import { formatDate } from "@/lib/format"
 import { copyText } from "@/lib/utils"
 import { AdminHeader, DataView, Mono, type Column } from "./components"
@@ -73,6 +74,7 @@ function Invites() {
   const KEY = ["admin", "invites"]
   const q = useQuery({ queryKey: KEY, queryFn: api.admin.invites })
   const [f, setF] = useState<InviteCreate>(INVITE_DEFAULT)
+  const [editing, setEditing] = useState<InviteCode | null>(null)
   const create = useMutation({
     mutationFn: () => api.admin.createInvite(f),
     onSuccess: async (inv) => {
@@ -150,6 +152,10 @@ function Invites() {
         empty="还没有邀请码"
         actions={(c) => (
           <>
+            <Button variant="outline" size="sm" onClick={() => setEditing(c)}>
+              <Pencil />
+              编辑
+            </Button>
             <Button variant="outline" size="sm" onClick={() => copy(inviteURL(c), "邀请链接")}>
               <Link2 />
               复制链接
@@ -160,7 +166,90 @@ function Invites() {
           </>
         )}
       />
+      {editing && <InviteEditDialog invite={editing} onClose={() => setEditing(null)} onSaved={() => qc.invalidateQueries({ queryKey: KEY })} />}
     </>
+  )
+}
+
+/** UTC 时间 → 本地日期 YYYY-MM-DD（date 输入框用） */
+function toDateInput(iso: string | null) {
+  if (!iso) return ""
+  const d = new Date(iso)
+  const p = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+/** 编辑邀请码：次数、注册角色、赠送天数、过期日期、备注、启用（代码本身与已用次数不可改） */
+function InviteEditDialog({ invite, onClose, onSaved }: { invite: InviteCode; onClose: () => void; onSaved: () => void }) {
+  const [f, setF] = useState({
+    max_uses: invite.max_uses,
+    role: invite.role,
+    vip_days: invite.vip_days,
+    expires: toDateInput(invite.expires_at),
+    note: invite.note,
+    enabled: !invite.disabled,
+  })
+  const m = useMutation({
+    mutationFn: () => {
+      const b: InvitePatch = { max_uses: f.max_uses, role: f.role, vip_days: f.vip_days, note: f.note, disabled: !f.enabled }
+      // 日期未改动时不提交，避免把精确到秒的过期时间改成当天结束
+      if (f.expires !== toDateInput(invite.expires_at)) b.expires_at = f.expires
+      return api.admin.updateInvite(invite.id, b)
+    },
+    onSuccess: () => {
+      toast.success("已保存")
+      onSaved()
+      onClose()
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  })
+  const num = (k: "max_uses" | "vip_days") => (e: React.ChangeEvent<HTMLInputElement>) => setF((s) => ({ ...s, [k]: Math.max(0, Number(e.target.value) || 0) }))
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent title={`编辑邀请码 ${invite.code}`} description={`已使用 ${invite.uses} 次`}>
+        <form
+          className="grid gap-3"
+          onSubmit={(e) => {
+            e.preventDefault()
+            m.mutate()
+          }}
+        >
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="可用次数（0=不限）" htmlFor="ie-max" hint={f.max_uses > 0 && f.max_uses <= invite.uses ? "不大于已用次数，保存后即用完" : undefined}>
+              <Input id="ie-max" type="number" min={0} value={f.max_uses} onChange={num("max_uses")} />
+            </Field>
+            <Field label="注册角色" htmlFor="ie-role">
+              <Select id="ie-role" value={f.role} onChange={(e) => setF((s) => ({ ...s, role: e.target.value as InviteCode["role"] }))}>
+                <option value="member">会员</option>
+                <option value="vip">大会员</option>
+              </Select>
+            </Field>
+            <Field label="赠送大会员天数" htmlFor="ie-vip">
+              <Input id="ie-vip" type="number" min={0} value={f.vip_days} onChange={num("vip_days")} />
+            </Field>
+            <Field label="过期日期（留空=永不）" htmlFor="ie-exp">
+              <Input id="ie-exp" type="date" value={f.expires} onChange={(e) => setF((s) => ({ ...s, expires: e.target.value }))} />
+            </Field>
+          </div>
+          <Field label="备注" htmlFor="ie-note">
+            <Input id="ie-note" value={f.note} onChange={(e) => setF((s) => ({ ...s, note: e.target.value }))} placeholder="可选" />
+          </Field>
+          <label className="flex items-center justify-between rounded-md border px-3 py-2.5 text-sm">
+            启用该邀请码
+            <Switch checked={f.enabled} onCheckedChange={(v) => setF((s) => ({ ...s, enabled: v }))} aria-label="启用该邀请码" />
+          </label>
+          <DialogFooter className="mt-1">
+            <Button type="button" variant="outline" onClick={onClose}>
+              取消
+            </Button>
+            <Button type="submit" disabled={m.isPending}>
+              {m.isPending && <Loader2 className="animate-spin" />}
+              保存
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
 

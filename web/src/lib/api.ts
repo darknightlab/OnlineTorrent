@@ -54,6 +54,7 @@ import type {
   ClefTestResponse,
   ClefAnomalies,
   Paged,
+  InvitePatch,
 } from "./types"
 
 export const API_BASE = "/api/v1"
@@ -219,7 +220,7 @@ export const api = {
 
     invites: () => get<ListLike<InviteCode>>("/admin/invites"),
     createInvite: (b: InviteCreate) => post<InviteCode>("/admin/invites", b),
-    updateInvite: (id: number, b: { disabled: boolean }) => put<InviteCode>(`/admin/invites/id/${id}`, b),
+    updateInvite: (id: number, b: InvitePatch) => put<InviteCode>(`/admin/invites/id/${id}`, b),
     redeemCodes: () => get<ListLike<RedeemCode>>("/admin/redeem-codes"),
     createRedeemCodes: (b: RedeemCreate) => post<ListLike<RedeemCode>>("/admin/redeem-codes", b),
 
