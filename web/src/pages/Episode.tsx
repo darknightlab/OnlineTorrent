@@ -88,16 +88,36 @@ export function EpisodeInfo({ subject: s, ep, parts }: { subject: Subject; ep: E
     .join(" · ")
   return (
     <div className="pt-3 lg:pt-4">
-      <Link to={subjectHref(s)} className="group flex items-center gap-3 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title="番剧详情">
-        <h1 className="min-w-0 flex-1 truncate text-base font-semibold leading-snug group-hover:text-primary-text lg:text-xl">{title}</h1>
-        <span className="inline-flex shrink-0 items-center text-xs text-muted-foreground group-hover:text-primary-text">
+      {/* 只有标题文字与「详情」可点（中间空白不是链接，避免误触） */}
+      <div className="flex items-center gap-3">
+        <h1 className="min-w-0 flex-1 truncate text-base font-semibold leading-snug lg:text-xl">
+          <Link to={subjectHref(s)} className="rounded-sm hover:text-primary-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" title="番剧详情">
+            {title}
+          </Link>
+        </h1>
+        <Link
+          to={subjectHref(s)}
+          className="inline-flex shrink-0 items-center rounded-sm text-xs text-muted-foreground hover:text-primary-text focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
           详情
           <ChevronRight className="h-3.5 w-3.5" />
-        </span>
-      </Link>
+        </Link>
+      </div>
       {epTitle && (
         <p className="mt-1 flex min-w-0 items-baseline gap-2 text-sm lg:text-[15px]" title={[episodeFullLabel(ep, epTitle), epJa].filter(Boolean).join("\n")}>
-          <span className="min-w-0 shrink truncate font-medium text-foreground/90">{episodeFullLabel(ep, epTitle)}</span>
+          {item?.bgm_ep_id ? (
+            // 单集标题 → bangumi 的单集页（吐槽、简介）
+            <a
+              href={`https://bgm.tv/ep/${item.bgm_ep_id}`}
+              target="_blank"
+              rel="noreferrer noopener"
+              className="min-w-0 shrink truncate font-medium text-foreground/90 hover:text-primary-text hover:underline"
+            >
+              {episodeFullLabel(ep, epTitle)}
+            </a>
+          ) : (
+            <span className="min-w-0 shrink truncate font-medium text-foreground/90">{episodeFullLabel(ep, epTitle)}</span>
+          )}
           {epJa && (
             <span lang="ja" className="min-w-0 shrink-[2] truncate text-xs text-muted-foreground lg:text-[13px]">
               {epJa}

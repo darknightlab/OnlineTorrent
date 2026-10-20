@@ -239,6 +239,8 @@ export interface EpisodeListItem {
   airdate?: string
   /** 是否来自 bangumi 官方章节数据 */
   official?: boolean
+  /** bangumi 单集 ID（https://bgm.tv/ep/{id}） */
+  bgm_ep_id?: number
 }
 
 /** GET /subjects/{provider}/{id}/episodes：正片按编号，然后 SP、NCOP、NCED、PV、CM */

@@ -110,8 +110,9 @@ type episodeItem struct {
 	Aired    *bool   `json:"aired,omitempty"` // main episodes only
 	Title    string  `json:"title,omitempty"` // official episode title (Chinese if known)
 	TitleJA  string  `json:"title_ja,omitempty"`
-	Airdate  string  `json:"airdate,omitempty"` // YYYY-MM-DD (official)
-	Official bool    `json:"official"`          // listed by bangumi
+	Airdate  string  `json:"airdate,omitempty"`   // YYYY-MM-DD (official)
+	Official bool    `json:"official"`            // listed by bangumi
+	BgmEpID  int64   `json:"bgm_ep_id,omitempty"` // bangumi episode id (https://bgm.tv/ep/{id})
 }
 
 // maxListedEpisodes bounds the 1..n range of main episodes in the list.
@@ -164,7 +165,7 @@ func episodeList(aired int, official []meta.OfficialEpisode, mapped []meta.Episo
 		it := episodeItem{Key: k.String(), Kind: k.Kind, Number: k.Number, Label: k.Label(), Sources: counts[k]}
 		o, isOff := off[k]
 		if isOff {
-			it.Official, it.Airdate = true, o.Airdate
+			it.Official, it.Airdate, it.BgmEpID = true, o.Airdate, o.BgmID
 			it.Title, it.TitleJA = o.NameCN, o.Name
 			if it.Title == "" {
 				it.Title, it.TitleJA = o.Name, ""

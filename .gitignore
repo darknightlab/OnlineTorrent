@@ -10,3 +10,4 @@ web/dist/*
 .playwright-mcp/
 .playwright-cli/
 docs/screenshots/
+tmp-analysis/
