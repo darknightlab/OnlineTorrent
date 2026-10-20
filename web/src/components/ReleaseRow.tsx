@@ -3,7 +3,7 @@
 import type { ReactNode } from "react"
 import { HardDrive } from "lucide-react"
 import { AccessBadge } from "./badges"
-import { SwarmLine } from "./Swarm"
+import { SwarmGrid } from "./Swarm"
 import { Badge } from "./ui/badge"
 import { describeScore, type Scored } from "@/lib/rank"
 import { releaseTags } from "@/lib/release-tags"
@@ -93,8 +93,7 @@ export function ReleaseRowBody({
         <span className={cn("font-medium", score && score.score < 0 ? "text-destructive-text" : "text-foreground/80")} title={score ? describeScore(score) : undefined}>
           {score ? `${score.score > 0 ? "+" : ""}${Math.round(score.score)} 分` : "\u00a0"}
         </span>
-        <SwarmLine swarm={swarm} kind="bt" />
-        <SwarmLine swarm={swarm} kind="wt" />
+        <SwarmGrid swarm={swarm} />
       </span>
     </>
   )
