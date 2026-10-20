@@ -63,11 +63,17 @@ func (s *Server) webseedLayout(ctx context.Context, ih string) *seedsrc.Layout {
 	return l
 }
 
-func (s *Server) poolFileProgress(ctx context.Context, ih string, idx int) (bool, float64, bool) {
+// poolFileProgress: progress of file idx (the torrent's numbering, padding files counted) on
+// the qB servers; any file while the layout is unknown.
+func (s *Server) poolFileProgress(ctx context.Context, ih string, idx int, l *seedsrc.Layout) (bool, float64, bool) {
 	if s.Pool == nil {
 		return false, 0, false
 	}
-	return s.Pool.FileProgress(ctx, ih, idx)
+	path := ""
+	if l != nil && idx >= 0 && idx < len(l.Files) {
+		path = l.Files[idx].Path
+	}
+	return s.Pool.FileProgress(ctx, ih, path)
 }
 
 // webseedStream runs the availability stream once the layout is known. Availability is per
@@ -114,7 +120,7 @@ func (s *Server) webseedStream(ctx context.Context, r *http.Request, send func(s
 			if l = s.webseedLayout(ctx, ih); l == nil {
 				nextLayout = time.Now().Add(5 * time.Second)
 				// nobody holds the torrent (e.g. no seed request yet): say so after ~1 min
-				_, progress, found := s.poolFileProgress(ctx, ih, idx)
+				_, progress, found := s.poolFileProgress(ctx, ih, idx, l)
 				if !found {
 					if notFound++; notFound >= 12 {
 						send("unavailable", map[string]string{"reason": "not_seeded"})
@@ -143,7 +149,7 @@ func (s *Server) webseedStream(ctx context.Context, r *http.Request, send func(s
 			}
 			cur := s.webseedAvailability(ctx, l)
 			if len(cur) == 0 && !started {
-				_, _, found := s.poolFileProgress(ctx, ih, idx)
+				_, _, found := s.poolFileProgress(ctx, ih, idx, l)
 				if !found {
 					if notFound++; notFound >= 60 {
 						send("unavailable", map[string]string{"reason": "not_seeded"})

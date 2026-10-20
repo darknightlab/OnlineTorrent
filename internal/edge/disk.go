@@ -27,7 +27,10 @@ import (
 //   - path: save_path (torrents/properties) + file name (torrents/files), mapped from qB's
 //     view to the local one (PathMap), tried as is and with qB's ".!qB" suffix for
 //     unfinished files; anything that resolves outside Root is refused;
-//   - pieces fully inside a read are SHA-1 checked when Verify is set.
+//   - every piece a read touches is assembled whole across its files — wanted files from disk,
+//     files qB skips (priority 0, otd downloads only the files being played) from libtorrent's
+//     partfile ".<infohash>.parts" (where a boundary piece's bytes of a skipped file live),
+//     BEP 47 padding as zeros — SHA-1 checked when Verify is set, then sliced.
 type Disk struct {
 	QB      *qb.Client
 	Root    string        // only files below this directory are served (symlinks resolved)
@@ -45,7 +48,7 @@ type torEntry struct {
 	err     error
 	at      time.Time
 	save    string         // qB save path
-	names   map[string]int // qB file name → index (to detect presence)
+	names   map[string]int // qB file name → priority (0 = skipped)
 	namesAt time.Time
 	mu      sync.Mutex
 }
@@ -190,7 +193,7 @@ func (d *Disk) paths(ctx context.Context, t *torEntry, ih string) (string, map[s
 	}
 	names := map[string]int{}
 	for _, f := range files {
-		names[strings.Trim(f.Name, "/")] = f.Index
+		names[strings.Trim(f.Name, "/")] = f.Priority
 	}
 	t.save, t.names, t.namesAt = props.SavePath, names, time.Now()
 	return t.save, t.names, nil
@@ -296,31 +299,31 @@ func (d *Disk) ReadRange(ctx context.Context, ih string, fi int, start, end int6
 	if err != nil {
 		return nil, err
 	}
-	name, ok := qbName(l, fi, names)
-	if !ok {
-		return nil, fmt.Errorf("edge: qB has no file %q", f.Path)
-	}
-	local, err := d.localPath(path.Join(filepath.ToSlash(save), name))
+	saveLocal, err := d.localPath(filepath.ToSlash(save))
 	if err != nil {
 		return nil, err
 	}
-	fh, err := d.open(local)
-	if err != nil {
-		return nil, err
-	}
-	return &pieceReader{f: fh, l: l, fi: fi, pos: start, end: end, verify: d.Verify}, nil
+	return &pieceReader{d: d, l: l, ih: ih, fi: fi, pos: start, end: end, verify: d.Verify, save: save, saveLocal: saveLocal, names: names, open: map[int]*os.File{}}, nil
 }
 
-// pieceReader reads [pos, end] of one file piece by piece; pieces that lie entirely inside
-// the read (and inside this file) are hashed before any of their bytes are returned.
+// pieceReader delivers [pos, end] of file fi piece by piece; each piece is assembled whole
+// (pieceBytes) and verified before any of its bytes are returned.
 type pieceReader struct {
-	f      *os.File
-	l      *seedsrc.Layout
-	fi     int
-	pos    int64 // next file offset to deliver
-	end    int64
-	verify bool
-	buf    []byte
+	d         *Disk
+	l         *seedsrc.Layout
+	ih        string
+	fi        int
+	pos       int64 // next file offset to deliver
+	end       int64
+	verify    bool
+	save      string         // qB's save path
+	saveLocal string         // the same, on the edge's filesystem
+	names     map[string]int // qB name → priority
+	open      map[int]*os.File
+	missing   map[int]bool // layout files not on disk
+	part      *partFile
+	partTried bool
+	buf       []byte
 }
 
 func (r *pieceReader) Read(p []byte) (int, error) {
@@ -342,25 +345,109 @@ func (r *pieceReader) fill() error {
 	abs := f.Offset + r.pos
 	pi := int(abs / r.l.PieceLength)
 	ps := int64(pi) * r.l.PieceLength
-	pe := ps + r.l.PieceSize(pi) - 1                      // piece, torrent coordinates
-	segEnd := min(pe-f.Offset, r.end)                     // file coordinates
-	whole := ps >= f.Offset+r.pos && pe <= f.Offset+r.end // piece fully inside this read
-	n := segEnd - r.pos + 1
-	buf := make([]byte, n)
-	if _, err := r.f.ReadAt(buf, r.pos); err != nil {
-		if errors.Is(err, io.EOF) {
-			return fmt.Errorf("edge: file shorter than expected (piece %d)", pi)
-		}
+	piece, err := r.pieceBytes(pi)
+	if err != nil {
 		return err
 	}
-	if r.verify && whole {
-		if sum := sha1.Sum(buf); !bytes.Equal(sum[:], r.l.PieceHash(pi)) {
-			return fmt.Errorf("edge: piece %d failed hash check", pi)
-		}
-	}
-	r.buf = buf
+	pe := ps + int64(len(piece)) - 1
+	segEnd := min(pe-f.Offset, r.end) // file coordinates
+	r.buf = piece[abs-ps : f.Offset+segEnd-ps+1]
 	r.pos = segEnd + 1
 	return nil
 }
 
-func (r *pieceReader) Close() error { return r.f.Close() }
+// pieceBytes assembles piece pi from every file it spans.
+func (r *pieceReader) pieceBytes(pi int) ([]byte, error) {
+	l := r.l
+	ps := int64(pi) * l.PieceLength
+	buf := make([]byte, l.PieceSize(pi))
+	pe := ps + int64(len(buf)) // exclusive
+	for k, f := range l.Files {
+		s, e := max(ps, f.Offset), min(pe, f.Offset+f.Size)
+		if s >= e {
+			continue
+		}
+		seg := buf[s-ps : e-ps]
+		if f.Pad {
+			continue // zeros
+		}
+		name, ok := qbName(l, k, r.names)
+		if !ok {
+			return nil, fmt.Errorf("edge: qB has no file %q", f.Path)
+		}
+		skipped := r.names[name] == 0
+		// a skipped file's bytes are in the partfile; a wanted one's in the file — fall back
+		// to the other (priorities change: a raised file gets its partfile bytes moved over)
+		readers := []func() error{func() error { return r.readFile(k, name, seg, s-f.Offset) }, func() error { return r.readPart(pi, seg, s-ps) }}
+		if skipped {
+			readers[0], readers[1] = readers[1], readers[0]
+		}
+		var err error
+		if err = readers[0](); err != nil {
+			if err2 := readers[1](); err2 != nil {
+				return nil, fmt.Errorf("piece %d, %s: %w (fallback: %v)", pi, f.Path, err, err2)
+			}
+		}
+	}
+	if r.verify {
+		if sum := sha1.Sum(buf); !bytes.Equal(sum[:], l.PieceHash(pi)) {
+			return nil, fmt.Errorf("edge: piece %d failed hash check", pi)
+		}
+	}
+	return buf, nil
+}
+
+func (r *pieceReader) readFile(k int, name string, seg []byte, off int64) error {
+	if r.missing[k] {
+		return errFileMissing
+	}
+	fh := r.open[k]
+	if fh == nil {
+		local, err := r.d.localPath(path.Join(filepath.ToSlash(r.save), name))
+		if err != nil {
+			return err
+		}
+		if fh, err = r.d.open(local); err != nil {
+			if r.missing == nil {
+				r.missing = map[int]bool{}
+			}
+			r.missing[k] = true
+			return err
+		}
+		r.open[k] = fh
+	}
+	if _, err := fh.ReadAt(seg, off); err != nil {
+		if errors.Is(err, io.EOF) {
+			return fmt.Errorf("edge: file shorter than expected")
+		}
+		return err
+	}
+	return nil
+}
+
+var errFileMissing = errors.New("edge: file not on disk")
+
+func (r *pieceReader) readPart(pi int, seg []byte, off int64) error {
+	if !r.partTried {
+		r.partTried = true
+		pf, err := r.d.openPart(r.saveLocal, r.ih, r.l)
+		if err != nil {
+			return err
+		}
+		r.part = pf
+	}
+	if r.part == nil {
+		return errNoPart
+	}
+	return r.part.read(pi, seg, off)
+}
+
+func (r *pieceReader) Close() error {
+	for _, f := range r.open {
+		f.Close()
+	}
+	if r.part != nil {
+		r.part.f.Close()
+	}
+	return nil
+}

@@ -224,7 +224,7 @@ func (c *Crawler) fetchMetadata(ctx context.Context, sv *qb.Server, j store.Meta
 		// the feed magnet's trackers + configured BT / wss trackers (+ own announce list if a
 		// .torrent is stored), so qB finds peers without its global tracker list
 		uri := magnet.Build(ih, name, swarm.PushTrackers(ctx, c.St, c.Meta, ih, j.Trackers))
-		if err := sv.Client.Add(ctx, qb.AddParams{URLs: uri, Category: sv.MetaCategory(), StopCondition: "MetadataReceived"}); err != nil {
+		if err := sv.Client.Add(ctx, qb.AddParams{URLs: uri, Category: sv.MetaCategory(), StopCondition: "MetadataReceived", MetadataOnly: true}); err != nil {
 			return fmt.Errorf("qB add: %w", err)
 		}
 		*added = true

@@ -2,6 +2,7 @@
 package qb
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,13 +26,14 @@ import (
 type Client struct {
 	base, user, pass, apiKey string
 	hc                       *http.Client
-	hcStream                 *http.Client
 
 	mu        sync.Mutex
 	loggedIn  bool
 	loginGen  uint64 // bumped on every successful login
 	authUntil time.Time
 	authWait  time.Duration
+
+	ids idMap // v1 infohash → qB id (hybrid torrents, ids.go)
 }
 
 const (
@@ -44,8 +46,7 @@ func NewClient(base, user, pass, apiKey string) *Client {
 	jar, _ := cookiejar.New(nil)
 	return &Client{
 		base: strings.TrimRight(base, "/"), user: user, pass: pass, apiKey: apiKey,
-		hc:       &http.Client{Jar: jar, Timeout: 20 * time.Second},
-		hcStream: &http.Client{Jar: jar},
+		hc: &http.Client{Jar: jar, Timeout: 20 * time.Second},
 	}
 }
 
@@ -92,17 +93,24 @@ func (c *Client) login(ctx context.Context) error {
 	return nil
 }
 
+// multipartBody is a multipart/form-data request body (torrents/add with a .torrent file).
+type multipartBody struct {
+	data        []byte
+	contentType string
+}
+
 // raw performs an authenticated request (re-logging in once on 401/403) and returns the
-// open response; the caller must close the body. stream selects the client without a timeout.
-func (c *Client) raw(ctx context.Context, method, path string, form url.Values, hdr http.Header, stream bool) (*http.Response, error) {
+// open response; the caller must close the body. mp, when set, replaces the form body.
+func (c *Client) raw(ctx context.Context, method, path string, form url.Values, mp *multipartBody) (*http.Response, error) {
 	hc := c.hc
-	if stream {
-		hc = c.hcStream
-	}
 	try := func() (*http.Response, error) {
 		var body io.Reader
-		if form != nil && method == http.MethodPost {
-			body = strings.NewReader(form.Encode())
+		ctype := ""
+		switch {
+		case mp != nil:
+			body, ctype = bytes.NewReader(mp.data), mp.contentType
+		case form != nil && method == http.MethodPost:
+			body, ctype = strings.NewReader(form.Encode()), "application/x-www-form-urlencoded"
 		}
 		u := c.base + "/api/v2/" + path
 		if form != nil && method != http.MethodPost {
@@ -112,11 +120,8 @@ func (c *Client) raw(ctx context.Context, method, path string, form url.Values, 
 		if err != nil {
 			return nil, err
 		}
-		for k, v := range hdr {
-			req.Header[k] = v
-		}
-		if body != nil {
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if ctype != "" {
+			req.Header.Set("Content-Type", ctype)
 		}
 		req.Header.Set("Referer", c.base)
 		if c.apiKey != "" {
@@ -151,8 +156,24 @@ func (c *Client) raw(ctx context.Context, method, path string, form url.Values, 
 	return resp, nil
 }
 
+// do performs a request; hash parameters are translated to qB ids (ids.go) and a "no such
+// torrent" answer is retried once after refreshing the id map.
 func (c *Client) do(ctx context.Context, method, path string, form url.Values) ([]byte, int, error) {
-	resp, err := c.raw(ctx, method, path, form, nil, false)
+	if !hasHashParam(form) {
+		return c.doRaw(ctx, method, path, form, nil)
+	}
+	tf, _ := c.translate(form)
+	b, status, err := c.doRaw(ctx, method, path, tf, nil)
+	if missed(path, status, b) && c.refreshIDs(ctx) {
+		if tf2, changed := c.translate(form); changed && tf2.Encode() != tf.Encode() {
+			return c.doRaw(ctx, method, path, tf2, nil)
+		}
+	}
+	return b, status, err
+}
+
+func (c *Client) doRaw(ctx context.Context, method, path string, form url.Values, mp *multipartBody) ([]byte, int, error) {
+	resp, err := c.raw(ctx, method, path, form, mp)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -217,31 +238,19 @@ type AddParams struct {
 	SeedingTimeLimitMin int
 	RatioLimit          float64 // -2 global, -1 unlimited
 	// StopCondition "MetadataReceived" stops the torrent once metadata arrives (qB ≥ 4.5;
-	// metadata-only fetches). Empty = qB default (None).
+	// metadata-only fetches, file selection before downloading). Empty = qB default (None).
 	StopCondition string
+	// Stopped adds the torrent stopped (file priorities are set before it starts).
+	Stopped bool
+	// Tags (comma separated), e.g. PendingTag.
+	Tags string
+	// MetadataOnly: no sequential download / first-last piece priority (metadata fetches).
+	MetadataOnly bool
 }
 
 // Add adds magnet(s). qB 5.x returns 200/202 with JSON or "Ok."; 409 when all failed (often "already exists").
 func (c *Client) Add(ctx context.Context, p AddParams) error {
-	f := url.Values{
-		"urls":               {p.URLs},
-		"category":           {p.Category},
-		"sequentialDownload": {"true"},
-		"firstLastPiecePrio": {"true"},
-		"stopped":            {"false"},
-		"paused":             {"false"},
-		"seedingTimeLimit":   {strconv.Itoa(p.SeedingTimeLimitMin)},
-		"ratioLimit":         {strconv.FormatFloat(p.RatioLimit, 'f', -1, 64)},
-	}
-	if p.SeedingTimeLimitMin == 0 {
-		f.Set("seedingTimeLimit", "-2")
-	}
-	if p.StopCondition != "" {
-		f.Set("stopCondition", p.StopCondition)
-		f.Del("sequentialDownload")
-		f.Del("firstLastPiecePrio")
-	}
-	_, status, err := c.do(ctx, http.MethodPost, "torrents/add", f)
+	_, status, err := c.do(ctx, http.MethodPost, "torrents/add", addFields(p))
 	if status == http.StatusConflict {
 		return nil // already present
 	}
@@ -299,6 +308,22 @@ type Torrent struct {
 	Upspeed     int64   `json:"upspeed"`
 	Dlspeed     int64   `json:"dlspeed"`
 	Category    string  `json:"category"`
+	Tags        string  `json:"tags"`       // comma separated
+	TotalSize   int64   `json:"total_size"` // whole torrent (Size / Progress count wanted files only)
+	InfohashV1  string  `json:"infohash_v1"`
+	// ID is qB's own id (= Hash except for hybrid torrents, where Hash is reported as the v1
+	// infohash, see ids.go)
+	ID string `json:"-"`
+}
+
+// HasTag reports whether the torrent carries tag.
+func (t Torrent) HasTag(tag string) bool {
+	for _, x := range strings.Split(t.Tags, ",") {
+		if strings.TrimSpace(x) == tag {
+			return true
+		}
+	}
+	return false
 }
 
 // Info lists torrents in a category (and optionally given hashes).
@@ -315,15 +340,21 @@ func (c *Client) Info(ctx context.Context, category string, hashes ...string) ([
 		return nil, err
 	}
 	var out []Torrent
-	return out, json.Unmarshal(b, &out)
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil, err
+	}
+	c.learn(out)
+	normalize(out)
+	return out, nil
 }
 
 // File is a torrents/files entry.
 type File struct {
-	Index    int     `json:"index"`
+	Index    int     `json:"index"` // qB's index (BEP 47 padding files are hidden and not counted)
 	Name     string  `json:"name"`
 	Size     int64   `json:"size"`
 	Progress float64 `json:"progress"`
+	Priority int     `json:"priority"` // 0 = do not download
 }
 
 // Files lists a torrent's files (empty until metadata is fetched).
@@ -382,6 +413,6 @@ func (c *Client) Properties(ctx context.Context, hash string) (Properties, error
 // NewClientTransport is NewClient with a custom transport (e.g. through an edge node).
 func NewClientTransport(base, user, pass, apiKey string, rt http.RoundTripper) *Client {
 	c := NewClient(base, user, pass, apiKey)
-	c.hc.Transport, c.hcStream.Transport = rt, rt
+	c.hc.Transport = rt
 	return c
 }

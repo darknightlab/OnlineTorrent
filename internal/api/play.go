@@ -16,8 +16,10 @@ import (
 	"github.com/darknightlab/onlinetorrent/internal/magnet"
 	"github.com/darknightlab/onlinetorrent/internal/meta"
 	"github.com/darknightlab/onlinetorrent/internal/policy"
+	"github.com/darknightlab/onlinetorrent/internal/qb"
 	"github.com/darknightlab/onlinetorrent/internal/store"
 	"github.com/darknightlab/onlinetorrent/internal/swarm"
+	"github.com/darknightlab/onlinetorrent/internal/torrentfile"
 )
 
 type playReq struct {
@@ -250,7 +252,7 @@ func (s *Server) postCheck(ih string, by *int64) {
 		case <-time.After(5 * time.Second):
 		}
 		if name, files, ok := s.Pool.Metadata(ctx, ih); ok {
-			s.checkSeeded(ctx, gen, ih, name, files, 0, by, true)
+			s.checkSeeded(ctx, gen, ih, name, files, by, true)
 			return
 		}
 	}
@@ -318,36 +320,77 @@ func (s *Server) recordedSubject(r *http.Request) (*store.TorrentRecord, policy.
 	return rec, sub, nil
 }
 
-// seed asks every online qB server to download and seed the torrent (route permission
-// "POST /api/v1/torrents/{ih}/seed", default: members).
+// seed asks every online qB server to download and seed ONE file of the torrent — the one
+// being played (route permission "POST /api/v1/torrents/{ih}/seed", default: members).
+// Body {"file": n} (the torrent's file index, BEP 47 padding files counted, as in WebTorrent;
+// optional for single-file torrents). qB downloads only the requested files: a torrent new to
+// a server is added with every other file skipped; on a server that already has it the file
+// is added to its selection (files already wanted are never dropped). The size limit
+// (play.max_push_size_mb) applies to the sum of the wanted files after adding this one.
 func (s *Server) seed(w http.ResponseWriter, r *http.Request) error {
 	if !s.limiter.allow("seed:"+ipKey(r), 20, 10*time.Second) {
 		return errRateLimited
+	}
+	var in struct {
+		File *int `json:"file"`
+	}
+	if r.ContentLength != 0 {
+		if err := httpx.DecodeSmall(r, &in); err != nil && r.ContentLength > 0 {
+			return err
+		}
 	}
 	rec, sub, err := s.recordedSubject(r)
 	if err != nil {
 		return err
 	}
-	if limit := s.maxPushBytes(); limit > 0 && rec.Size > limit {
-		return httpx.E(http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("该种子过大（超过 %d MB），服务器不参与做种", limit>>20))
+	ctx := r.Context()
+	files, torrent := s.seedFiles(ctx, rec.Infohash)
+	if len(files) == 0 {
+		return httpx.E(http.StatusConflict, "no_metadata", "服务器还没有该种子的文件列表")
+	}
+	idx := -1
+	switch {
+	case in.File != nil:
+		idx = *in.File
+	default:
+		real := -1
+		for i, f := range files {
+			if !f.Pad {
+				if real >= 0 {
+					return httpx.E(400, "bad_request", "请指定要播放的文件（file）")
+				}
+				real = i
+			}
+		}
+		idx = real
+	}
+	if idx < 0 || idx >= len(files) || files[idx].Pad {
+		return httpx.E(400, "bad_request", "文件序号无效")
+	}
+	want := files[idx].Path
+	if limit := s.maxPushBytes(); limit > 0 {
+		if total := wantedSize(files, s.Pool.Wanted(ctx, rec.Infohash), want); total > limit {
+			return httpx.E(http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("要下载的文件过大（超过 %d MB），服务器不参与做种", limit>>20))
+		}
 	}
 	timeout := time.Duration(s.St.Num(store.KeyQBAddTimeoutSec)) * time.Second
 	if timeout <= 0 {
 		timeout = 8 * time.Second
 	}
 	// wss + configured BT trackers + the torrent's own announce list (we don't rely on qB's
-	// "automatically add trackers")
-	push := s.Pool.Push(r.Context(), rec.Infohash, sub.Title, swarm.PushTrackers(r.Context(), s.St, s.Meta, rec.Infohash, nil), timeout)
+	// "automatically add trackers"); adding with a file selection takes a few more calls
+	push := s.Pool.Seed(ctx, qb.SeedRequest{Infohash: rec.Infohash, Name: sub.Title, Torrent: torrent, Want: []string{want},
+		Trackers: swarm.PushTrackers(ctx, s.St, s.Meta, rec.Infohash, nil), Timeout: 2 * timeout})
 	if len(push.Errors) > 0 {
 		s.Log.Warn("push errors", "ih", rec.Infohash, "errors", push.Errors)
 	}
 	u := userOf(r)
-	s.St.AddPlay(r.Context(), store.Play{Infohash: rec.Infohash, Title: sub.Title, IP: httpx.ClientIP(r), Action: "seed", SeededBy: strings.Join(push.SeededBy, ",")}, uid(u))
+	s.St.AddPlay(ctx, store.Play{Infohash: rec.Infohash, Title: sub.Title, IP: httpx.ClientIP(r), Action: "seed", SeededBy: strings.Join(push.SeededBy, ",")}, uid(u))
 	// once qB has the metadata: re-check user torrents with the real file list and ingest
 	// + scrape every torrent the catalogue doesn't fully know yet (watch page polls
 	// GET /torrents/hash/{ih})
 	if len(push.SeededBy) > 0 {
-		status, known := s.Meta.KnownTorrent(r.Context(), rec.Infohash)
+		status, known := s.Meta.KnownTorrent(ctx, rec.Infohash)
 		if !known || status != "ready" {
 			s.markSeeded(rec.Infohash)
 			s.startPostCheck(rec.Infohash, uid(u))
@@ -356,4 +399,79 @@ func (s *Server) seed(w http.ResponseWriter, r *http.Request) error {
 	// which servers took it is never revealed (admins see it in the play log)
 	httpx.JSON(w, 200, map[string]any{"seeded": len(push.SeededBy) > 0})
 	return nil
+}
+
+// seedFile is a torrent file as the player numbers them (padding files included).
+type seedFile struct {
+	Path string
+	Size int64
+	Pad  bool
+}
+
+// seedFiles returns the torrent's files from its .torrent (also returned, for adding it to qB
+// with metadata at once); without one, from the catalogue (no .torrent → nil).
+func (s *Server) seedFiles(ctx context.Context, ih string) ([]seedFile, []byte) {
+	if s.Crawl != nil {
+		cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		b, err := s.Crawl.Metainfo(cctx, ih)
+		cancel()
+		if err == nil {
+			if mi, err := torrentfile.ParseTorrent(b); err == nil && mi.Infohash == ih {
+				out := make([]seedFile, len(mi.Files))
+				for i, f := range mi.Files {
+					out[i] = seedFile{f.Path, f.Size, f.Pad}
+				}
+				return out, b
+			}
+		}
+	}
+	ct := s.knownTorrent(ctx, ih)
+	if ct == nil {
+		return nil, nil
+	}
+	n := 0
+	for _, f := range ct.Files {
+		n = max(n, f.Index+1)
+	}
+	out := make([]seedFile, n)
+	for _, f := range ct.Files {
+		out[f.Index] = seedFile{Path: f.Path, Size: f.Size}
+	}
+	for i := range out {
+		if out[i].Path == "" {
+			out[i].Pad = true // not in the catalogue: treat as unrequestable
+		}
+	}
+	return out, nil
+}
+
+// wantedSize sums the sizes of the wanted paths plus extra (paths matched like qB names).
+func wantedSize(files []seedFile, wanted map[string]bool, extra ...string) int64 {
+	set := map[string]bool{}
+	for p := range wanted {
+		set[strings.Trim(p, "/")] = true
+	}
+	for _, p := range extra {
+		set[strings.Trim(p, "/")] = true
+	}
+	var total int64
+	for _, f := range files {
+		if f.Pad {
+			continue
+		}
+		p := strings.Trim(f.Path, "/")
+		hit := set[p]
+		if !hit {
+			for w := range set { // qB without the root folder (content layout NoSubfolder)
+				if strings.HasSuffix(p, "/"+w) || strings.HasSuffix(w, "/"+p) {
+					hit = true
+					break
+				}
+			}
+		}
+		if hit {
+			total += f.Size
+		}
+	}
+	return total
 }

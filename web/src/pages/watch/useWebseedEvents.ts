@@ -85,7 +85,7 @@ export function useWebseedEvents({
           if (reason === "not_seeded" && canSeedRef.current) {
             say("info", "服务器尚未做种该资源，已重新请求做种", "reseed")
             try {
-              await api.seed(ih)
+              await api.seed(ih, fileIndex ?? 0) // null: single-file torrent
             } catch {
               /* 稍后重试 */
             }

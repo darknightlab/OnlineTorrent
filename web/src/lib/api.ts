@@ -188,7 +188,8 @@ export const api = {
   playMoe: (id: string, s?: AbortSignal) => request<PlayResponse>("POST", `/torrents/moe/${seg(id)}/play`, undefined, s),
   report: (ih: string, b: ReportRequest) => post<Record<string, never>>(`/torrents/hash/${seg(ih)}/report`, b),
   /** 请求服务器下载做种（权限 PERM.seed） */
-  seed: (ih: string) => post<SeedResponse>(`/torrents/hash/${seg(ih)}/seed`),
+  /** 请服务器（qB）下载并做种正在播放的文件（种子内文件序号，含填充文件，同 WebTorrent）；只下载请求过的文件 */
+  seed: (ih: string, file: number) => post<SeedResponse>(`/torrents/hash/${seg(ih)}/seed`, { file }),
   /** 新种子的元数据获取与判定结果推送（SSE）地址：redirect / ready / denied / timeout */
   resolveEventsURL: (ih: string) => `${API_BASE}/torrents/hash/${seg(ih)}/resolve/events`,
   /** WebSeed 可用性推送（SSE）地址；fileIndex 为正在播放的文件，省略表示任意 / 单文件 */

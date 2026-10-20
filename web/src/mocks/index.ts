@@ -514,11 +514,15 @@ const routes: [string, string, Handler][] = [
     if (!t) throw new HttpError(404, "not_found", "未找到该种子")
     return playOf(t, t.infohash)
   }],
-  ["POST", "/torrents/hash/:ih/seed", ({ params }) => {
+  ["POST", "/torrents/hash/:ih/seed", ({ params, body }) => {
     requirePerm("POST /api/v1/torrents/hash/{ih}/seed")
     const t = torrents.find((x) => x.infohash === params.ih.toLowerCase())
     if (t?.access.action === "block") throw new HttpError(451, "blocked", t.access.reason || "该资源已被屏蔽")
-    if (t && t.size_bytes > fx.site.max_auto_size_bytes) throw new HttpError(413, "too_large", `该种子过大（超过 ${fx.site.max_auto_size_bytes >> 20} MB），服务器不参与做种`)
+    // qB 只下载请求的文件：多文件种子必须指定 file；上限按要下载的文件计（模拟：单个文件 ≈ 种子大小 / 文件数）
+    const file = (body as { file?: unknown } | undefined)?.file
+    const n = Math.max(1, t?.files ?? 1)
+    if (n > 1 && typeof file !== "number") throw new HttpError(400, "bad_request", "请指定要播放的文件（file）")
+    if (t && t.size_bytes / n > fx.site.max_auto_size_bytes) throw new HttpError(413, "too_large", `要下载的文件过大（超过 ${fx.site.max_auto_size_bytes >> 20} MB），服务器不参与做种`)
     if (!seededAt.has(params.ih.toLowerCase())) seededAt.set(params.ih.toLowerCase(), Date.now())
     return { seeded: true }
   }],

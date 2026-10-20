@@ -34,6 +34,7 @@ import { BLEED, SideSection } from "@/pages/Episode"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
 import { errorMessage } from "@/components/states"
+import { SeedRequests } from "@/lib/seed"
 import { api, isApiError } from "@/lib/api"
 import { PERM, can, useMe, useSiteOrFallback, useSubject } from "@/lib/queries"
 import type { PlayResponse } from "@/lib/types"
@@ -221,30 +222,14 @@ export function Player({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [magnet])
 
-  // 引擎启动后：有权限时请求服务器做种；同时订阅 WebSeed 就绪推送（SSE 自己会等元数据与服务器文件就绪，
-  // 就绪即加入，不再额外延迟）。失败只记日志，不影响播放。
+  // 引擎启动后订阅 WebSeed 就绪推送（SSE 自己会等元数据与服务器文件就绪，就绪即加入，不再额外延迟）。
+  // 服务器做种在选定文件后请求（见下方 SeedRequests）。
   const ih = play?.infohash ?? null
   useEffect(() => {
     if (!session || direct || !ih || !meReady) return
-    let cancelled = false
     // WebSeed 只由边缘节点提供：地址与访问令牌都由 SSE 推送（ready / seed / token）后才加入
     setWebseedArmed(canWebseed && !!site.webseed?.enabled)
-    if (canSeed) {
-      void (async () => {
-        try {
-          const r = await api.seed(ih)
-          if (cancelled) return
-          if (r.seeded) log("info", "已请求服务器做种")
-          else log("warn", "服务器暂无可用的做种节点，仅使用 P2P 网络")
-        } catch (e) {
-          if (!cancelled) log("warn", `服务器做种未启用：${errorMessage(e)}`)
-        }
-      })()
-    }
-    return () => {
-      cancelled = true
-    }
-  }, [session, direct, ih, meReady, canSeed, canWebseed, site.webseed?.enabled, log])
+  }, [session, direct, ih, meReady, canWebseed, site.webseed?.enabled])
 
   // 元数据兜底：磁力没有 xs=（打开时服务器还没有该种子的信息，如刚粘贴的磁力）或 xs 失败时，
   // 请求做种后轮询收录状态，ready 后下载 .torrent 交给 WebTorrent（无需 WebRTC 节点提供 ut_metadata）
@@ -322,6 +307,28 @@ export function Player({
     const f = session?.snapshot()?.files[fileIndex]
     if (f && isPlayable(f.kind)) setCurrent(fileIndex)
   }, [fileIndex, session])
+
+  // 服务器做种：qB 只下载正在播放的文件。选定文件后请求一次，切到同一种子的另一个文件时再请求；
+  // 失败只记日志，不影响播放（SeedRequests 决定是否重试）
+  const seedReqs = useRef<{ session: Session | null; reqs: SeedRequests }>({ session: null, reqs: new SeedRequests() })
+  useEffect(() => {
+    if (!session || direct || !ih || !meReady || !canSeed || current === null) return
+    if (seedReqs.current.session !== session) seedReqs.current = { session, reqs: new SeedRequests() }
+    const reqs = seedReqs.current.reqs
+    const file = current
+    if (!reqs.begin(file)) return
+    void (async () => {
+      try {
+        const r = await api.seed(ih, file)
+        reqs.end(file, r.seeded ? "seeded" : "no_server")
+        if (r.seeded) log("info", "已请求服务器下载并做种当前文件")
+        else log("warn", "服务器暂无可用的做种节点，仅使用 P2P 网络")
+      } catch (e) {
+        reqs.end(file, SeedRequests.outcomeOfError(isApiError(e) ? e.status : undefined))
+        log("warn", `服务器做种未启用：${errorMessage(e)}`)
+      }
+    })()
+  }, [session, direct, ih, meReady, canSeed, current, log])
 
   const onCurrentRef = useRef(onCurrentChange)
   onCurrentRef.current = onCurrentChange

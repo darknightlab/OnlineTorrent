@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/sha1"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -114,7 +115,8 @@ type fakeQB struct {
 	ih        string
 	states    []int
 	save      string
-	names     []string // qB file names (padding files hidden)
+	names     []string        // qB file names (padding files hidden)
+	skipped   map[string]bool // file priority 0
 	stateHits atomic.Int64
 	refererOK atomic.Int64
 	refererNo atomic.Int64
@@ -173,7 +175,11 @@ func newFakeQB(t *testing.T) *fakeQB {
 		case "/api/v2/torrents/files":
 			var out []map[string]any
 			for i, n := range f.names {
-				out = append(out, map[string]any{"index": i, "name": n, "size": 0, "progress": 0})
+				prio := 1
+				if f.skipped[n] {
+					prio = 0
+				}
+				out = append(out, map[string]any{"index": i, "name": n, "size": 0, "progress": 0, "priority": prio})
 			}
 			_ = json.NewEncoder(w).Encode(out)
 		default:
@@ -620,5 +626,87 @@ func TestHubAgentTunnel(t *testing.T) {
 	waitFor("gone", func() bool { return hub.Get(9) == nil })
 	if _, err := client.Version(context.Background()); err == nil {
 		t.Fatal("request succeeded without an edge")
+	}
+}
+
+// writePartFile writes a libtorrent partfile holding the given pieces (full piece buffers;
+// only the bytes of skipped files matter).
+func writePartFile(t *testing.T, path string, numPieces int, pl int64, pieces map[int][]byte) {
+	t.Helper()
+	hdr := (int64(2+numPieces)*4 + 1023) &^ 1023
+	b := make([]byte, hdr+int64(len(pieces))*pl)
+	binary.BigEndian.PutUint32(b[0:], uint32(numPieces))
+	binary.BigEndian.PutUint32(b[4:], uint32(pl))
+	for i := 0; i < numPieces; i++ {
+		binary.BigEndian.PutUint32(b[8+4*i:], 0xffffffff)
+	}
+	slot := 0
+	for pi := 0; pi < numPieces; pi++ {
+		data, ok := pieces[pi]
+		if !ok {
+			continue
+		}
+		binary.BigEndian.PutUint32(b[8+4*pi:], uint32(slot))
+		copy(b[hdr+int64(slot)*pl:], data)
+		slot++
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestDiskBoundaryPiecesWithSkippedFiles: qB downloads only b.mkv of a v1 torrent without
+// padding (a.bin 250 | b.mkv 300 | c.bin 50, 100-byte pieces): pieces 2 (a+b) and 5 (b+c) are
+// shared with skipped files, whose bytes libtorrent keeps in its partfile; the skipped files
+// don't exist. WebTorrent asks for a boundary piece as one range per file, so both the wanted
+// and the skipped file's part must come back correct (each read verifies the whole piece).
+func TestDiskBoundaryPiecesWithSkippedFiles(t *testing.T) {
+	files := []tfile{{"a.bin", 250, false}, {"b.mkv", 300, false}, {"c.bin", 50, false}}
+	tor, ih, data := makeTorrent("T", 100, files)
+	root := t.TempDir()
+	save := filepath.Join(root, "dl")
+	_ = os.MkdirAll(filepath.Join(save, "T"), 0o755)
+	_ = os.WriteFile(filepath.Join(save, "T", "b.mkv"), data[250:550], 0o644)
+	part := filepath.Join(save, "."+ih+".parts")
+	writePartFile(t, part, 6, 100, map[int][]byte{2: data[200:300], 5: data[500:600]})
+	q := newFakeQB(t)
+	q.torrent, q.ih, q.save = tor, ih, filepath.ToSlash(save)
+	q.names = []string{"T/a.bin", "T/b.mkv", "T/c.bin"}
+	q.skipped = map[string]bool{"T/a.bin": true, "T/c.bin": true}
+	q.states = []int{0, 0, 2, 2, 2, 2}
+	d := &Disk{QB: qb.NewClient(q.srv.URL, "u", "p", ""), Root: root, Verify: true, HaveTTL: time.Hour}
+	ctx := context.Background()
+	check := func(fi int, s, e int64, want []byte) {
+		t.Helper()
+		got, err := readAll(d.ReadRange(ctx, ih, fi, s, e))
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("file %d [%d..%d]: %v (%d bytes)", fi, s, e, err, len(got))
+		}
+	}
+	check(1, 0, 299, data[250:550])   // the whole wanted file (pieces 2..5, boundary ones verified via the partfile)
+	check(1, 0, 49, data[250:300])    // b's part of piece 2
+	check(0, 200, 249, data[200:250]) // a's part of piece 2: from the partfile
+	check(2, 0, 49, data[550:600])    // c's part of piece 5
+	// a skipped file's piece that isn't verified is refused before reading anything
+	if _, err := d.ReadRange(ctx, ih, 0, 0, 99); !errors.Is(err, ErrNotAvailable) {
+		t.Fatalf("unverified piece of a skipped file: %v", err)
+	}
+	// a corrupted partfile byte fails the piece hash (never served)
+	b, _ := os.ReadFile(part)
+	b[1024+10] ^= 0xff
+	_ = os.WriteFile(part, b, 0o644)
+	if _, err := readAll(d.ReadRange(ctx, ih, 1, 0, 49)); err == nil || !strings.Contains(err.Error(), "hash") {
+		t.Fatalf("corrupted partfile: %v", err)
+	}
+	// later a.bin is raised: libtorrent moves its bytes into the file and frees the slot; the
+	// cached priority still says skipped → partfile miss → falls back to the file
+	_ = os.WriteFile(filepath.Join(save, "T", "a.bin.!qB"), data[0:250], 0o644)
+	writePartFile(t, part, 6, 100, map[int][]byte{5: data[500:600]})
+	check(1, 0, 49, data[250:300])
+	check(0, 200, 249, data[200:250])
+	// no partfile at all and a skipped neighbour: the boundary piece can't be assembled
+	_ = os.Remove(part)
+	if _, err := readAll(d.ReadRange(ctx, ih, 1, 299, 299)); err == nil {
+		t.Fatal("boundary piece served without the skipped file's bytes")
 	}
 }

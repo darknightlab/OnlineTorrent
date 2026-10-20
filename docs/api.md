@@ -41,7 +41,7 @@
 | POST | `/api/v1/torrents/hash/{ih}/play` | 打开种子（策略判定 + 磁力；新种子先返回 pending） |
 | GET | `/api/v1/torrents/hash/{ih}/resolve/events` | 新种子的元数据获取与判定结果（SSE） |
 | POST | `/api/v1/torrents/moe/{id}/play` | 按 bangumi.moe ID 打开（本地库中由 bangumi.moe 抓取源收录的种子） |
-| POST | `/api/v1/torrents/hash/{ih}/seed` / `report` | 服务器做种 / 举报 |
+| POST | `/api/v1/torrents/hash/{ih}/seed` `{file}` / `report` | 服务器下载并做种正在播放的文件 / 举报 |
 | GET | `/api/v1/torrents/hash/{ih}/torrent` | 种子文件（.torrent，HTTP 元数据；磁力 `xs=` 指向这里） |
 | GET | `/api/v1/torrents/hash/{ih}/webseed/events[/file/{idx}]` | WebSeed 可用分块推送（SSE） |
 | GET | `/webseed/hash/{ih}/[文件路径]` | 主站上恒为 404：WebSeed 只由边缘节点提供（见「HTTP WebSeed」）；该路径仍是「可使用 WebSeed」的权限键 |
@@ -223,8 +223,14 @@ Torrent：
 - `timeout {}`：60 秒内没拿到元数据（队列继续尝试；前端「暂时无法获取种子信息」+ 重试，重试会重新 POST play）。没有 P2P 回退。
 - 用户提交的种子获取元数据后会被复查；此外后台每 10 分钟用 qB 中的真实名称与文件列表复查本站分类下所有种子，命中屏蔽规则或超过大小上限的会被移除。
 
-### `POST /torrents/hash/{ih}/seed` → `{"seeded": true}`
-让所有在线 qB 下载并做种（消耗服务器带宽 / 磁盘）。推给 qB 的 tracker 由本站管理（不依赖 qB 的「自动添加 tracker」）：`webtorrent.trackers` + `bt.trackers` + 种子自带的 announce 列表（本地存的 .torrent），去重后最多 30 个；磁力带上全部，`torrents/add` 之后再 `torrents/addTrackers` 一次（qB 跳过已有的，所以已在 qB 里的种子也会补上缺少的 tracker）。wss 只有在该 qB 开启 `add_wss_trackers` 时才经 addTrackers 添加（qB 会过滤磁力里的 wss）。抓取源的 qB 元数据队列同样使用 Feed 磁力的 tracker + 以上列表。默认仅会员及以上。种子须先经 play 打开过（且元数据已知）；会对当前用户重新做策略 + 内容范围判定。超过 `play.max_push_size_mb` 返回 413 `too_large`。`seeded` 为至少一台服务器接受了做种；不返回是哪几台（管理员在后台「播放记录」里可见）。
+### `POST /torrents/hash/{ih}/seed` `{file}` → `{"seeded": true}`
+让所有在线 qB 下载并做种**正在播放的文件**（消耗服务器带宽 / 磁盘）。请求体 `{"file": n}`：种子内的文件序号，与 WebTorrent / `.torrent` 的顺序一致（BEP 47 填充文件也计数；单文件种子可省略请求体）；多文件种子缺少 `file`、序号越界或指向填充文件时 400 `bad_request`；服务器还没有文件列表时 409 `no_metadata`。前端在选定文件后请求一次，切换到同一种子的另一个文件时再请求一次。
+- **qB 只下载请求过的文件**：种子不在某台 qB 上时，用本地存的 .torrent 以暂停状态添加（立即有元数据，标签 `otd-pending`），把其余文件设为「不下载」（`torrents/filePrio` 0）后再开始；没有 .torrent 时用磁力 + `stopCondition=MetadataReceived`，元数据到了再设优先级并开始。种子已在 qB 上时只把新请求的文件调回正常优先级（已在下载的文件从不降为不下载），有调整才 `torrents/start`；元数据队列里的种子（`<分类>-meta`）转为做种时同样只下载请求的文件。qB 的 `progress` / `size` 只计要下载的文件，所以「下载完成」（清理规则）指这些文件完成。与其余文件共享的边界分块会整块下载，其中属于不下载文件的字节在 libtorrent 的 partfile（`.<infohash>.parts`）里，边缘节点会从那里读取并整块校验。
+- **大小上限** `play.max_push_size_mb`：按**要下载的文件**合计（各服务器已在下载的文件 ∪ 新请求的文件），不是整个种子；超过返回 413 `too_large`（不改动 qB）。后台定期复查（及元数据到达后的检查）同样按要下载的文件合计判断用户种子是否超限，超限则从 qB 删除。整个种子（如 12.7 GB 的合集）可以大于上限。
+- 推给 qB 的 tracker 由本站管理（不依赖 qB 的「自动添加 tracker」）：`webtorrent.trackers` + `bt.trackers` + 种子自带的 announce 列表（本地存的 .torrent），去重后最多 30 个，添加后再 `torrents/addTrackers` 一次（qB 跳过已有的，所以已在 qB 里的种子也会补上缺少的 tracker）。wss 只有在该 qB 开启 `add_wss_trackers` 时才经 addTrackers 添加（qB 会过滤磁力里的 wss）。抓取源的 qB 元数据队列同样使用 Feed 磁力的 tracker + 以上列表。
+- 默认仅会员及以上（游客等无做种权限的用户永远不会触发下载）。种子须先经 play 打开过（且元数据已知）；会对当前用户重新做策略 + 内容范围判定。`seeded` 为至少一台服务器接受了做种；不返回是哪几台（管理员在后台「播放记录」里可见）。
+- v1+v2 混合种子：qB 在拿到元数据后以截短的 v2 infohash 作为种子 ID（用 v1 查询会查不到），本站的 qB 客户端会自动把 v1 换成 qB 的 ID。
+
 qB 拿到元数据后，后端把文件列表写入本地库并刮削（每个 infohash 一次）；期间 `GET /torrents/hash/{ih}` 返回 `pending`，完成后 `ready`。若该种子正好在抓取源的元数据队列里（qB 分类 `projectk-meta`），会被转入做种分类并开始下载，不会被队列删除。
 
 ### `GET /torrents/hash/{ih}/torrent` → `application/x-bittorrent`

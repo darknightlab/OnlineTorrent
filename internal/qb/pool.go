@@ -6,12 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/darknightlab/onlinetorrent/internal/magnet"
 	"github.com/darknightlab/onlinetorrent/internal/store"
 )
 
@@ -65,6 +63,9 @@ type Pool struct {
 
 	mu      sync.RWMutex
 	servers []*Server
+
+	jobsMu sync.Mutex
+	jobs   map[string]*seedJob // serverID|ih → file-selection job (seed.go)
 
 	progMu      sync.Mutex
 	prog        map[string]float64 // infohash → best progress over online servers
@@ -170,6 +171,7 @@ func (p *Pool) Reload(ctx context.Context) error {
 		if c.EdgeAPI && p.EdgeTransport != nil {
 			client = NewClientTransport(c.URL, c.Username, c.Password, c.APIKey, p.EdgeTransport(c.ID))
 		}
+		client.SetIDCategories(c.Category, MetaCategory(c.Category)) // hybrid torrent ids (ids.go)
 		next = append(next, &Server{Cfg: c, Client: client})
 	}
 	p.servers = next
@@ -233,99 +235,6 @@ func (p *Pool) CheckAll(ctx context.Context) {
 		go func() { defer wg.Done(); p.Check(ctx, s) }()
 	}
 	wg.Wait()
-}
-
-// PushResult is the outcome of pushing a torrent.
-type PushResult struct {
-	SeededBy []string          `json:"seeded_by"`
-	Errors   map[string]string `json:"errors,omitempty"`
-}
-
-// Push adds a torrent to every online, enabled server, then adds the trackers with
-// torrents/addTrackers (qB skips ones the torrent already has): this also gives a torrent
-// that was already in qB the missing trackers. wss trackers are only added this way when
-// the server's add_wss_trackers is on (qB ≥ 5.3.0rc1 strips ws/wss from magnets, PR #24512).
-// It is detached from ctx cancellation (a client disconnect must not abort between Add
-// and AddTrackers); timeout bounds each server.
-func (p *Pool) Push(ctx context.Context, ih, name string, trackers []string, timeout time.Duration) PushResult {
-	ctx = context.WithoutCancel(ctx)
-	res := PushResult{Errors: map[string]string{}}
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	uri := magnet.Build(ih, name, trackers)
-	var wss, other []string
-	for _, t := range trackers {
-		if magnet.IsWebSocket(t) {
-			wss = append(wss, t)
-		} else {
-			other = append(other, t)
-		}
-	}
-	for _, s := range p.Servers() {
-		if !s.Cfg.Enabled || !s.Status().Online {
-			continue
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			cctx, cancel := context.WithTimeout(ctx, timeout)
-			defer cancel()
-			err := s.Client.Add(cctx, AddParams{URLs: uri, Category: s.Cfg.Category, SeedingTimeLimitMin: s.Cfg.SeedingTimeLimitMin, RatioLimit: s.Cfg.RatioLimit})
-			if err == nil {
-				p.adoptMeta(cctx, s, ih)
-			}
-			add := other
-			if s.Cfg.AddWSSTrackers {
-				add = append(append([]string(nil), wss...), other...)
-			}
-			if err == nil && len(add) > 0 {
-				// the torrent may need a moment to appear
-				for i := 0; i < 3; i++ {
-					if err2 := s.Client.AddTrackers(cctx, ih, add); err2 == nil {
-						break
-					} else if i == 2 {
-						p.log.Warn("addTrackers failed", "server", s.Cfg.Name, "hash", ih, "err", err2)
-					}
-					select {
-					case <-cctx.Done():
-					case <-time.After(700 * time.Millisecond):
-					}
-				}
-			}
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil {
-				res.Errors[s.Cfg.Name] = err.Error()
-				return
-			}
-			res.SeededBy = append(res.SeededBy, s.Cfg.Name)
-		}()
-	}
-	wg.Wait()
-	sort.Strings(res.SeededBy)
-	if res.SeededBy == nil {
-		res.SeededBy = []string{}
-	}
-	return res
-}
-
-// adoptMeta: if the torrent already sits in our metadata category (a crawler metadata
-// fetch, stopped after metadata arrived), Add was a no-op — move it to the seeding
-// category, apply the share limits and start it, so the crawler no longer deletes it.
-func (p *Pool) adoptMeta(ctx context.Context, s *Server, ih string) {
-	ts, err := s.Client.Info(ctx, "", ih)
-	if err != nil || len(ts) == 0 || ts[0].Category != s.MetaCategory() {
-		return
-	}
-	if err := s.Client.SetCategory(ctx, ih, s.Cfg.Category); err != nil {
-		p.log.Warn("adopt meta torrent: setCategory", "server", s.Cfg.Name, "hash", ih, "err", err)
-		return
-	}
-	_ = s.Client.SetShareLimits(ctx, ih, s.Cfg.RatioLimit, s.Cfg.SeedingTimeLimitMin)
-	if err := s.Client.Start(ctx, ih); err != nil {
-		p.log.Warn("adopt meta torrent: start", "server", s.Cfg.Name, "hash", ih, "err", err)
-	}
-	p.log.Info("adopted metadata torrent for seeding", "server", s.Cfg.Name, "hash", ih)
 }
 
 // Remove deletes a torrent (with files) from every server.
@@ -404,6 +313,7 @@ const staleAfter = 48 * time.Hour
 // and stale ones (added > 48h ago with progress < 1 or no metadata).
 func (p *Pool) Cleanup(ctx context.Context) {
 	stale := time.Now().Add(-staleAfter).Unix()
+	pendingStale := time.Now().Add(-15 * time.Minute).Unix()
 	for _, s := range p.Servers() {
 		if !s.Cfg.Enabled || !s.Status().Online {
 			continue
@@ -417,9 +327,14 @@ func (p *Pool) Cleanup(ctx context.Context) {
 			if t.Category != s.Cfg.Category {
 				continue
 			}
+			// Progress / state are relative to the wanted files (others skipped): a torrent
+			// whose wanted files are done is finished
 			finished := t.Progress >= 1 && (t.State == "stoppedUP" || t.State == "pausedUP")
 			old := t.AddedOn > 0 && t.AddedOn < stale && (t.Progress < 1 || !t.HasMetadata)
-			if finished || old {
+			// added stopped by otd but its file selection was never applied (otd restarted in
+			// between): it can't download anything; the next seed request adds it again
+			stuck := t.HasTag(PendingTag) && t.HasMetadata && IsStopped(t.State) && t.AddedOn > 0 && t.AddedOn < pendingStale && !p.hasJob(s, t.Hash)
+			if finished || old || stuck {
 				del = append(del, t.Hash)
 			}
 		}
@@ -475,10 +390,11 @@ type filesEntry struct {
 
 var progressCache sync.Map // serverID|hash -> filesEntry (short TTL, shared by webseed watchers)
 
-// FileProgress reports whether file idx (idx < 0: the only file of a single-file torrent,
-// or any file of a multi-file torrent) is fully downloaded on some online server, plus the
-// best progress seen. found is false when no server has the torrent at all.
-func (p *Pool) FileProgress(ctx context.Context, ih string, idx int) (ready bool, progress float64, found bool) {
+// FileProgress reports whether the file at torrent path ("Name/sub/file"; "" = the only file
+// of a single-file torrent, or any file) is fully downloaded on some online server, plus the
+// best progress seen. found is false when no server has the torrent at all. Matched by path:
+// qB hides BEP 47 padding files, so its indexes differ from the torrent's.
+func (p *Pool) FileProgress(ctx context.Context, ih string, path string) (ready bool, progress float64, found bool) {
 	for _, s := range p.Servers() {
 		if !s.Cfg.Enabled || !s.Status().Online {
 			continue
@@ -503,11 +419,19 @@ func (p *Pool) FileProgress(ctx context.Context, ih string, idx int) (ready bool
 			continue
 		}
 		found = true
-		for _, f := range files {
-			if idx >= 0 && f.Index != idx {
+		want := -1
+		if path != "" {
+			if f, ok := MatchFile(files, path); ok {
+				want = f.Index
+			} else {
 				continue
 			}
-			if idx < 0 && len(files) > 1 && f.Progress < 1 {
+		}
+		for _, f := range files {
+			if want >= 0 && f.Index != want {
+				continue
+			}
+			if want < 0 && len(files) > 1 && f.Progress < 1 {
 				progress = max(progress, f.Progress)
 				continue
 			}
@@ -518,4 +442,18 @@ func (p *Pool) FileProgress(ctx context.Context, ih string, idx int) (ready bool
 		}
 	}
 	return false, progress, found
+}
+
+// NewServerForTest returns an online server around client (tests / tools in other packages).
+func NewServerForTest(cfg store.QBServer, client *Client) *Server {
+	s := &Server{Cfg: cfg, Client: client}
+	s.setStatus(Status{Online: true})
+	return s
+}
+
+// SetServersForTest replaces the server list (tests / tools in other packages).
+func (p *Pool) SetServersForTest(servers []*Server) {
+	p.mu.Lock()
+	p.servers = servers
+	p.mu.Unlock()
 }

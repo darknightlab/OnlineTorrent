@@ -192,7 +192,7 @@ func SettingsSchema() []SettingSpec {
 		{Key: KeyRankRules, Group: "播放", Type: "json", Label: "推荐规则", Description: "单集页资源排序与自动播放（后台「推荐规则」页编辑）", Default: rank.Default(), Public: true, Hidden: true, Validate: validateRankRules},
 		{Key: KeyICEServers, Group: "播放", Type: "string_list", Label: "ICE 服务器", Description: "stun:/turn: URL", Default: []string{"stun:stun.l.google.com:19302", "stun:stun.miwifi.com:3478"}, Public: true},
 		{Key: KeyMaxAutoSize, Group: "播放", Type: "number", Label: "时间线自动选种大小上限（MB）", Default: 2048, Public: true},
-		{Key: KeyMaxPushSize, Group: "播放", Type: "number", Label: "可播放种子大小上限（MB）", Description: "超过此大小的种子不会推送给 qB；用户自填磁力在获取元数据后超限会被移除", Default: 8192},
+		{Key: KeyMaxPushSize, Group: "播放", Type: "number", Label: "服务器做种文件大小上限（MB）", Description: "qB 只下载正在播放的文件：要下载的文件（该种子已在下载的文件加上新请求的文件）合计超过此大小时不推送给 qB，用户自填磁力在获取元数据后超限会被移除；整个种子可以更大（如合集）。也是浏览器缓存预算的上限", Default: 8192},
 
 		{Key: KeyDefaultAction, Group: "审核", Type: "enum", Label: "默认权限", Options: []string{"allow", "login", "vip"}, Description: "没有任何规则命中时的权限要求", Default: "allow"},
 		{Key: KeyAutoReviewUnknown, Group: "审核", Type: "bool", Label: "用户自填磁力进入审核队列", Description: "记录用户自行提交的种子，供管理员事后审核", Default: true},
