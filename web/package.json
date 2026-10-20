@@ -12,7 +12,7 @@
     "check:webtorrent": "node --test --test-reporter=dot src/player/store/webtorrent-compat.test.ts",
     "preview": "vite preview",
     "typecheck": "tsc -b",
-    "test": "node --test src/lib/*.test.ts src/player/store/*.test.ts src/player/subs/*.test.ts",
+    "test": "node --test src/lib/*.test.ts src/player/store/*.test.ts src/player/subs/*.test.ts src/player/timemap/*.test.ts",
     "e2e:chunkstore": "node e2e/chunkstore/run.mjs"
   },
   "dependencies": {

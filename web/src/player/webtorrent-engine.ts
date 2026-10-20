@@ -26,6 +26,10 @@ import {
 import { infoHashFromMagnet } from "./store/policy"
 import { applyRanges, bitsFromRanges, countPieces, resetToRanges } from "@/lib/webseed"
 import { SubtitleSource } from "./subs/source"
+import { readCuePoints } from "./subs/mkv"
+import { mp4Points } from "./timemap/mp4"
+import { buildTimeMap } from "@/lib/timemap"
+import type { TimeMapResult } from "./types"
 import type { ClusterTap } from "./subs/tap"
 import type { WebSeedAvail, WebSeedUpdate } from "./types"
 
@@ -341,6 +345,44 @@ class WTSession implements Session {
       this.subs.set(fileIndex, s)
     }
     return s
+  }
+
+  // ---- 进度条的字节 → 时间映射（容器索引）----
+
+  private maps = new Map<number, Promise<TimeMapResult | null>>()
+
+  /**
+   * 文件的字节 → 时间映射：MP4 用 moov 样本表，MKV 用 Cues（没有 Cues 时用播放中读到的 Cluster，partial）。
+   * 在 <video> 读完头部之后调用（moov / Cues 浏览器本来就会读取；这里只做有上限的辅助读取）。
+   */
+  timeMap(fileIndex: number): Promise<TimeMapResult | null> {
+    const f = this.torrent?.files?.[fileIndex]
+    if (!f || this.destroyed) return Promise.resolve(null)
+    const read = (a: number, b: number) => this.readRange(fileIndex, a, b)
+    const cached = this.maps.get(fileIndex)
+    if (cached) return cached
+    let p: Promise<TimeMapResult | null>
+    if (/\.(mp4|m4v|mov)$/i.test(f.name)) {
+      p = mp4Points(read, f.length).then((r) => {
+        const map = r && buildTimeMap(r.points)
+        return map ? { map, partial: false } : null
+      })
+    } else if (/\.mk[vs]$/i.test(f.name)) {
+      const src = this.subtitles(fileIndex)
+      p = (async () => {
+        const h = src && (await src.header)
+        const pts = h ? await readCuePoints(read, h).catch(() => null) : null
+        const map = pts && buildTimeMap(pts)
+        if (map) return { map, partial: false }
+        // Cues 缺失：用视频已读到的 Cluster（稀疏，随播放增多）；不缓存
+        this.maps.delete(fileIndex)
+        const seen = src ? buildTimeMap([...src.clusters]) : null
+        return seen ? { map: seen, partial: true } : null
+      })()
+    } else return Promise.resolve(null)
+    p = p.catch(() => null)
+    this.maps.set(fileIndex, p)
+    return p
   }
 
   /** 播放器读取文件时（serveFile 的 "iterator" 事件）把同样的字节交给字幕解析器 */

@@ -2,7 +2,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { deflateSync } from "node:zlib"
 import { ID } from "./ebml.ts"
-import { parseMkvHeader, readAttachment } from "./mkv.ts"
+import { parseMkvHeader, readAttachment, readCuePoints } from "./mkv.ts"
 import { SubtitleSource, srtToAss } from "./source.ts"
 import type { RawBlock } from "./tap.ts"
 
@@ -157,4 +157,27 @@ test("tap: tracks learnt from the stream itself when the header isn't parsed yet
 
 test("srt → ASS chunk", () => {
   assert.equal(srtToAss("<b>A</b> {x}\r\n<font color=\"#ff8000\">B</font>", 5), "5,0,Default,,0,0,0,,{\\b1}A{\\b0} (x)\\N{\\c&H0080ff&}B{\\c}")
+})
+
+test("Cues → time map points (video track preferred); tap records clusters for the no-Cues fallback", async () => {
+  const { file } = makeMkv()
+  // append Cues after the clusters, point a SeekHead at it: rebuild the file with SeekHead + Cues
+  const h0 = await parseMkvHeader(reader(file), file.length)
+  const segData = h0.segmentData
+  // cluster positions relative to the segment data start (scan the file for cluster IDs)
+  const rel: number[] = []
+  for (let i = segData; i + 4 <= file.length; i++) if (file[i] === 0x1f && file[i + 1] === 0x43 && file[i + 2] === 0xb6 && file[i + 3] === 0x75) rel.push(i - segData)
+  assert.equal(rel.length, 3)
+  const cue = (t: number, track: number, pos: number) => el(ID.CuePoint, el(ID.CueTime, uint(t)), el(ID.CueTrackPositions, el(ID.CueTrack, uint(track)), el(ID.CueClusterPosition, uint(pos))))
+  const cues = el(ID.Cues, cue(0, 1, rel[0]), cue(10_000, 2, rel[0]), cue(10_000, 1, rel[1]), cue(20_000, 1, rel[2]))
+  const h = { ...h0, cuesPos: file.length }
+  const withCues = cat(file, cues)
+  const pts = await readCuePoints(reader(withCues), h)
+  assert.deepEqual(pts, [[segData + rel[0], 0], [segData + rel[1], 10], [segData + rel[2], 20]])
+  assert.equal(await readCuePoints(reader(file), { ...h0, cuesPos: -1 }), null)
+  // fallback: clusters seen by the tap
+  const src = new SubtitleSource(reader(file), file.length)
+  await src.header
+  feed(src, file, 0, 5)
+  assert.deepEqual([...src.clusters], [[segData + rel[0], 0], [segData + rel[1], 10_000], [segData + rel[2], 20_000]])
 })

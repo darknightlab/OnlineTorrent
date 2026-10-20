@@ -41,6 +41,11 @@ export const ID = {
   Block: 0xa1,
   BlockDuration: 0x9b,
   Cues: 0x1c53bb6b,
+  CuePoint: 0xbb,
+  CueTime: 0xb3,
+  CueTrackPositions: 0xb7,
+  CueTrack: 0xf7,
+  CueClusterPosition: 0xf1,
   Tags: 0x1254c367,
   Chapters: 0x1043a770,
 } as const

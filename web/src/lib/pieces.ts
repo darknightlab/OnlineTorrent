@@ -13,17 +13,20 @@ export const PIECE_COLORS = ["transparent", "var(--ot-piece-partial)", "var(--ot
 /**
  * 进度条内的 piece 可用性图层（类似 YouTube 的已缓冲条，但按当前文件的 piece 分段）：
  * 0 未下载 = 透明（露出轨道），1 部分下载，2 已下载。相邻同状态的段合并，生成一个硬边的 linear-gradient。
+ * toTime：字节比例 → 时间比例（单调）；省略时按字节比例画（没有容器索引时的退路）。
  */
-export function segmentsGradient(segments: Uint8Array): string {
+export function segmentsGradient(segments: Uint8Array, toTime?: (byteFrac: number) => number): string {
   const n = segments.length
   if (!n) return "none"
+  // 段的边界：字节比例；有时间映射（lib/timemap）时换成时间比例（进度条是时间轴）
+  const at = toTime ?? ((x: number) => x)
   const stops: string[] = []
   for (let i = 0; i < n; ) {
     const v = segments[i]
     let j = i + 1
     while (j < n && segments[j] === v) j++
     const c = PIECE_COLORS[v] ?? PIECE_COLORS[0]
-    stops.push(`${c} ${pct(i / n)} ${pct(j / n)}`)
+    stops.push(`${c} ${pct(at(i / n))} ${pct(at(j / n))}`)
     i = j
   }
   if (stops.length === 1 && segments[0] === 0) return "none"

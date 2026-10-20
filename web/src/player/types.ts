@@ -75,6 +75,8 @@ export interface Session {
   focusFile?(index: number | null): void
   /** MKV 文件的内封字幕（其他文件 / mock 引擎为 null）；正在播放的文件由 focusFile 预先建好 */
   subtitles?(fileIndex: number): import("./subs/source").SubtitleSource | null
+  /** 进度条的字节 → 时间映射（容器索引）；不支持的容器 / 没有索引时为 null */
+  timeMap?(fileIndex: number): Promise<TimeMapResult | null>
   /** 读取文件 [start, end) 的字节（辅助读取：容器索引等；缺的 piece 会下载） */
   readRange?(fileIndex: number, start: number, end: number): Promise<Uint8Array>
   /** 播放器拿到的媒体时长（秒），用于按码率估算缓存的读前窗口 */
@@ -170,4 +172,10 @@ export function likelyUnsupported(name: string): string | null {
     if (/\bflac\b/.test(n) && !canDecode('audio/mp4; codecs="flac"')) return "FLAC 音轨"
   }
   return null
+}
+
+/** 字节 → 时间映射；partial：来自播放中观察到的位置（MKV 无 Cues），之后可能更完整 */
+export interface TimeMapResult {
+  map: import("@/lib/timemap").TimeMap
+  partial: boolean
 }

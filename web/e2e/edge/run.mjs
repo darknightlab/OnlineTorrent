@@ -22,7 +22,9 @@ const MEDIA = process.argv[3] || process.env.MEDIA || "/tmp/f/media/v.mp4"
 const OTD = process.env.OTD_BIN || "/tmp/edge-e2e/otd"
 const CHROMIUM = process.env.CHROMIUM || "/nix/var/nix/profiles/runtime/bin/chromium"
 const RATE = Number(process.env.QB_RATE || 450_000) // fake qB download speed, bytes/s
-const START_FRACTION = 0.08 // already downloaded when the test starts
+const START_FRACTION = Number(process.env.START_FRACTION ?? 0.08) // already downloaded when the test starts
+// TORRENT=<file.torrent>: use a real single-file .torrent (MEDIA must be its data) instead of building one
+const TORRENT = process.env.TORRENT
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const rnd = () => 19000 + Math.floor(Math.random() * 11000)
 const MAIN_PORT = rnd(), EDGE_PORT = rnd(), QB_PORT = rnd(), DBG_PORT = rnd()
@@ -41,16 +43,40 @@ fs.rmSync(RUN, { recursive: true, force: true })
 fs.mkdirSync(RUN, { recursive: true })
 
 // ---------------------------------------------------------------- torrent
-const PL = 64 << 10
-const ROOT = "[E2E] Edge Test - 01"
+/** minimal bdecode: returns [value, end]; dicts keep the raw byte range of "info" */
+function bdecode(b, p = 0) {
+  const c = b[p]
+  if (c === 0x69) { const e = b.indexOf(0x65, p); return [Number(b.toString("latin1", p + 1, e)), e + 1] }
+  if (c === 0x6c) { const out = []; p++; while (b[p] !== 0x65) { const [v, q] = bdecode(b, p); out.push(v); p = q } return [out, p + 1] }
+  if (c === 0x64) {
+    const out = {}; p++
+    while (b[p] !== 0x65) {
+      const [k, q] = bdecode(b, p)
+      const [v, r] = bdecode(b, q)
+      out[k.toString("latin1")] = v
+      if (k.toString("latin1") === "info") out.__infoRange = [q, r]
+      p = r
+    }
+    return [out, p + 1]
+  }
+  const colon = b.indexOf(0x3a, p)
+  const n = Number(b.toString("latin1", p, colon))
+  return [b.subarray(colon + 1, colon + 1 + n), colon + 1 + n]
+}
+const realTorrent = TORRENT ? fs.readFileSync(TORRENT) : null
+const realInfo = realTorrent ? bdecode(realTorrent)[0] : null
+const SINGLE = !!realInfo && !realInfo.info.files
+const PL = realInfo ? realInfo.info["piece length"] : 64 << 10
+const ROOT = realInfo ? realInfo.info.name.toString("utf8") : "[E2E] Edge Test - 01"
 const media = fs.readFileSync(MEDIA)
 const notes = Buffer.from("边缘节点端到端测试\n".repeat(40))
 const EXT = path.extname(MEDIA) || ".mp4"
-const files = [{ path: `${ROOT}${EXT}`, data: media }, { path: "notes.txt", data: notes }]
+const files = SINGLE ? [{ path: ROOT, data: media }] : [{ path: `${ROOT}${EXT}`, data: media }, { path: "notes.txt", data: notes }]
+if (SINGLE && media.length !== realInfo.info.length) throw new Error("MEDIA does not match TORRENT")
 const all = Buffer.concat(files.map((f) => f.data))
 const NP = Math.ceil(all.length / PL)
 const hashes = []
-for (let i = 0; i < NP; i++) hashes.push(crypto.createHash("sha1").update(all.subarray(i * PL, Math.min((i + 1) * PL, all.length))).digest())
+if (!realTorrent) for (let i = 0; i < NP; i++) hashes.push(crypto.createHash("sha1").update(all.subarray(i * PL, Math.min((i + 1) * PL, all.length))).digest())
 function bencode(v) {
   if (typeof v === "number") return Buffer.from(`i${v}e`)
   if (Buffer.isBuffer(v)) return Buffer.concat([Buffer.from(`${v.length}:`), v])
@@ -60,8 +86,8 @@ function bencode(v) {
   return Buffer.concat([Buffer.from("d"), ...keys.flatMap((k) => [bencode(k), bencode(v[k])]), Buffer.from("e")])
 }
 const info = { name: ROOT, "piece length": PL, pieces: Buffer.concat(hashes), files: files.map((f) => ({ length: f.data.length, path: [f.path] })) }
-const IH = crypto.createHash("sha1").update(bencode(info)).digest("hex")
-const torrent = bencode({ info, announce: "wss://tracker.invalid/announce" })
+const IH = realTorrent ? crypto.createHash("sha1").update(realTorrent.subarray(...realInfo.__infoRange)).digest("hex") : crypto.createHash("sha1").update(bencode(info)).digest("hex")
+const torrent = realTorrent ?? bencode({ info, announce: "wss://tracker.invalid/announce" })
 console.log(`torrent ${IH}: ${NP} pieces of ${PL >> 10} KiB, ${(all.length / 1e6).toFixed(1)} MB`)
 
 // on disk, as qB lays it out: <save>/<root>/<file>(.!qB); qB sees /Data/Torrent/…, the edge
@@ -69,8 +95,8 @@ console.log(`torrent ${IH}: ${NP} pieces of ${PL >> 10} KiB, ${(all.length / 1e6
 const DATA = `${RUN}/data`
 const QB_SAVE = "/Data/Torrent/qbittorrent/files/默认"
 const localSave = path.join(DATA, "qbittorrent/files/默认")
-fs.mkdirSync(path.join(localSave, ROOT), { recursive: true })
-const videoPath = path.join(localSave, ROOT, `${ROOT}${EXT}`)
+fs.mkdirSync(SINGLE ? localSave : path.join(localSave, ROOT), { recursive: true })
+const videoPath = SINGLE ? path.join(localSave, ROOT) : path.join(localSave, ROOT, `${ROOT}${EXT}`)
 const notesPath = path.join(localSave, ROOT, "notes.txt")
 const states = new Array(NP).fill(0)
 {
@@ -99,7 +125,7 @@ function writePiece(i) {
   states[i] = 2
 }
 // notes.txt is in the last piece(s) → complete from the start; the video's first 8 %
-for (let i = 0; i < NP; i++) if (i >= piecesOfVideo - 1) writePiece(i)
+if (!SINGLE) for (let i = 0; i < NP; i++) if (i >= piecesOfVideo - 1) writePiece(i)
 for (let i = 0; i < Math.floor(piecesOfVideo * START_FRACTION); i++) writePiece(i)
 const done = () => states.every((s) => s === 2)
 const progress = () => states.filter((s) => s === 2).length / NP
@@ -151,7 +177,7 @@ const qb = http.createServer(async (req, res) => {
     }
     case "torrents/files":
       if (!have()) return nf()
-      return json(files.map((f, i) => ({ index: i, name: `${ROOT}/${f.path}`, size: f.data.length, progress: i === 0 ? (videoDone ? 1 : progress()) : 1, priority: prio[i] })))
+      return json(files.map((f, i) => ({ index: i, name: SINGLE ? f.path : `${ROOT}/${f.path}`, size: f.data.length, progress: i === 0 ? (videoDone ? 1 : progress()) : 1, priority: prio[i] })))
     case "torrents/filePrio":
       for (const id of (q("id") ?? "").split("|")) prio[Number(id)] = Number(q("priority"))
       return res.end("")
@@ -202,7 +228,7 @@ async function api(method, p, body) {
   return t ? JSON.parse(t) : null
 }
 await api("POST", "/auth/login", { identifier: "e2eadmin", password: "e2e-pass-123" })
-await api("PUT", "/admin/settings", { values: { "site.base_url": SITE, "edge.token_minutes": 1 } })
+await api("PUT", "/admin/settings", { values: { "site.base_url": SITE, "edge.token_minutes": 1, ...JSON.parse(process.env.SITE_SETTINGS || "{}") } })
 await api("POST", "/admin/qb-servers", { name: "fake-ams", url: "http://qb-only-via-edge.invalid", username: "u", password: "p", category: "projectk", enabled: true,
   seeding_time_limit_min: 1440, ratio_limit: -2, add_wss_trackers: false, edge_url: EDGE_URL, edge_api: true })
 const sv = (await api("GET", "/admin/qb-servers")).items?.[0] ?? (await api("GET", "/admin/qb-servers"))[0]
@@ -289,10 +315,14 @@ ws.onmessage = (m) => {
 await send("Page.enable")
 await send("Runtime.enable")
 await send("Network.enable")
+// small storage quota → small piece-cache budget → windowed mode (only around the playhead), like a phone
+if (process.env.QUOTA_BYTES) console.log("quota override:", JSON.stringify((await send("Storage.overrideQuotaForOrigin", { origin: SITE, quotaSize: Number(process.env.QUOTA_BYTES) })).error ?? "ok"))
 await send("Page.navigate", { url: SITE + "/" })
 await sleep(1500)
 console.log("browser login:", await ev(`return (await fetch("/api/v1/auth/login", { method: "POST", headers: { "content-type": "application/json", "x-requested-with": "fetch" }, body: JSON.stringify({ identifier: "e2eadmin", password: "e2e-pass-123" }) })).status`))
 
+// CACHE_BYTES: the player's own cache-size override (Me page) → windowed mode for big files, like a phone
+if (process.env.CACHE_BYTES) console.log("cache override:", await ev(`localStorage.setItem(${JSON.stringify(process.env.CACHE_KEY || "ot.cacheBudgetBytes")}, ${JSON.stringify(process.env.CACHE_BYTES)}); return localStorage.getItem(${JSON.stringify(process.env.CACHE_KEY || "ot.cacheBudgetBytes")})`))
 const t0 = Date.now()
 await send("Page.navigate", { url: `${SITE}/watch/hash/${IH}` })
 let playAt = -1
@@ -322,7 +352,7 @@ console.log("\nplayer log:\n  " + (logs ?? []).filter((l) => /WebSeed|边缘|种
 console.log("console errors:", consoleErr.slice(0, 5))
 
 // ---------------------------------------------------------------- direct checks against the edge
-const edgeDirect = `http://127.0.0.1:${EDGE_PORT}/webseed/hash/${IH}/${encodeURIComponent(ROOT)}/${encodeURIComponent(ROOT + EXT)}`
+const edgeDirect = SINGLE ? `http://127.0.0.1:${EDGE_PORT}/webseed/hash/${IH}/` : `http://127.0.0.1:${EDGE_PORT}/webseed/hash/${IH}/${encodeURIComponent(ROOT)}/${encodeURIComponent(ROOT + EXT)}`
 const noTok = await fetch(edgeDirect, { headers: { Origin: SITE, Range: "bytes=0-9", Cookie: cookie } })
 const foreign = await fetch(edgeDirect, { method: "OPTIONS", headers: { Origin: "https://evil.example", "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "authorization,range" } })
 const pre = await fetch(edgeDirect, { method: "OPTIONS", headers: { Origin: SITE, "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "authorization,range,cache-control,user-agent" } })
@@ -335,7 +365,7 @@ console.log(`run dir: ${RUN} (main.log, edge.log)`)
 
 const checks = {
   "playback started": playAt >= 0,
-  "edge served bytes while qB was still downloading": servedMidDownload,
+  "edge served bytes while qB was still downloading": servedMidDownload || START_FRACTION >= 1,
   "main server served no webseed data": stat.main.bytes === 0 && stat.main.n === 0,
   "every edge request had a bearer token": stat.noAuth === 0 && stat.auth.size > 0,
   "no cookies sent to the edge": stat.cookieToEdge === 0,

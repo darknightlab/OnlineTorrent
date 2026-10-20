@@ -24,6 +24,8 @@ export interface TapOptions {
   onBlock: (b: RawBlock) => void
   /** 流里经过的 Tracks 元素（从文件开头读时） */
   onTracks?: (data: Uint8Array) => void
+  /** 经过的 Cluster：起点（文件偏移）与时间（毫秒）——没有 Cues 时用于进度条的时间映射 */
+  onCluster?: (pos: number, timeMs: number) => void
 }
 
 const MAX_SUB_BLOCK = 1 << 20
@@ -45,6 +47,7 @@ export class ClusterTap {
   private skip = 0 // 要跳过的字节（不缓存）
   private stack: Frame[] = []
   private clusterTs = 0
+  private clusterPos = -1
   private syncing: boolean
   // BlockGroup 内：Block 与 BlockDuration 可能任意顺序
   private group: { block: RawBlock | null; duration: number | null } | null = null
@@ -121,6 +124,7 @@ export class ClusterTap {
         // 未知大小的 Cluster 一直延续到下一个顶层元素
         while (this.stack.length && this.stack[this.stack.length - 1].kind !== "segment") this.leave()
         this.clusterTs = 0
+        this.clusterPos = this.pos
         this.enter("cluster", h.size, dataPos)
         this.advance(h.headerLen)
         off += h.headerLen
@@ -189,6 +193,7 @@ export class ClusterTap {
 
   /** 解析错误：放弃当前状态，重新找 Cluster */
   private resync() {
+    this.clusterPos = -1
     this.stack = []
     this.group = null
     this.collect = null
@@ -199,6 +204,8 @@ export class ClusterTap {
     switch (id) {
       case ID.Timestamp:
         this.clusterTs = readUint(data)
+        if (this.clusterPos >= 0) this.o.onCluster?.(this.clusterPos, (this.clusterTs * this.o.timestampScale()) / 1e6)
+        this.clusterPos = -1
         break
       case ID.BlockDuration:
         if (this.group) this.group.duration = readUint(data)

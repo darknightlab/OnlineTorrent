@@ -45,6 +45,10 @@ export interface MkvHeader {
   trackTypes: Map<number, number>
   subtitles: SubTrack[]
   attachments: AttachmentRef[]
+  /** Segment 数据的起点（SeekHead / Cues 里的位置都相对它） */
+  segmentData: number
+  /** Cues 元素的绝对位置（SeekHead 指向；没有为 -1） */
+  cuesPos: number
 }
 
 const CODECS: Record<string, SubCodec> = { "S_TEXT/ASS": "ass", S_ASS: "ass", "S_TEXT/SSA": "ssa", S_SSA: "ssa", "S_TEXT/UTF8": "srt" }
@@ -98,7 +102,7 @@ export async function parseMkvHeader(read: ReadRange, fileSize: number): Promise
   if (seg.id !== ID.Segment) throw new NotMatroskaError("找不到 Segment")
   const segData = segPos + seg.headerLen
   const segEnd = seg.size === UNKNOWN_SIZE ? fileSize : Math.min(fileSize, segData + seg.size)
-  const out: MkvHeader = { timestampScale: 1_000_000, durationMs: 0, trackTypes: new Map(), subtitles: [], attachments: [] }
+  const out: MkvHeader = { timestampScale: 1_000_000, durationMs: 0, trackTypes: new Map(), subtitles: [], attachments: [], segmentData: segData, cuesPos: -1 }
   const seek = new Map<number, number>() // 元素 ID → 绝对位置
   let gotTracks = false
   let gotAttachments = false
@@ -167,6 +171,7 @@ export async function parseMkvHeader(read: ReadRange, fileSize: number): Promise
     else if (h.id === ID.Attachments) await parseAttachments(data, h.size)
     pos = data + h.size
   }
+  out.cuesPos = seek.get(ID.Cues) ?? -1
   // Cluster 之后的（SeekHead 指向）
   const at = async (id: number) => {
     const p = seek.get(id)
@@ -277,6 +282,51 @@ export async function decodeContent(data: Uint8Array, encodings: ContentEncoding
     }
   }
   return out
+}
+
+/** Cues 的读取上限 */
+const MAX_CUES = 8 << 20
+
+/**
+ * Cues（索引）：[文件偏移, 秒]，CueTime → Segment 数据起点 + CueClusterPosition。
+ * 优先视频轨道的条目；没有 Cues / 太大时为 null（退路：播放时观察到的 Cluster，见 tap.ts onCluster）。
+ */
+export async function readCuePoints(read: ReadRange, h: MkvHeader): Promise<[number, number][] | null> {
+  if (h.cuesPos < 0) return null
+  const hb = await read(h.cuesPos, h.cuesPos + 12)
+  const ch = readHeader(hb, 0)
+  if (!ch || ch.id !== ID.Cues || ch.size === UNKNOWN_SIZE || ch.size > MAX_CUES) return null
+  const data = await read(h.cuesPos + ch.headerLen, h.cuesPos + ch.headerLen + ch.size)
+  const videoTracks = new Set([...h.trackTypes].filter(([, t]) => t === 1).map(([n]) => n))
+  const scale = h.timestampScale / 1e9
+  const video: [number, number][] = []
+  const any: [number, number][] = []
+  for (const cp of children(data)) {
+    if (cp.id !== ID.CuePoint) continue
+    let time = -1
+    let pos = -1
+    let posAny = -1
+    for (const c of children(cp.data)) {
+      if (c.id === ID.CueTime) time = readUint(c.data)
+      else if (c.id === ID.CueTrackPositions) {
+        let track = 0
+        let p = -1
+        for (const x of children(c.data)) {
+          if (x.id === ID.CueTrack) track = readUint(x.data)
+          else if (x.id === ID.CueClusterPosition) p = readUint(x.data)
+        }
+        if (p < 0) continue
+        if (videoTracks.has(track) && pos < 0) pos = p
+        if (posAny < 0) posAny = p
+      }
+    }
+    if (time < 0) continue
+    if (pos >= 0) video.push([h.segmentData + pos, time * scale])
+    if (posAny >= 0) any.push([h.segmentData + posAny, time * scale])
+  }
+  // 只要有视频轨道的条目就只用它们（字幕 / 音频的条目可能指向更早的 Cluster）
+  const pts = video.length >= 2 ? video : any
+  return pts.length >= 2 ? pts : null
 }
 
 /** 读取一个附件（字体）的数据 */

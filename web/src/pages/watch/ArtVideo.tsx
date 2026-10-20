@@ -4,6 +4,8 @@ import type { ArtHandle } from "./artplayer-setup"
 import type { SubtitleSource } from "@/player/subs/source"
 import { chooseTrack, loadPref, prefFor, savePref } from "@/player/subs/prefs"
 import { trackLabel } from "@/player/subs/lang"
+import { byteToTimeFraction } from "@/lib/timemap"
+import type { TimeMapResult } from "@/player/types"
 
 let setupModule: Promise<typeof import("./artplayer-setup")> | null = null
 /** 加载 ArtPlayer（单独的 chunk，含样式）；Player 挂载时调用以预加载 */
@@ -31,6 +33,10 @@ export interface ArtVideoProps {
   /** 当前文件的内封字幕（MKV）；有字幕轨道时控制栏出现「字幕」 */
   subtitles?: SubtitleSource | null
   onLog?: (level: "info" | "warn", msg: string) => void
+  /** 进度条 piece 图层的字节 → 时间映射（容器索引，见 session.timeMap）；元数据加载后调用一次 */
+  timeMap?: () => Promise<TimeMapResult | null>
+  /** 当前文件长度（字节），与 timeMap 一起使用 */
+  fileLength?: number
 }
 
 /**
@@ -38,14 +44,14 @@ export interface ArtVideoProps {
  * StrictMode 下 effect 会执行两次：第一次的实例在清理时 destroy（移除 DOM 与事件，释放流请求），第二次重新创建；
  * 模块尚未加载完就被清理时不会创建实例。
  */
-export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, subtitles, onLog }: ArtVideoProps) {
+export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, subtitles, onLog, timeMap, fileLength }: ArtVideoProps) {
   const box = useRef<HTMLDivElement>(null)
   const handle = useRef<ArtHandle | null>(null)
   const [ready, setReady] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   // 回调与动态数据用 ref 读取最新值，不触发重建
-  const latest = useRef({ poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, onLog })
-  latest.current = { poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, onLog }
+  const latest = useRef({ poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, onLog, timeMap, fileLength })
+  latest.current = { poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, onLog, timeMap, fileLength }
   const hasPanel = !!onPanel
 
   useEffect(() => {
@@ -88,6 +94,32 @@ export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetada
   useEffect(() => handle.current?.setPoster(poster), [poster, ready])
   useEffect(() => handle.current?.setSegments(segments), [segments, ready])
   useEffect(() => handle.current?.setSpeed(speed), [speed, ready])
+
+  // 进度条 piece 图层按时间画：元数据加载后（浏览器已读过 moov / 头部）取容器索引，每个文件算一次；
+  // 只有观察值（MKV 没有 Cues）时每 10 秒更新一次
+  useEffect(() => {
+    const h = handle.current
+    if (!ready || !h || !url) return
+    let cancelled = false
+    let timer = 0
+    const v = h.video
+    const load = () => {
+      const l = latest.current
+      if (!l.timeMap || !l.fileLength || !(v.duration > 0) || !Number.isFinite(v.duration)) return
+      void l.timeMap().then((r) => {
+        if (cancelled) return
+        if (r) h.setTimeMap(byteToTimeFraction(r.map, l.fileLength!, v.duration))
+        if (!r || r.partial) timer = window.setTimeout(load, 10_000)
+      })
+    }
+    if (v.readyState >= HTMLMediaElement.HAVE_METADATA) load()
+    else v.addEventListener("loadedmetadata", load, { once: true })
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+      v.removeEventListener("loadedmetadata", load)
+    }
+  }, [ready, url])
 
   // 内封字幕：头部解析出字幕轨道后显示「字幕」按钮，按会话偏好 / 浏览器语言选默认轨道；
   // 渲染器（JASSUB，较大）只在真的要显示字幕时才加载

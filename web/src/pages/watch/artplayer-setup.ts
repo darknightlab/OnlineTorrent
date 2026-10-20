@@ -47,6 +47,8 @@ export interface ArtHandle {
   setSubtitleMenu: (items: SubtitleMenuItem[] | null, current: number, onSelect: (value: number) => void) => void
   setPoster: (poster: string | undefined) => void
   setSegments: (segments: Uint8Array) => void
+  /** 字节比例 → 时间比例（进度条是时间轴）；null = 按字节比例 */
+  setTimeMap: (toTime: ((byteFrac: number) => number) | null) => void
   setSpeed: (speed: number) => void
   destroy: () => void
 }
@@ -121,8 +123,11 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
   const pieces = document.createElement("div")
   pieces.className = "ot-progress-pieces"
   art.query(".art-control-progress-inner")?.prepend(pieces)
+  let lastSegments = o.segments
+  let toTime: ((byteFrac: number) => number) | null = null
   const setSegments = (s: Uint8Array) => {
-    pieces.style.backgroundImage = segmentsGradient(s)
+    lastSegments = s
+    pieces.style.backgroundImage = segmentsGradient(s, toTime ?? undefined)
   }
   setSegments(o.segments)
   const speedText = art.query(".ot-loading-text")
@@ -250,6 +255,10 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
       art.poster = poster
     },
     setSegments,
+    setTimeMap(fn) {
+      toTime = fn
+      setSegments(lastSegments)
+    },
     setSpeed,
     setSubtitleMenu(items, current, onSelect) {
       if (art.isDestroy) return

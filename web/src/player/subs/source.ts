@@ -28,6 +28,8 @@ export class SubtitleSource {
   private read: ReadRange
   private srtOrder = 0
   private pending: Promise<void> = Promise.resolve()
+  /** 视频读过的 Cluster（文件偏移 → 毫秒），Cues 缺失时用于进度条的时间映射 */
+  readonly clusters = new Map<number, number>()
 
   constructor(read: ReadRange, size: number) {
     this.read = read
@@ -52,6 +54,9 @@ export class SubtitleSource {
       },
       timestampScale: () => this.h?.timestampScale ?? 1_000_000,
       onBlock: (b) => this.onBlock(b),
+      onCluster: (pos, ms) => {
+        if (this.clusters.size < 100_000) this.clusters.set(pos, ms)
+      },
       onTracks: (data) => {
         for (const e of children(data)) {
           if (e.id !== ID.TrackEntry) continue
