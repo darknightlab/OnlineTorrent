@@ -179,6 +179,11 @@ function toDateInput(iso: string | null) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
 }
 
+/** 从「永不过期」切回有期限时的默认日期：30 天后 */
+function defaultExpiry() {
+  return toDateInput(new Date(Date.now() + 30 * 86400_000).toISOString())
+}
+
 /** 编辑邀请码：次数、注册角色、赠送天数、过期日期、备注、启用（代码本身与已用次数不可改） */
 function InviteEditDialog({ invite, onClose, onSaved }: { invite: InviteCode; onClose: () => void; onSaved: () => void }) {
   const [f, setF] = useState({
@@ -227,8 +232,26 @@ function InviteEditDialog({ invite, onClose, onSaved }: { invite: InviteCode; on
             <Field label="赠送大会员天数" htmlFor="ie-vip">
               <Input id="ie-vip" type="number" min={0} value={f.vip_days} onChange={num("vip_days")} />
             </Field>
-            <Field label="过期日期（留空=永不）" htmlFor="ie-exp">
-              <Input id="ie-exp" type="date" value={f.expires} onChange={(e) => setF((s) => ({ ...s, expires: e.target.value }))} />
+            <Field label="过期日期" htmlFor="ie-exp">
+              {/* 日期输入框在 Chrome 等浏览器里没有清空按钮，用开关切换「永不过期」 */}
+              <div className="flex items-center gap-2">
+                <Input
+                  id="ie-exp"
+                  type="date"
+                  disabled={f.expires === ""}
+                  value={f.expires}
+                  onChange={(e) => setF((s) => ({ ...s, expires: e.target.value }))}
+                  className="min-w-0 flex-1"
+                />
+                <label className="inline-flex shrink-0 items-center gap-1.5 text-[13px] text-muted-foreground">
+                  <Switch
+                    checked={f.expires === ""}
+                    onCheckedChange={(never) => setF((s) => ({ ...s, expires: never ? "" : toDateInput(invite.expires_at) || defaultExpiry() }))}
+                    aria-label="永不过期"
+                  />
+                  永不
+                </label>
+              </div>
             </Field>
           </div>
           <Field label="备注" htmlFor="ie-note">
