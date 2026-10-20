@@ -35,6 +35,7 @@ const (
 	KeySiteName          = "site.name"
 	KeySiteBaseURL       = "site.base_url"
 	KeyAnnouncement      = "site.announcement_md"
+	KeySearchSubjects    = "site.search_subjects"
 	KeyRegistration      = "auth.registration"
 	KeySessionDays       = "auth.session_days"
 	KeyTurnstileSiteKey  = "auth.turnstile_site_key"
@@ -180,6 +181,7 @@ func SettingsSchema() []SettingSpec {
 		{Key: KeySiteName, Group: "站点", Type: "string", Label: "站点名称", Default: "Project Kawaii", Public: true},
 		{Key: KeySiteBaseURL, Group: "站点", Type: "string", Label: "站点地址", Description: "用于生成邀请链接等，例如 https://www.projectk.org", Default: "https://www.projectk.org"},
 		{Key: KeyAnnouncement, Group: "站点", Type: "markdown", Label: "首页公告", Description: "Markdown，留空则不显示", Default: "", Public: true},
+		{Key: KeySearchSubjects, Group: "站点", Type: "number", Label: "搜索：每次显示的番剧数", Description: "搜索结果首次显示的番剧数，「展开更多」每次再加这么多（1–100）", Default: 24},
 
 		{Key: KeyRegistration, Group: "用户", Type: "enum", Label: "注册方式", Options: []string{"open", "invite", "closed"}, Description: "open 开放注册；invite 需要邀请码；closed 关闭注册", Default: "invite", Public: true},
 		{Key: KeySessionDays, Group: "用户", Type: "number", Label: "登录有效期（天）", Default: 30},

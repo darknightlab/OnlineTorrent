@@ -1,23 +1,23 @@
 import { useState } from "react"
 import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom"
-import { ChevronDown, Magnet, SearchX, Search as SearchIcon, Tv } from "lucide-react"
+import { ChevronDown, Loader2, Magnet, SearchX, Search as SearchIcon, Tv } from "lucide-react"
 import { Container } from "@/components/layout/Container"
 import { TorrentSearchBox } from "@/components/TorrentSearchBox"
 import { TorrentList, TorrentListSkeleton } from "@/components/TorrentList"
 import { Cover } from "@/components/Cover"
-import { EmptyState, ErrorState, Pager } from "@/components/states"
+import { EmptyState, ErrorState, Pager, errorMessage } from "@/components/states"
+import { toast } from "@/components/ui/toast"
+import { api } from "@/lib/api"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Skeleton, SkeletonLine } from "@/components/ui/skeleton"
 import { useSearch } from "@/lib/queries"
 import { displayTitle } from "@/lib/schedule"
 import type { Subject } from "@/lib/types"
-import { useDocumentTitle, useMediaQuery, useNow } from "@/lib/hooks"
+import { useDocumentTitle, useNow } from "@/lib/hooks"
 import { cn, searchHref, subjectHref } from "@/lib/utils"
 
 const SUGGEST = ["葬送的芙莉莲", "1080p 简繁内封", "ANi", "桜都字幕组", "药屋少女的呢喃"]
-/** 桌面端「番剧」区默认显示的数量（两行），其余点击展开 */
-const SUBJECTS_COLLAPSED = 16
 
 const TYPE_LABEL: Record<string, string> = { tv: "TV", web: "WEB", movie: "剧场版", ova: "OVA", oad: "OAD", special: "特别篇" }
 
@@ -96,7 +96,7 @@ export default function SearchPage() {
             </Card>
           ) : (
             <div className={cn("space-y-6 transition-opacity", isFetching && isPlaceholderData && "opacity-60")}>
-              {subjects.length > 0 && <SubjectSection key={q} subjects={subjects} />}
+              {subjects.length > 0 && <SubjectSection key={q} q={q} subjects={subjects} total={data?.subjects_total ?? subjects.length} />}
               <section aria-labelledby="search-torrents">
                 <SectionTitle id="search-torrents" title="种子" extra={data.total > 0 ? `共 ${data.total} 个` : undefined} />
                 <Card className="overflow-hidden">
@@ -130,15 +130,25 @@ function SectionTitle({ id, title, extra }: { id: string; title: string; extra?:
   )
 }
 
-/** 番剧：移动端单行横向滚动；桌面端网格，超过两行可展开 */
-function SubjectSection({ subjects }: { subjects: Subject[] }) {
-  const desktop = useMediaQuery("(min-width: 640px)")
-  const [expanded, setExpanded] = useState(false)
-  const shown = desktop && !expanded ? subjects.slice(0, SUBJECTS_COLLAPSED) : subjects
-  const more = desktop && subjects.length > SUBJECTS_COLLAPSED
+/** 番剧：移动端单行横向滚动；桌面端网格。「展开更多」每次再取一批（数量同首批，后台设置） */
+function SubjectSection({ q, subjects, total }: { q: string; subjects: Subject[]; total: number }) {
+  const [extra, setExtra] = useState<Subject[]>([])
+  const [loading, setLoading] = useState(false)
+  const shown = [...subjects, ...extra]
+  const more = async () => {
+    setLoading(true)
+    try {
+      const r = await api.searchSubjects(q, shown.length)
+      setExtra((x) => [...x, ...r.subjects])
+    } catch (e) {
+      toast.error(errorMessage(e))
+    } finally {
+      setLoading(false)
+    }
+  }
   return (
     <section aria-labelledby="search-subjects">
-      <SectionTitle id="search-subjects" title="番剧" extra={`${subjects.length} 部`} />
+      <SectionTitle id="search-subjects" title="番剧" extra={`${total} 部`} />
       <ul
         className={cn(
           "-mx-3 flex snap-x gap-3 overflow-x-auto px-3 pb-1 scrollbar-none",
@@ -151,11 +161,11 @@ function SubjectSection({ subjects }: { subjects: Subject[] }) {
           </li>
         ))}
       </ul>
-      {more && (
+      {shown.length < total && (
         <div className="mt-3 flex justify-center">
-          <Button variant="ghost" size="sm" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}>
-            {expanded ? "收起" : `展开全部 ${subjects.length} 部`}
-            <ChevronDown className={cn("transition-transform", expanded && "rotate-180")} />
+          <Button variant="ghost" size="sm" onClick={() => void more()} disabled={loading}>
+            {loading ? <Loader2 className="animate-spin" /> : <ChevronDown />}
+            展开更多
           </Button>
         </div>
       )}

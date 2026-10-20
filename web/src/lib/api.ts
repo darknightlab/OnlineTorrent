@@ -13,6 +13,7 @@ import type {
   MeResponse,
   MetadataJob,
   SearchResponse,
+  Subject,
   Source,
   SourceInput,
   SourceProbeRequest,
@@ -167,6 +168,8 @@ export const api = {
   /** 搜索：番剧（仅第 1 页）+ 种子 */
   search: (keyword: string, page = 1, s?: AbortSignal) =>
     get<SearchResponse>(`/search/${seg(keyword)}${qs({ page: page > 1 ? page : undefined })}`, s),
+  /** 搜索 · 展开更多番剧（下一批，数量同首批） */
+  searchSubjects: (keyword: string, offset: number) => get<{ subjects: Subject[]; total: number }>(`/search/${seg(keyword)}/subjects${qs({ offset })}`),
   /** 种子收录状态与逐文件刮削结果（做种后轮询） */
   torrentStatus: (ih: string, s?: AbortSignal) => get<TorrentStatus>(`/torrents/hash/${seg(ih)}`, s),
   /** 种子文件（.torrent，HTTP 元数据；权限 PERM.torrentFile）。无可用文件时 404 */

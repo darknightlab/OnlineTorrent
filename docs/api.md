@@ -36,7 +36,8 @@
 | GET | `/api/v1/subjects/{provider}/{id}` | 条目详情 + 本地种子（映射到该条目的） |
 | GET | `/api/v1/subjects/{provider}/{id}/episodes` | 选集列表：正片 + 特别篇（SP / NCOP / NCED / PV / CM） |
 | GET | `/api/v1/subjects/{provider}/{id}/episodes/{n}` | 单集所有已知文件（含当前用户 access 与做种统计 swarm），由前端按推荐规则排序；`{n}` 为集的键 |
-| GET | `/api/v1/search/{keyword}` | 搜索：番剧 + 种子（本地库；翻页 `?page=`） |
+| GET | `/api/v1/search/{keyword}` | 搜索：番剧 + 种子（本地库；翻页 `?page=`）。番剧只在第 1 页返回，数量为设置 `site.search_subjects`（默认 24），`subjects_total` 为匹配总数 |
+| GET | `/api/v1/search/{keyword}/subjects?offset=` | 展开更多番剧：下一批（数量同上）→ `{subjects, total}` |
 | GET | `/api/v1/torrents/hash/{ih}` | 种子收录状态与文件刮削结果（做种后轮询） |
 | POST | `/api/v1/torrents/hash/{ih}/play` | 打开种子（策略判定 + 磁力；新种子先返回 pending） |
 | GET | `/api/v1/torrents/hash/{ih}/resolve/events` | 新种子的元数据获取与判定结果（SSE） |

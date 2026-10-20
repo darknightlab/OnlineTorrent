@@ -2,7 +2,6 @@ package meta
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -214,43 +213,53 @@ func (s *Store) SearchTorrents(ctx context.Context, q string, offset, limit int,
 // SearchWorksFTS searches works by title / Chinese title / aliases (newest first) within
 // the content scope (nil: unrestricted).
 func (s *Store) SearchWorksFTS(ctx context.Context, q string, limit int, scope *store.ScopePlan) ([]*Work, error) {
+	ws, _, err := s.SearchWorksPage(ctx, q, 0, limit, scope)
+	return ws, err
+}
+
+// SearchWorksPage is SearchWorksFTS with an offset and the total number of matches.
+func (s *Store) SearchWorksPage(ctx context.Context, q string, offset, limit int, scope *store.ScopePlan) ([]*Work, int, error) {
 	expr, terms, ok := ftsQuery(q)
 	if len(terms) == 0 {
-		return []*Work{}, nil
+		return []*Work{}, 0, nil
 	}
 	pred, pargs := store.WorkScopePredicate("works", scope)
-	var rows *sql.Rows
-	var err error
+	var where string
+	var args []any
 	if ok {
-		args := append([]any{expr}, pargs...)
-		rows, err = s.R.QueryContext(ctx, `SELECT `+workCols+` FROM works WHERE id IN (SELECT rowid FROM works_fts WHERE works_fts MATCH ?) AND `+pred+` ORDER BY begin_at DESC LIMIT ?`, append(args, limit)...)
+		where, args = `id IN (SELECT rowid FROM works_fts WHERE works_fts MATCH ?)`, []any{expr}
 	} else {
 		var conds []string
-		var args []any
 		for _, t := range terms {
 			l := likeEscape(t)
 			conds = append(conds, `(title LIKE ? ESCAPE '\' OR title_cn LIKE ? ESCAPE '\' OR aliases LIKE ? ESCAPE '\')`)
 			args = append(args, l, l, l)
 		}
-		args = append(args, pargs...)
-		rows, err = s.R.QueryContext(ctx, `SELECT `+workCols+` FROM works WHERE `+strings.Join(conds, " AND ")+` AND `+pred+` ORDER BY begin_at DESC LIMIT ?`, append(args, limit)...)
+		where = strings.Join(conds, " AND ")
 	}
+	where += ` AND ` + pred
+	args = append(args, pargs...)
+	var total int
+	if err := s.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM works WHERE `+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.R.QueryContext(ctx, `SELECT `+workCols+` FROM works WHERE `+where+` ORDER BY begin_at DESC LIMIT ? OFFSET ?`, append(args, limit, offset)...)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	out := []*Work{}
 	for rows.Next() {
 		w, err := scanWork(rows)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, w)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	return out, s.fillExternal(ctx, out)
+	return out, total, s.fillExternal(ctx, out)
 }
 
 // ExternalWork is a subject found on bgm.tv / TMDB, upserted into works on demand.

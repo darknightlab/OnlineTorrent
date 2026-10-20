@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -33,6 +34,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.route(mux, "GET", "/api/v1/subjects/{provider}/{id}/episodes", AccessConfigurable, "浏览", "选集列表（正片 + SP / NCOP / NCED / PV / CM）", []string{store.RoleGuest}, s.getEpisodes)
 	s.route(mux, "GET", "/api/v1/subjects/{provider}/{id}/episodes/{n}", AccessConfigurable, "浏览", "单集资源列表", []string{store.RoleGuest}, s.getEpisode)
 	s.route(mux, "GET", "/api/v1/search/{keyword}", AccessConfigurable, "浏览", "搜索（番剧 + 种子，本地库；本地无番剧时按需查询 bgm.tv / TMDB）", []string{store.RoleGuest}, s.getSearch)
+	s.route(mux, "GET", "/api/v1/search/{keyword}/subjects", AccessConfigurable, "浏览", "搜索 · 展开更多番剧（本地库）", []string{store.RoleGuest}, s.getSearchSubjects)
 	s.route(mux, "GET", "/api/v1/torrents/hash/{ih}", AccessConfigurable, "浏览", "种子收录状态与文件刮削结果", []string{store.RoleGuest}, s.getTorrentStatus)
 	s.route(mux, "GET", torrentFilePath, AccessConfigurable, "播放", "获取种子文件（HTTP 元数据，无需 P2P 节点即可显示文件列表）", []string{store.RoleGuest}, s.getTorrentFile)
 
@@ -338,17 +340,21 @@ const maxCatalogPage = 50
 
 func catalogPage(r *http.Request) int { return min(httpx.Page(r), maxCatalogPage) }
 
-const (
-	searchPageSize    = 30
-	searchMaxSubjects = 24
-)
+const searchPageSize = 30
+
+// searchSubjects is the number of subjects per search batch (setting, 1–100): the first
+// batch and every 「展开更多」 batch.
+func (s *Server) searchSubjects() int {
+	return min(max(1, int(s.St.Num(store.KeySearchSubjects))), 100)
+}
 
 type searchResp struct {
-	Subjects  []subjectOut      `json:"subjects"`
-	Torrents  []catalog.Torrent `json:"torrents"`
-	Page      int               `json:"page"`
-	PageCount int               `json:"page_count"`
-	Total     int               `json:"total"`
+	Subjects      []subjectOut      `json:"subjects"`
+	SubjectsTotal int               `json:"subjects_total"` // local matches (page 1); more via /search/{keyword}/subjects
+	Torrents      []catalog.Torrent `json:"torrents"`
+	Page          int               `json:"page"`
+	PageCount     int               `json:"page_count"`
+	Total         int               `json:"total"`
 }
 
 // GET /api/v1/search/{keyword}?page=
@@ -371,10 +377,11 @@ func (s *Server) getSearch(w http.ResponseWriter, r *http.Request) error {
 	scope := s.scopeOf(r)
 	out := searchResp{Subjects: []subjectOut{}, Page: page}
 	if page == 1 {
-		works, err := s.Meta.SearchWorksFTS(ctx, q, searchMaxSubjects, scope)
+		works, n, err := s.Meta.SearchWorksPage(ctx, q, 0, s.searchSubjects(), scope)
 		if err != nil {
 			return err
 		}
+		out.SubjectsTotal = n
 		// external fallback only when nothing local matches at all: local subjects hidden by
 		// the content scope must not trigger outbound searches
 		external := len(works) == 0
@@ -387,7 +394,7 @@ func (s *Server) getSearch(w http.ResponseWriter, r *http.Request) error {
 		}
 		if external && utf8.RuneCountInString(q) >= 2 && s.limiter.allow("extsearch:"+ipKey(r), 5, 30*time.Second) {
 			if ext, err := s.Cat.SearchSubjectsExternal(ctx, q); err == nil {
-				works = ext
+				works, out.SubjectsTotal = ext, len(ext)
 			} else {
 				s.Log.Info("external subject search failed", "q", q, "err", err)
 			}
@@ -423,6 +430,34 @@ func (s *Server) getSearch(w http.ResponseWriter, r *http.Request) error {
 	out.PageCount = min(max(1, (total+searchPageSize-1)/searchPageSize), maxCatalogPage)
 	out.Torrents = torrents
 	httpx.JSON(w, 200, out)
+	return nil
+}
+
+// GET /api/v1/search/{keyword}/subjects?offset= — the next batch of local subject matches
+// (same order and size as the search's first batch): {subjects, total}
+func (s *Server) getSearchSubjects(w http.ResponseWriter, r *http.Request) error {
+	if err := s.rateLimitN(r, "catalog", 20, 3*time.Second); err != nil {
+		return err
+	}
+	q := strings.TrimSpace(r.PathValue("keyword"))
+	if q == "" || utf8.RuneCountInString(q) > 100 {
+		return httpx.E(400, "bad_request", "搜索关键词无效")
+	}
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	batch := s.searchSubjects()
+	offset = min(max(0, offset), 100*batch)
+	scope := s.scopeOf(r)
+	works, n, err := s.Meta.SearchWorksPage(r.Context(), q, offset, batch, scope)
+	if err != nil {
+		return err
+	}
+	out := []subjectOut{}
+	for _, wk := range works {
+		if scope.Visible(wk) {
+			out = append(out, s.subjectCard(r, wk, false))
+		}
+	}
+	httpx.JSON(w, 200, map[string]any{"subjects": out, "total": n})
 	return nil
 }
 

@@ -258,8 +258,10 @@ export interface Paged<T> {
 
 /** GET /search/{keyword}?page= */
 export interface SearchResponse {
-  /** 只在第 1 页返回（其余页为 []） */
+  /** 只在第 1 页返回（其余页为 []）；数量为后台设置「搜索：每次显示的番剧数」 */
   subjects: Subject[]
+  /** 匹配的番剧总数（更多的用 GET /search/{keyword}/subjects?offset= 分批取） */
+  subjects_total: number
   torrents: Torrent[]
   page: number
   page_count: number
