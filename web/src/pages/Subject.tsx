@@ -453,7 +453,6 @@ function SubjectHero({
   const probe = useRef<HTMLDivElement>(null) // 不可见的测量副本（与中间区域同宽）
   const linksRow = useRef<HTMLDivElement>(null)
   const [fit, setFit] = useState({ meta: true, tags: true, links: true })
-  const [spare, setSpare] = useState(0) // 中间区域放完内容后的剩余高度
   // 标题字号：默认最大；只有「标题 + 评分 + 底部按钮」放不进封面高度时才逐级缩小（最小 16px）
   const col = useRef<HTMLDivElement>(null) // 右侧整列（高度 = 封面高度）
   const head = useRef<HTMLDivElement>(null) // 顶部：状态 + 标题 + 评分
@@ -475,8 +474,6 @@ function SubjectHero({
       const metaFits = mh > 0 && mh <= avail
       const rest = metaFits ? avail - mh - GAP : avail
       const tagsFits = th > 0 && th <= rest
-      const used = (metaFits ? mh : 0) + (metaFits && tagsFits ? GAP : 0) + (tagsFits ? th : 0)
-      setSpare(Math.max(0, Math.round(avail - used)))
       // 外部链接与播放按钮同一行：整行不换行才放在右侧
       const row = linksRow.current
       const linksFit = !!row && row.scrollWidth <= row.clientWidth + 1
@@ -559,7 +556,7 @@ function SubjectHero({
           >
             <Cover src={a.cover} title={title} eager className="h-full w-full" onRatio={setRatio} />
           </div>
-          {/* 右侧与封面等高：顶部标题 / 中间内容自下而上贴着按钮（留白在标题下方）/ 底部按钮 */}
+          {/* 右侧与封面等高：顶部标题 / 中间内容居中 / 底部按钮 */}
           <div ref={col} className="flex h-44 min-w-0 flex-1 flex-col sm:h-60 lg:h-72" style={heroH ? { height: heroH } : undefined}>
             <div ref={head} className="relative shrink-0">
               {/* 标题测量副本：同宽、不可见 */}
@@ -584,9 +581,8 @@ function SubjectHero({
             </div>
             <div
               ref={mid}
-              // 上边距为 0：评分行本身行高比字形高出一截，视觉上与下方 8px 相当。
-              // 剩余空白少（≤16px）时上下平分，多时留在标题下方（内容贴着按钮）
-              className={cn("relative mb-2 mt-0 flex min-h-0 flex-1 flex-col overflow-hidden", spare <= 16 ? "justify-center" : "justify-end")}
+              // 上边距为 0：评分行本身行高比字形高出一截，视觉上与下方 8px 相当。剩余空白上下平分（内容居中）
+              className="relative mb-2 mt-0 flex min-h-0 flex-1 flex-col justify-center overflow-hidden"
             >
               {/* 测量副本：与中间区域同宽、不可见 */}
               <div ref={probe} aria-hidden className="invisible absolute inset-x-0 top-0 space-y-3">
