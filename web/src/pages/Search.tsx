@@ -8,7 +8,7 @@ import { Cover } from "@/components/Cover"
 import { EmptyState, ErrorState, Pager } from "@/components/states"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Skeleton } from "@/components/ui/skeleton"
+import { Skeleton, SkeletonLine } from "@/components/ui/skeleton"
 import { useSearch } from "@/lib/queries"
 import { displayTitle } from "@/lib/schedule"
 import type { Subject } from "@/lib/types"
@@ -194,23 +194,25 @@ function SubjectResult({ s }: { s: Subject }) {
   )
 }
 
+/** 与结果同样的两个区块：番剧（手机横滑、桌面网格）+ 种子列表 */
 function SearchSkeleton() {
+  const title = <SkeletonLine className="mb-2.5 text-[15px]" bar="w-12" />
   return (
     <div className="space-y-6" aria-hidden>
       <div>
-        <Skeleton className="mb-3 h-4 w-12" />
-        <div className="-mx-3 flex gap-3 overflow-hidden px-3 sm:mx-0 sm:grid sm:grid-cols-5 sm:gap-4 sm:px-0 md:grid-cols-6 lg:grid-cols-8">
+        {title}
+        <div className="-mx-3 flex gap-3 overflow-hidden px-3 pb-1 sm:mx-0 sm:grid sm:grid-cols-5 sm:gap-4 sm:px-0 sm:pb-0 md:grid-cols-6 lg:grid-cols-8">
           {Array.from({ length: 8 }, (_, i) => (
             <div key={i} className={cn("w-[28vw] max-w-36 shrink-0 sm:w-auto sm:max-w-none", i === 5 && "sm:hidden md:block", i >= 6 && "sm:hidden lg:block")}>
               <Skeleton className="aspect-[3/4] w-full rounded-lg" />
-              <Skeleton className="mt-2 h-3.5 w-4/5" />
-              <Skeleton className="mt-1.5 h-3 w-1/2" />
+              <SkeletonLine className="mt-1.5 text-[13px] leading-snug sm:text-sm" bar="w-4/5" />
+              <SkeletonLine className="mt-0.5 text-[11px]" bar="w-1/2" />
             </div>
           ))}
         </div>
       </div>
       <div>
-        <Skeleton className="mb-3 h-4 w-12" />
+        {title}
         <Card className="overflow-hidden">
           <TorrentListSkeleton rows={8} />
         </Card>

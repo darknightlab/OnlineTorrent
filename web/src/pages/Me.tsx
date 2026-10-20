@@ -4,16 +4,43 @@ import { useMutation } from "@tanstack/react-query"
 import { Crown, HardDrive, KeyRound, Loader2, LogOut, Shield, Ticket, Trash2 } from "lucide-react"
 import { Container } from "@/components/layout/Container"
 import { RoleBadge } from "@/components/badges"
-import { PageLoading, errorMessage } from "@/components/states"
+import { errorMessage } from "@/components/states"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, Input } from "@/components/ui/input"
+import { SkeletonLine } from "@/components/ui/skeleton"
 import { toast } from "@/components/ui/toast"
 import { api } from "@/lib/api"
 import { PERM, useCan, useLogout, useSetMe, useSiteOrFallback, useUser } from "@/lib/queries"
 import { formatBytes, formatDate } from "@/lib/format"
 import type { CacheStats } from "@/player/store/cache"
 import { useDocumentTitle } from "@/lib/hooks"
+
+/** 资料卡片骨架（与资料卡片同样的头图、头像、名字两行与统计行） */
+function MeSkeleton() {
+  return (
+    <Container className="max-w-3xl py-4 sm:py-6">
+      <Card aria-hidden className="overflow-hidden">
+        <div className="h-16 bg-gradient-to-r from-primary/70 to-accent/70 sm:h-20" />
+        <div className="px-4 pb-4 sm:px-5">
+          <div className="-mt-8 h-16 w-16 rounded-full border-4 border-card bg-muted sm:-mt-10 sm:h-20 sm:w-20" />
+          <div className="mt-2">
+            <SkeletonLine className="text-lg" bar="w-32" />
+            <SkeletonLine className="text-[13px]" bar="w-44" />
+          </div>
+        </div>
+        <div className="grid grid-cols-2 divide-x border-t">
+          {[0, 1].map((i) => (
+            <div key={i} className="flex flex-col items-center px-3 py-3">
+              <SkeletonLine className="text-xs" bar="w-12" />
+              <SkeletonLine className="mt-0.5 text-sm" bar="w-20" />
+            </div>
+          ))}
+        </div>
+      </Card>
+    </Container>
+  )
+}
 
 export default function MePage() {
   useDocumentTitle("个人中心")
@@ -22,7 +49,7 @@ export default function MePage() {
   const navigate = useNavigate()
   const canRedeem = useCan(PERM.redeem)
   const canPassword = useCan(PERM.password)
-  if (loading) return <PageLoading />
+  if (loading) return <MeSkeleton />
   if (!user) return <Navigate replace to="/login?next=/me" />
 
   const vipActive = user.role === "admin" || (user.vip_until && new Date(user.vip_until).getTime() > Date.now())

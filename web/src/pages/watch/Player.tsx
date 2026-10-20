@@ -32,7 +32,7 @@ import { ReportDialog } from "./ReportDialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent } from "@/components/ui/dialog"
-import { BLEED, SideSection } from "@/pages/Episode"
+import { BLEED, FileRowSkeleton, SideSection } from "@/pages/Episode"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
 import { errorMessage } from "@/components/states"
@@ -417,7 +417,7 @@ export function Player({
   // 文件列表：种子播放页在右栏，单集页在「资源」弹窗里
   const filesInSide = !side
   const fileList = !snap ? (
-    <PanelLoading text="等待种子信息…" />
+    <FileRowSkeleton />
   ) : (
     <ul className="divide-y">
       {sortedFiles.map((f) => (

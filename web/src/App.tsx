@@ -1,11 +1,13 @@
 import { lazy, Suspense } from "react"
-import { BrowserRouter, Route, Routes } from "react-router-dom"
+import { BrowserRouter, Route, Routes, useParams } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { ThemeProvider } from "@/lib/theme"
 import { isApiError } from "@/lib/api"
 import { Shell } from "@/components/layout/Shell"
 import { Toaster } from "@/components/ui/toast"
 import { PageLoading } from "@/components/states"
+import { Container } from "@/components/layout/Container"
+import { EpisodeSkeleton } from "@/pages/Episode"
 import Home from "@/pages/Home"
 import SubjectPage, { LegacyAnimeRedirect } from "@/pages/Subject"
 import SearchPage, { LegacySearchPage } from "@/pages/Search"
@@ -17,13 +19,21 @@ import NotFound from "@/pages/NotFound"
 const PlaybackPage = lazy(() => import("@/pages/watch/Playback"))
 const LegacyWatchPage = lazy(() => import("@/pages/watch/Watch").then((m) => ({ default: m.LegacyWatchPage })))
 
-const playerFallback = <PageLoading label="正在加载播放器…" />
+/** 播放页 / 单集页加载中：与页面同样的布局骨架（种子播放页右栏为文件，单集页为选集） */
+function PlaybackFallback() {
+  const { key } = useParams()
+  return (
+    <Container className="pb-6 lg:py-5">
+      <EpisodeSkeleton files={key === undefined} />
+    </Container>
+  )
+}
 /**
  * 播放页与单集页的所有路由共用同一个元素：React Router 不给路由元素加 key，同类型元素在这些路由之间导航时
  * 不会重新挂载，因此切换（如播放页 → 单集页、单集页切换文件 / 资源）时可以保留同一个播放器与 WebTorrent 会话。
  */
 const playback = (
-  <Suspense fallback={playerFallback}>
+  <Suspense fallback={<PlaybackFallback />}>
     <PlaybackPage />
   </Suspense>
 )
@@ -63,7 +73,7 @@ export default function App() {
               <Route
                 path="watch"
                 element={
-                  <Suspense fallback={playerFallback}>
+                  <Suspense fallback={<PageLoading label="正在加载播放器…" />}>
                     <LegacyWatchPage />
                   </Suspense>
                 }

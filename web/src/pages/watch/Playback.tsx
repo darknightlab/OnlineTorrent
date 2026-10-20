@@ -28,9 +28,12 @@ import {
   EpisodeList,
   EpisodeSideSkeleton,
   EpisodeSkeleton,
+  FilesSkeleton,
   GRID,
   SourceList,
   sourceKey,
+  STATS_SKELETON,
+  WatchInfoSkeleton,
 } from "@/pages/Episode"
 import { episodeRedirect } from "@/lib/playresolve"
 import { usePlayAttempt, usePlayResolve, type PlayHint } from "./usePlayResolve"
@@ -151,6 +154,8 @@ export default function PlaybackPage() {
   if (urlIh && rawIh !== urlIh) return <Navigate replace to={sourceHref(urlIh, urlIndex)} state={loc.state} />
 
   const here = `${loc.pathname}${loc.search}`
+  // 等待播放会话时：统计行（单集页）、信息与文件列表（播放页）的骨架；需登录 / 无权播放等结果不显示
+  const waiting = state.status === "loading" || state.status === "pending" || state.status === "redirect"
 
   // ================= 播放页 =================
   if (!isEpisode) {
@@ -174,7 +179,13 @@ export default function PlaybackPage() {
           <div className={GRID}>
             <section className="min-w-0">
               <PlayerShell>{state.status !== "idle" && <PlayGate overlay state={state} title={hint?.title} here={here} retry={retry} />}</PlayerShell>
+              {waiting && <WatchInfoSkeleton />}
             </section>
+            {waiting && (
+              <aside className="min-w-0">
+                <FilesSkeleton />
+              </aside>
+            )}
           </div>
         )}
       </Container>
@@ -247,7 +258,7 @@ export default function PlaybackPage() {
             <PlayerShell poster={epData?.subject.cover ?? undefined} panelSources={panelSources}>
               {state.status !== "idle" && <PlayGate overlay state={state} title={hint?.title} here={here} retry={retry} docTitle={false} />}
             </PlayerShell>
-            {info()}
+            {info(waiting ? STATS_SKELETON : undefined)}
           </section>
           <aside className="min-w-0 space-y-4 lg:space-y-5">{side}</aside>
         </div>

@@ -5,7 +5,7 @@ import { ReleaseRowBody, releaseRowClass } from "@/components/ReleaseRow"
 import { describeScore, type Scored } from "@/lib/rank"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
+import { Skeleton, SkeletonLine } from "@/components/ui/skeleton"
 import { airedCount, EpisodeGrid, episodeFullLabel, useEpisodeChips, useEpisodeItem, useEpisodePage } from "@/components/EpisodeGrid"
 import { displayTitle } from "@/lib/schedule"
 import { episodeLabel, formatEpisodeKey, type EpisodeKey } from "@/lib/episode"
@@ -288,33 +288,108 @@ export function SourceList({
   )
 }
 
-/** 整页骨架（单集数据加载中，尚未开始播放） */
-export function EpisodeSkeleton() {
+/**
+ * 整页骨架：与播放器同样的黑色画面 + 信息 + 右栏。
+ * files：种子播放页（右栏为文件，信息为标题两行 + 统计行）；否则为单集页（右栏为选集）。
+ */
+export function EpisodeSkeleton({ files }: { files?: boolean }) {
   return (
-    <div className={GRID}>
-      <div className="min-w-0">
-        <Skeleton className={cn(BLEED, "aspect-video rounded-none lg:rounded-xl")} />
-        <EpisodeInfoSkeleton />
-      </div>
-      <EpisodeSideSkeleton />
+    <div className={GRID} aria-hidden>
+      <section className="min-w-0">
+        <div className={cn(BLEED, "aspect-video bg-black lg:rounded-xl")} />
+        {files ? <WatchInfoSkeleton /> : <EpisodeInfoSkeleton />}
+      </section>
+      <aside className="min-w-0">{files ? <FilesSkeleton /> : <EpisodeSideSkeleton />}</aside>
     </div>
   )
 }
 
+/** 单集信息：标题 · 单集标题 · 信息行（与 EpisodeInfo 同样的字号 / 行高） */
 export function EpisodeInfoSkeleton() {
   return (
     <div className="pt-3 lg:pt-4" aria-hidden>
-      <Skeleton className="h-5 w-2/3" />
-      <Skeleton className="mt-2 h-3.5 w-1/2" />
+      <SkeletonLine className="text-base leading-snug lg:text-xl" bar="w-1/2" />
+      <SkeletonLine className="mt-1 text-sm lg:text-[15px]" bar="w-2/3" />
+      <SkeletonLine className="mt-1 text-xs lg:text-[13px]" bar="w-3/5" />
+      <StatsRowSkeleton />
     </div>
   )
 }
 
+/** 统计与操作行的占位（EpisodeInfo 的 parts；等待播放会话时也用它占住这一行） */
+export const STATS_SKELETON: PlayerParts = {
+  stats: <Skeleton className="h-3.5 w-36" />,
+  actions: (
+    <div aria-hidden className="flex h-9 items-center pr-2">
+      <Skeleton className="h-5 w-28 sm:w-56" />
+    </div>
+  ),
+}
+
+function StatsRowSkeleton() {
+  return (
+    <div className="mt-2 flex items-center justify-between gap-2 border-b pb-2 lg:mt-3 lg:pb-3">
+      {STATS_SKELETON.stats}
+      <div className="-mr-2">{STATS_SKELETON.actions}</div>
+    </div>
+  )
+}
+
+/** 种子播放页信息：标题（两行）· 统计与操作行 */
+export function WatchInfoSkeleton() {
+  return (
+    <div className="pt-3 lg:pt-4" aria-hidden>
+      <SkeletonLine className="text-base leading-snug lg:text-xl" bar="w-full" />
+      <SkeletonLine className="text-base leading-snug lg:text-xl" bar="w-3/5" />
+      <div className="mt-1 flex" />
+      <StatsRowSkeleton />
+    </div>
+  )
+}
+
+/** 右栏卡片（移动端无边框）：标题行 + 内容 */
+function SideSkeleton({ children }: { children: React.ReactNode }) {
+  return (
+    <div aria-hidden className="lg:overflow-hidden lg:rounded-xl lg:border lg:bg-card lg:p-4">
+      <SkeletonLine className="mb-2.5 text-[15px]" bar="w-16" />
+      {children}
+    </div>
+  )
+}
+
+/** 选集卡片（与 EpisodeGrid side 同样的单行横滑 / 网格） */
 export function EpisodeSideSkeleton() {
   return (
-    <div className="space-y-4" aria-hidden>
-      <Skeleton className="h-24 w-full rounded-xl" />
-      <Skeleton className="h-48 w-full rounded-xl" />
+    <SideSkeleton>
+      <div className="-mx-3 flex gap-2 overflow-hidden px-3 pb-1 sm:mx-0 sm:grid sm:grid-cols-[repeat(auto-fill,minmax(3.5rem,1fr))] sm:px-0 sm:pb-0 lg:grid-cols-6">
+        {Array.from({ length: 12 }, (_, i) => (
+          <Skeleton key={i} className="h-10 w-[3.25rem] shrink-0 rounded-lg sm:w-auto" />
+        ))}
+      </div>
+    </SideSkeleton>
+  )
+}
+
+/** 文件列表中的一行（与 Player 的 FileRow 同样的尺寸） */
+export function FileRowSkeleton() {
+  return (
+    <div aria-hidden className="flex min-h-12 items-center gap-3 py-2 pl-3 pr-[3.375rem]">
+      <Skeleton className="h-5 w-5 shrink-0" />
+      <span className="min-w-0 flex-1">
+        <SkeletonLine className="text-[13px] leading-snug" bar="w-4/5" />
+        <SkeletonLine className="mt-1 text-[11px]" bar="w-1/3" />
+      </span>
     </div>
+  )
+}
+
+/** 文件卡片（种子播放页右栏） */
+export function FilesSkeleton() {
+  return (
+    <SideSkeleton>
+      <div className={cn(BLEED, "border-y lg:-mx-4 lg:-mb-4 lg:border-b-0")}>
+        <FileRowSkeleton />
+      </div>
+    </SideSkeleton>
   )
 }

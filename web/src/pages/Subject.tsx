@@ -3,13 +3,13 @@ import { Link, Navigate, useParams, useSearchParams } from "react-router-dom"
 import { ChevronDown, CalendarClock, CalendarDays, Clapperboard, ExternalLink, Film, LayoutGrid, List, ListVideo, Play, Star, Tv } from "lucide-react"
 import { Container } from "@/components/layout/Container"
 import { Cover } from "@/components/Cover"
-import { airedCount, EpisodeGrid, EpisodeRows, episodeSummary, useEpisodeChips, useEpisodePage } from "@/components/EpisodeGrid"
+import { airedCount, EPISODE_PAGE, EpisodeGrid, EpisodeRows, episodeSummary, useEpisodeChips, useEpisodePage } from "@/components/EpisodeGrid"
 import { TorrentList } from "@/components/TorrentList"
 import { EmptyState, ErrorState, SectionHeader } from "@/components/states"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { Skeleton } from "@/components/ui/skeleton"
+import { Skeleton, SkeletonLine } from "@/components/ui/skeleton"
 import { useSubject, useEpisodes } from "@/lib/queries"
 import { airStatus, displayTitle } from "@/lib/schedule"
 import { formatDate, timeUntil, WEEKDAYS } from "@/lib/format"
@@ -313,10 +313,9 @@ function SubjectEpisodes({ subject, latest }: { subject: Subject; latest: string
   const { items, pager } = useEpisodePage(chips, latest)
   const wide = useMediaQuery("(min-width: 640px)")
   const [sp, setSp] = useSearchParams()
-  const v = sp.get("view")
-  const pref: EpisodeView | null = v === "list" || v === "grid" ? v : null
-  // 未选过视图时等选集加载完再决定默认视图（避免网格 → 列表闪烁）
-  if (loading && !pref) return <Skeleton className="h-40 w-full rounded-xl" />
+  const pref = viewParam(sp.get("view"))
+  // 选集加载完再决定默认视图（避免网格 → 列表闪烁）；骨架按已播 / 总集数占位
+  if (loading) return <EpisodesSkeleton count={Math.max(subject.eps ?? 0, airedCount(subject))} view={pref} />
   if (chips.length === 0) return null
   const view: EpisodeView = pref ?? (wide && chips.some((c) => c.title) ? "list" : "grid")
   const choose = (next: EpisodeView) =>
@@ -413,19 +412,89 @@ function FilterChip({
   )
 }
 
+/** 整页骨架：顶部（封面与右侧，各断点同样的高度）+ 选集 */
 function SubjectSkeleton() {
+  const [sp] = useSearchParams()
+  const meta = (
+    <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-[13px] sm:gap-y-1 sm:text-sm lg:max-w-xl">
+      {Array.from({ length: 5 }, (_, i) => (
+        <SkeletonLine key={i} bar="w-28" />
+      ))}
+    </div>
+  )
   return (
-    <Container className="flex gap-4 py-6 sm:gap-6 sm:py-8">
-      <Skeleton className="aspect-[3/4] w-28 shrink-0 sm:w-44 lg:w-52" />
-      <div className="flex-1 space-y-3">
-        <Skeleton className="h-6 w-2/3" />
-        <Skeleton className="h-4 w-1/3" />
-        <Skeleton className="h-4 w-1/2" />
-        <Skeleton className="mt-6 h-10 w-36" />
-      </div>
-    </Container>
+    <div aria-hidden>
+      <section className="border-b">
+        <Container className="py-5 sm:py-8">
+          <div className="flex gap-4 sm:gap-6">
+            <Skeleton className="aspect-[1/1.4142] h-44 shrink-0 rounded-lg sm:h-60 lg:h-72" />
+            <div className="flex h-44 min-w-0 flex-1 flex-col sm:h-60 lg:h-72">
+              <SkeletonLine className="text-[24px] font-bold leading-snug" bar="w-3/4" />
+              <SkeletonLine className="mt-1.5 text-lg" bar="w-32" />
+              {/* 窄屏放送信息在封面下方 */}
+              <div className="mb-2 hidden min-h-0 flex-1 flex-col justify-center space-y-3 sm:flex">
+                {meta}
+                <Skeleton className="h-5 w-2/3" />
+              </div>
+              <div className="mt-auto flex gap-2">
+                <Skeleton className="h-10 w-32" />
+                {Array.from({ length: 3 }, (_, i) => (
+                  <Skeleton key={i} className="hidden h-10 w-28 sm:block" />
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="mt-5 space-y-3 border-t border-border/60 pt-4 sm:hidden">
+            {meta}
+            <div className="space-y-1.5">
+              <Skeleton className="h-5 w-full" />
+              <Skeleton className="h-5 w-1/3" />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {Array.from({ length: 4 }, (_, i) => (
+                <Skeleton key={i} className="h-8 w-24" />
+              ))}
+            </div>
+          </div>
+        </Container>
+      </section>
+      <Container className="py-5 sm:py-6">
+        <EpisodesSkeleton count={12} view={viewParam(sp.get("view"))} />
+      </Container>
+    </div>
   )
 }
+
+/** 选集骨架：标题行 + 一页选集。未指定视图时手机为网格、sm 以上为列表（与默认视图一致） */
+function EpisodesSkeleton({ count, view }: { count: number; view: EpisodeView | null }) {
+  const n = Math.min(count, EPISODE_PAGE)
+  const grid = (
+    <div className={cn("grid grid-cols-5 gap-2 sm:grid-cols-8 lg:grid-cols-12", !view && "sm:hidden")}>
+      {Array.from({ length: n }, (_, i) => (
+        <Skeleton key={i} className="h-10" />
+      ))}
+    </div>
+  )
+  const list = (
+    <div className={cn("grid gap-2 sm:grid-cols-2 lg:grid-cols-3", !view && "hidden sm:grid")}>
+      {Array.from({ length: n }, (_, i) => (
+        <Skeleton key={i} className="h-14 rounded-lg" />
+      ))}
+    </div>
+  )
+  return (
+    <div aria-hidden>
+      <div className="mb-3 flex h-7 items-center justify-between gap-3">
+        <Skeleton className="h-7 w-20" />
+        <Skeleton className="h-7 w-36" />
+      </div>
+      {view !== "list" && grid}
+      {view !== "grid" && list}
+    </div>
+  )
+}
+
+const viewParam = (v: string | null): EpisodeView | null => (v === "list" || v === "grid" ? v : null)
 
 const TITLE_MAX = 24
 const TITLE_MIN = 16

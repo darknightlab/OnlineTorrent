@@ -5,7 +5,7 @@ import { DEFAULT_RANK_RULES, scoreFile, type RankInput, type Scored } from "@/li
 import { useSiteOrFallback } from "@/lib/queries"
 import type { Torrent } from "@/lib/types"
 import { cn, watchHref } from "@/lib/utils"
-import { Skeleton } from "@/components/ui/skeleton"
+import { Skeleton, SkeletonLine } from "@/components/ui/skeleton"
 
 /** 去掉标题开头与字幕组重复的 [xxx] */
 export function stripTeam(title: string, team?: string | null) {
@@ -64,17 +64,22 @@ export function TorrentList({ items, now = Date.now(), className }: { items: Tor
   )
 }
 
+/** 种子列表骨架（与 ReleaseRowBody 同样的三行 + 右侧 BT / RTC / 分数） */
 export function TorrentListSkeleton({ rows = 8 }: { rows?: number }) {
   return (
     <ul className="divide-y" aria-hidden>
       {Array.from({ length: rows }, (_, i) => (
-        <li key={i} className="flex items-center gap-3 px-3 py-3 sm:px-4">
-          <div className="flex-1 space-y-1.5">
-            <Skeleton className="h-4 w-1/3" />
-            <Skeleton className="h-3.5 w-[85%]" />
-            <Skeleton className="h-3 w-1/4" />
+        <li key={i} className="flex gap-3 px-3 py-2.5 sm:px-4">
+          <div className="min-w-0 flex-1">
+            <Skeleton className="h-[22px] w-48 max-w-full" />
+            <SkeletonLine className="mt-1 text-[13px] leading-snug" bar="w-[85%]" />
+            <SkeletonLine className="mt-0.5 text-[11px] leading-4" bar="w-28" />
           </div>
-          <Skeleton className="h-8 w-14" />
+          <div className="flex shrink-0 flex-col items-end justify-between text-[11px] leading-5">
+            <SkeletonLine bar="w-16" />
+            <SkeletonLine bar="w-16" />
+            <SkeletonLine bar="w-10" />
+          </div>
         </li>
       ))}
     </ul>

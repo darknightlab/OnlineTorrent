@@ -2,6 +2,7 @@ import { memo } from "react"
 import { Link } from "react-router-dom"
 import { Play } from "lucide-react"
 import { Cover } from "./Cover"
+import { Skeleton, SkeletonLine } from "./ui/skeleton"
 import type { ScheduleItem } from "@/lib/types"
 import { airStatus, displayTitle, episodeLabel } from "@/lib/schedule"
 import { formatDate } from "@/lib/format"
@@ -60,9 +61,9 @@ export const SubjectCard = memo(function SubjectCard({ item, now }: { item: Sche
 
 export function SubjectCardSkeleton() {
   return (
-    <div>
-      <div className="aspect-video w-full animate-pulse rounded-lg bg-muted" />
-      <div className="mt-2 h-3.5 w-4/5 animate-pulse rounded bg-muted" />
+    <div aria-hidden>
+      <Skeleton className="aspect-video w-full rounded-lg" />
+      <SkeletonLine className="mt-1.5 px-0.5 text-[13px] leading-snug sm:text-sm" bar="w-4/5" />
     </div>
   )
 }
