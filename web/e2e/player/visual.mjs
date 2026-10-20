@@ -29,7 +29,7 @@ export default async function ({ ev, send, sleep, RUN }) {
       }
       const label = `${theme} ${width}${DPR !== 1 ? ` @${DPR}x` : ""}`
       // corners: 3× zoom of a 20×20 css-px square at the top-left and bottom-right
-      const ZOOM = 3
+      const ZOOM = Number(process.env.ZOOM || 3) // 1 = native device pixels (a 3× capture re-rasterises at a different scale)
       let worst = 0
       for (const [cx, cy, sx, sy] of [[box.x, box.y, 1, 1], [box.x + box.w, box.y + box.h, -1, -1]]) {
         const clip = { x: sx > 0 ? cx - 4 : cx - 16, y: sy > 0 ? cy - 4 : cy - 16, width: 20, height: 20, scale: ZOOM }

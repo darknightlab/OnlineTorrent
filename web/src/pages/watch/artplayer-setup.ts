@@ -100,7 +100,6 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
         position: "right",
         index: 5,
         html: rateLabel(1),
-        tooltip: "播放速度",
         selector: RATES.map((r) => ({ html: r === 1 ? "1.0x" : `${r}x`, value: r, default: r === 1 })),
         onSelect(item) {
           art.playbackRate = Number(item.value)
@@ -270,7 +269,6 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
         position: "right",
         index: 3, // 「资源」是 4、「倍速」是 5
         html: "字幕",
-        tooltip: "内封字幕",
         selector: all.map((i) => ({ html: escapeHtml(i.label), value: i.value, default: i.value === current })),
         onSelect(item) {
           onSelect(Number(item.value))
