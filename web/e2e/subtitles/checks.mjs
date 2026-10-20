@@ -8,7 +8,7 @@ import fs from "node:fs"
 import zlib from "node:zlib"
 
 /** 最小 PNG 解码（8 位 RGB / RGBA，非隔行） */
-function decodePNG(buf) {
+export function decodePNG(buf) {
   let pos = 8
   let w = 0, h = 0, ct = 0
   const idat = []

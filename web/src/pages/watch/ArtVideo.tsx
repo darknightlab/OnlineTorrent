@@ -134,7 +134,7 @@ export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetada
       (rendererP ??= import("@/player/subs/render")
         .then(({ SubtitleRenderer }) => {
           if (cancelled) return null
-          renderer = new SubtitleRenderer(h.video, subtitles, window.matchMedia?.("(pointer: coarse)").matches ?? false)
+          renderer = new SubtitleRenderer(h.video, h.art.template.$player, subtitles, window.matchMedia?.("(pointer: coarse)").matches ?? false)
           return renderer
         })
         .catch((e) => {
@@ -166,6 +166,8 @@ export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetada
     return () => {
       cancelled = true
       renderer?.destroy()
+      // 保险：播放器里不留任何字幕画布
+      h.art.template.$player?.querySelectorAll("canvas.ot-subtitles").forEach((c) => c.remove())
       handle.current?.setSubtitleMenu(null, -1, () => {})
     }
   }, [ready, subtitles, url])

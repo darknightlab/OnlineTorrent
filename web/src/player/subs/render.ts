@@ -1,6 +1,10 @@
 // ASS 渲染：JASSUB（libass 的 WASM 版，OffscreenCanvas + WebGL，在 Worker 里渲染）。
 // 本模块与 jassub 只在文件有内封字幕时才加载（动态 import）。没有 SharedArrayBuffer（站点不设置
-// COOP/COEP）时 JASSUB 自动用单线程模式。画布插在 <video> 后面，随播放器容器一起全屏。
+// COOP/COEP）时 JASSUB 自动用单线程模式。
+//
+// 画布由我们创建、放在播放器元素里（<video> 后面），随播放器裁剪、全屏 / 网页全屏；
+// 生命周期：组件卸载时 destroy；另外每秒自检，<video> 不在文档里了（任何原因）就自行销毁——
+// 字幕绝不能残留在其他页面上。
 import JASSUB from "jassub"
 import workerUrl from "jassub/dist/worker/worker.js?worker&url"
 import wasmUrl from "jassub/dist/wasm/jassub-worker.wasm?url"
@@ -19,10 +23,21 @@ export class SubtitleRenderer {
   /** 换轨道时作废旧的异步操作 */
   private gen = 0
 
-  constructor(video: HTMLVideoElement, src: SubtitleSource, mobile: boolean) {
+  private canvas: HTMLCanvasElement
+  private watchdog = 0
+
+  /** player：播放器元素（画布放在里面）；video 必须在它里面 */
+  constructor(video: HTMLVideoElement, player: HTMLElement, src: SubtitleSource, mobile: boolean) {
     this.src = src
+    const canvas = document.createElement("canvas")
+    canvas.className = "ot-subtitles"
+    canvas.style.position = "absolute"
+    if (video.parentElement && player.contains(video)) video.insertAdjacentElement("afterend", canvas)
+    else player.appendChild(canvas)
+    this.canvas = canvas
     this.j = new JASSUB({
       video,
+      canvas,
       subContent: srtHeader(),
       workerUrl,
       wasmUrl,
@@ -34,7 +49,9 @@ export class SubtitleRenderer {
       // 手机：限制渲染分辨率
       maxRenderHeight: mobile ? 720 : 0,
     })
-    this.j._canvas.classList.add("ot-subtitles")
+    this.watchdog = window.setInterval(() => {
+      if (!video.isConnected || !canvas.isConnected) this.destroy()
+    }, 1000)
   }
 
   /** 显示某个轨道（null = 关闭） */
@@ -45,7 +62,7 @@ export class SubtitleRenderer {
     this.track = track?.number ?? null
     await this.j.ready
     if (this.destroyed || gen !== this.gen) return
-    this.j._canvas.style.display = track ? "" : "none"
+    this.canvas.style.display = track ? "" : "none"
     if (!track) {
       await this.j.renderer.freeTrack()
       return
@@ -72,8 +89,9 @@ export class SubtitleRenderer {
   destroy() {
     if (this.destroyed) return
     this.destroyed = true
+    window.clearInterval(this.watchdog)
     this.unsub?.()
+    this.canvas.remove()
     void this.j.destroy().catch(() => {})
-    this.j._canvas.remove()
   }
 }

@@ -28,7 +28,7 @@ export function EmptyEpisode({ data, ep }: { data: EpisodeResponse; ep: EpisodeK
   return (
     <div className={GRID}>
       <section className="min-w-0">
-        <div className={cn(BLEED, "relative aspect-video overflow-hidden bg-black lg:rounded-xl")}>
+        <div className={cn(BLEED, "ot-player-frame relative aspect-video overflow-hidden bg-black lg:[clip-path:inset(0_round_0.75rem)]")}>
           {s.cover && (
             <div aria-hidden className="absolute inset-0 scale-110 bg-cover bg-center opacity-40 blur-2xl" style={{ backgroundImage: `url("${s.cover}")` }} />
           )}

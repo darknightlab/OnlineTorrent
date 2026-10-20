@@ -27,6 +27,7 @@ import { ArtVideo, loadArtplayer } from "./ArtVideo"
 import { PlayerSpinner } from "@/components/PlayerSpinner"
 import { useWebseedEvents } from "./useWebseedEvents"
 import { useStallWatchdog } from "./useStallWatchdog"
+import { useSnappedFrame } from "./useSnappedFrame"
 import { ReportDialog } from "./ReportDialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -126,6 +127,8 @@ export function Player({
   const [panelOpen, setPanelOpen] = useState(false)
   const openPanel = useCallback(() => setPanelOpen(true), [])
   const playerBox = useRef<HTMLDivElement>(null)
+  const playerFrame = useRef<HTMLDivElement>(null)
+  useSnappedFrame(playerBox, playerFrame)
   // 播放器全屏时弹窗要挂在全屏元素里，否则看不到
   const [fsHost, setFsHost] = useState<HTMLElement | null>(null)
   useEffect(() => {
@@ -460,9 +463,11 @@ export function Player({
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-5 xl:grid-cols-[minmax(0,1fr)_400px]">
       <section className="min-w-0">
-        {/* 播放区：移动端吸顶、全宽 */}
-        <div ref={playerBox} className="sticky top-[env(safe-area-inset-top)] z-20 -mx-3 bg-black sm:-mx-4 sm:top-14 lg:static lg:mx-0 lg:overflow-hidden lg:rounded-xl">
-          <div className="relative aspect-video w-full overflow-hidden bg-black select-none">
+        {/* 播放区：移动端吸顶、全宽。外框只占位；里面的播放框对齐到整设备像素（useSnappedFrame，避免小数像素
+            宽度时两侧的细黑线），宽屏的圆角用 clip-path（整体裁剪一次；overflow-hidden + 圆角会对每个铺满的图层
+            分别抗锯齿，叠加后圆角外缘出现一圈黑边） */}
+        <div ref={playerBox} className="sticky top-[env(safe-area-inset-top)] z-20 -mx-3 sm:-mx-4 sm:top-14 lg:static lg:mx-0">
+          <div ref={playerFrame} className="ot-player-frame relative aspect-video w-full overflow-hidden bg-black select-none lg:[clip-path:inset(0_round_0.75rem)]">
             {/* 未出画面时：竖版封面两侧用模糊背景填满，避免大片纯黑 */}
             {poster && !url && (
               <>
@@ -878,6 +883,8 @@ export function PlayerShell({ poster, panelSources, children }: { poster?: strin
   const [open, setOpen] = useState(false)
   const openPanel = useCallback(() => setOpen(true), [])
   const box = useRef<HTMLDivElement>(null)
+  const frame = useRef<HTMLDivElement>(null)
+  useSnappedFrame(box, frame)
   const [fsHost, setFsHost] = useState<HTMLElement | null>(null)
   useEffect(() => {
     const on = () => {
@@ -888,8 +895,8 @@ export function PlayerShell({ poster, panelSources, children }: { poster?: strin
     return () => document.removeEventListener("fullscreenchange", on)
   }, [])
   return (
-    <div ref={box} className="sticky top-[env(safe-area-inset-top)] z-20 -mx-3 bg-black sm:-mx-4 sm:top-14 lg:static lg:mx-0 lg:overflow-hidden lg:rounded-xl">
-      <div className="relative aspect-video w-full overflow-hidden bg-black select-none">
+    <div ref={box} className="sticky top-[env(safe-area-inset-top)] z-20 -mx-3 sm:-mx-4 sm:top-14 lg:static lg:mx-0">
+      <div ref={frame} className="ot-player-frame relative aspect-video w-full overflow-hidden bg-black select-none lg:[clip-path:inset(0_round_0.75rem)]">
         {poster && (
           <>
             <div aria-hidden className="absolute inset-0 scale-110 bg-cover bg-center opacity-50 blur-2xl" style={{ backgroundImage: `url("${poster}")` }} />
