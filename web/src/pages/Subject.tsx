@@ -238,7 +238,7 @@ function TagList({ tags, className }: { tags: { name: string; meta: boolean }[];
   return (
     <ul aria-label="标签" className={cn("flex-wrap gap-1.5", className)}>
       {tags.map((t) => (
-        <li key={t.name}>
+        <li key={t.name} className="flex">
           <Badge variant={t.meta ? "soft" : "outline"} title={t.meta ? "公共标签" : "用户标签"}>
             {t.name}
           </Badge>
@@ -444,8 +444,10 @@ function SubjectHero({
     const calc = () => {
       const avail = m.clientHeight
       const [mh, th] = Array.from(p.children).map((c) => (c as HTMLElement).offsetHeight)
+      // 能放下谁就放谁：放送信息优先；放不下时标签仍可单独放进来
       const metaFits = mh > 0 && mh <= avail
-      const tagsFits = metaFits && th > 0 && mh + GAP + th <= avail
+      const rest = metaFits ? avail - mh - GAP : avail
+      const tagsFits = th > 0 && th <= rest
       // 外部链接与播放按钮同一行：整行不换行才放在右侧
       const row = linksRow.current
       const linksFit = !!row && row.scrollWidth <= row.clientWidth + 1
@@ -471,8 +473,8 @@ function SubjectHero({
       // 基准高度 / 上限随断点（与 className 里的 h-44 / sm:h-60 / lg:h-72 一致）
       const vw = window.innerWidth
       const [base, cap] = vw >= 1024 ? [288, 320] : vw >= 640 ? [240, 288] : [176, 216]
-      // 右侧除标题外的固定部分（状态、评分）+ 中间最小间距（my-3）+ 底部按钮行；用小数避免取整抖动
-      const fixed = h.getBoundingClientRect().height - title.getBoundingClientRect().height + 24 + (row?.getBoundingClientRect().height ?? 0)
+      // 右侧除标题外的固定部分（状态、评分）+ 中间最小间距（my-2）+ 底部按钮行；用小数避免取整抖动
+      const fixed = h.getBoundingClientRect().height - title.getBoundingClientRect().height + 16 + (row?.getBoundingClientRect().height ?? 0)
       const measure = (px: number) => {
         tp.style.fontSize = `${px}px`
         const r = tp.getBoundingClientRect().height
@@ -551,7 +553,7 @@ function SubjectHero({
               </h1>
               <Rating subject={a} />
             </div>
-            <div ref={mid} className="relative my-3 flex min-h-0 flex-1 flex-col justify-end overflow-hidden">
+            <div ref={mid} className="relative my-2 flex min-h-0 flex-1 flex-col justify-end overflow-hidden">
               {/* 测量副本：与中间区域同宽、不可见 */}
               <div ref={probe} aria-hidden className="invisible absolute inset-x-0 top-0 space-y-3">
                 <div>{meta}</div>
