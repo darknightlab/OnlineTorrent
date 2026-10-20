@@ -205,9 +205,11 @@ export default function PlaybackPage() {
   const sideProps = epData
     ? { data: epData, ranked, ep: ep!, ih, fileIndex: fileIndex ?? playing, listed: !!listed, playName: ready ? state.play?.name : undefined, hint, selected, onSelect: select }
     : null
-  // 有播放器时资源列表放进播放器的「资源」弹窗，页面上只留选集；没有播放器时（如无权播放）仍在页面上列出资源以便换源
+  // 资源列表平时在播放器的「资源」弹窗里，页面上只留选集；只有确定无法播放时（需登录 / 大会员 / 被屏蔽 /
+  // 超时 / 出错，没有播放器）才在页面上列出资源以便换源。加载中不列，否则会先出现再消失
+  const gated = ["login", "vip", "blocked", "timeout", "error"].includes(state.status)
   const side = sideProps ? (
-    <EpisodeSide {...sideProps} part={ready ? "episodes" : "all"} />
+    <EpisodeSide {...sideProps} part={gated ? "all" : "episodes"} />
   ) : epQ.error ? (
     <Card>
       <ErrorState error={epQ.error} onRetry={() => epQ.refetch()} />
