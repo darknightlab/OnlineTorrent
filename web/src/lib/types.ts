@@ -180,6 +180,8 @@ export interface Subject extends ScheduleItem {
   /** 计划集数；0 = 未知 */
   eps?: number
   external: ExternalIds
+  /** 已放送完（全部正片已播出）：番剧页从第 1 话开始播，选集不标记最新一集 */
+  finished?: boolean
 }
 
 /** GET /subjects/{provider}/{id} */

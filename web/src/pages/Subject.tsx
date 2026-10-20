@@ -85,13 +85,17 @@ export default function SubjectPage() {
   const latest = data.torrents[0]
   // 已播集数（映射库最新一集 / 时间表估算取较大者）
   const epCount = airedCount(a)
-  // 播放按钮：有资源的最新正片；都没有资源时从第 1 话开始（已播出的话）
+  // 播放按钮：连载中为有资源的最新正片，已放送完从第 1 话（有资源的第一话）开始；都没有资源时从第 1 话开始（已播出的话）
   const withSources = (episodes.data?.items ?? []).filter((it) => it.kind === "main" && it.sources > 0)
   const latestEp =
     withSources.length > 0
-      ? withSources[withSources.length - 1].number
+      ? a.finished
+        ? withSources[0].number
+        : withSources[withSources.length - 1].number
       : a.latest_episode && a.latest_episode > 0
-        ? a.latest_episode
+        ? a.finished
+          ? 1
+          : a.latest_episode
         : epCount > 0
           ? 1
           : null
@@ -163,7 +167,8 @@ export default function SubjectPage() {
 
       <Container className="space-y-6 py-5 sm:py-6">
         {/* 选集在简介前 */}
-        <SubjectEpisodes subject={a} latest={latestEp !== null ? String(latestEp) : null} />
+        {/* 已放送完：选集不标记最新一集 */}
+        <SubjectEpisodes subject={a} latest={latestEp !== null && !a.finished ? String(latestEp) : null} />
         {summary && (
           <Card className="p-4 sm:p-5">
             <h2 className="mb-2 text-sm font-semibold">简介</h2>

@@ -61,17 +61,24 @@ func (s *Store) OfficialEpisodes(ctx context.Context, workKey string) ([]Officia
 // AiredOfficial counts official main episodes aired by now (airdate ≤ today in JST);
 // ok=false when the work has no official episode data.
 func (s *Store) AiredOfficial(ctx context.Context, workKey string, now time.Time) (aired int, ok bool) {
-	var total, dated, past int
+	aired, _, ok = s.OfficialProgress(ctx, workKey, now)
+	return aired, ok
+}
+
+// OfficialProgress returns the aired and total official main episodes (see AiredOfficial);
+// aired == total means the work has finished airing.
+func (s *Store) OfficialProgress(ctx context.Context, workKey string, now time.Time) (aired, total int, ok bool) {
+	var dated, past int
 	today := now.In(jst).Format("2006-01-02")
 	err := s.R.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(airdate != ''),0), COALESCE(SUM(airdate != '' AND airdate <= ?),0)
 		FROM episodes WHERE work_key = ? AND type = 0`, today, workKey).Scan(&total, &dated, &past)
 	if err != nil || total == 0 {
-		return 0, false
+		return 0, 0, false
 	}
 	if dated == 0 {
-		return total, true // no air dates at all (old/OVA entries): treat as released
+		return total, total, true // no air dates at all (old/OVA entries): treat as released
 	}
-	return past, true
+	return past, total, true
 }
 
 // Split-cour second seasons are often numbered on bangumi as a continuation (13–24) while

@@ -30,6 +30,9 @@ type subjectOut struct {
 	Score    float64           `json:"score,omitempty"`
 	Rank     int               `json:"rank,omitempty"`
 	Eps      int               `json:"eps,omitempty"` // planned episode count (bgm 话数)
+	// Finished: every official main episode has aired (or, without official episodes, the
+	// broadcast estimate has ended). Subject pages then start from episode 1.
+	Finished bool `json:"finished"`
 }
 
 func (s *Server) resolveSubject(r *http.Request) (*meta.Work, error) {
@@ -54,20 +57,27 @@ func (s *Server) subjectCard(r *http.Request, work *meta.Work, detail bool) subj
 		s.fetchBgmDetail(r.Context(), work)
 	}
 	item := s.Cat.ScheduleItemByKey(work.Key) // includes latest torrent / episode
+	official := false                         // finished per the official episode air dates
+	known := false                            // official episodes exist
 	if item == nil {
 		item, _ = s.Cat.ItemFor(work, time.Now())
 		// not on the current schedule: official air dates are better than the weekly estimate
 		if item != nil && detail {
-			if n, ok := s.Meta.AiredOfficial(r.Context(), work.Key, time.Now()); ok {
+			if n, total, ok := s.Meta.OfficialProgress(r.Context(), work.Key, time.Now()); ok {
 				item.EpisodesAired = n
+				known, official = true, n >= total
+				if official {
+					item.NextAirAt = nil // all aired: no "next episode" from the weekly estimate
+				}
 			}
 		}
 	}
+	finished := official || (!known && item != nil && item.NextAirAt == nil && item.LastAirAt != nil)
 	if item == nil {
 		item = &catalog.ScheduleItem{Key: work.Key, SubjectID: work.ID, Title: work.Title, TitleCN: work.TitleCN, Cover: s.Cat.CoverFor(work)}
 	}
 	out := subjectOut{ScheduleItem: item, Summary: work.Summary, Type: work.Type, Official: work.Official, External: work.External,
-		Tags: work.Tags, MetaTags: work.MetaTags, NSFW: work.NSFW, Score: work.Score, Rank: work.Rank, Eps: work.Eps}
+		Tags: work.Tags, MetaTags: work.MetaTags, NSFW: work.NSFW, Score: work.Score, Rank: work.Rank, Eps: work.Eps, Finished: finished}
 	if out.Tags == nil {
 		out.Tags = []string{}
 	}
