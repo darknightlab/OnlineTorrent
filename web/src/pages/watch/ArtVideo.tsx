@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react"
 import { PlayerSpinner } from "@/components/PlayerSpinner"
 import type { ArtHandle } from "./artplayer-setup"
-import type { SubtitleSource } from "@/player/subs/source"
-import { chooseTrack, loadPref, prefFor, savePref } from "@/player/subs/prefs"
-import { trackLabel } from "@/player/subs/lang"
+import type { SubtitleSet } from "@/player/subs/set"
+import { buildMenu, chooseMenu } from "@/player/subs/set"
+import { loadPref, prefFor, savePref } from "@/player/subs/prefs"
 import { byteToTimeFraction } from "@/lib/timemap"
 import type { TimeMapResult } from "@/player/types"
 
@@ -31,7 +31,7 @@ export interface ArtVideoProps {
   /** 控制栏「资源」按钮 */
   onPanel?: () => void
   /** 当前文件的内封字幕（MKV）；有字幕轨道时控制栏出现「字幕」 */
-  subtitles?: SubtitleSource | null
+  subtitles?: SubtitleSet | null
   onLog?: (level: "info" | "warn", msg: string) => void
   /** 进度条 piece 图层的字节 → 时间映射（容器索引，见 session.timeMap）；元数据加载后调用一次 */
   timeMap?: () => Promise<TimeMapResult | null>
@@ -141,26 +141,30 @@ export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetada
           log("warn", `字幕渲染器加载失败：${String(e?.message ?? e)}`)
           return null
         }))
-    void subtitles.header.then((hd) => {
-      if (cancelled || !hd?.subtitles.length) return
-      const tracks = hd.subtitles
-      let current = chooseTrack(tracks, loadPref(), navigator.languages ?? [navigator.language])
+    // 内封轨道要等 MKV 头部解析；外挂文件在种子文件列表里就有
+    void (subtitles.embedded?.header ?? Promise.resolve(null)).then((hd) => {
+      const menu = buildMenu(hd?.subtitles ?? [], subtitles.external)
+      if (cancelled || !menu.length) return
+      const inputs = menu.map((m) => m.input)
+      let current = chooseMenu(menu, loadPref(), navigator.languages ?? [navigator.language])
       const apply = async (i: number) => {
         current = i
         if (i < 0 && !renderer) return // 从没显示过：不必加载渲染器
         const r = await getRenderer()
-        if (!cancelled && current === i) await r?.show(i >= 0 ? tracks[i] : null)
+        if (!cancelled && current === i) await r?.show(i >= 0 ? menu[i] : null)
       }
       h.setSubtitleMenu(
-        tracks.map((t, i) => ({ label: trackLabel(t, i), value: i })),
+        menu.map((m, i) => ({ label: m.label, value: i })),
         current,
         (i) => {
-          savePref(prefFor(tracks, i))
+          savePref(prefFor(inputs, i))
           void apply(i)
-          log("info", i >= 0 ? `字幕：${trackLabel(tracks[i], i)}` : "已关闭字幕")
+          log("info", i >= 0 ? `字幕：${menu[i].label}` : "已关闭字幕")
         },
       )
-      log("info", `内封字幕 ${tracks.length} 条${current >= 0 ? `，已选择「${trackLabel(tracks[current], current)}」` : "，没有与浏览器语言匹配的，默认不显示"}`)
+      const nEmb = menu.filter((m) => m.kind === "embedded").length
+      const counts = [nEmb && `内封 ${nEmb} 条`, menu.length - nEmb && `外挂 ${menu.length - nEmb} 个`].filter(Boolean).join("、")
+      log("info", `字幕：${counts}${current >= 0 ? `，已选择「${menu[current].label}」` : "，没有与浏览器语言匹配的，默认不显示"}`)
       if (current >= 0) void apply(current)
     })
     return () => {

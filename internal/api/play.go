@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -327,12 +328,16 @@ func (s *Server) recordedSubject(r *http.Request) (*store.TorrentRecord, policy.
 // a server is added with every other file skipped; on a server that already has it the file
 // is added to its selection (files already wanted are never dropped). The size limit
 // (play.max_push_size_mb) applies to the sum of the wanted files after adding this one.
+// Optional "extra": companion files of that video the player wants too — external subtitles
+// (.ass .ssa .srt .vtt) and the release's font files (.ttf .otf .ttc); anything else, or more
+// than companionMax in total, is ignored (see companions).
 func (s *Server) seed(w http.ResponseWriter, r *http.Request) error {
 	if !s.limiter.allow("seed:"+ipKey(r), 20, 10*time.Second) {
 		return errRateLimited
 	}
 	var in struct {
-		File *int `json:"file"`
+		File  *int  `json:"file"`
+		Extra []int `json:"extra"`
 	}
 	if r.ContentLength != 0 {
 		if err := httpx.DecodeSmall(r, &in); err != nil && r.ContentLength > 0 {
@@ -368,8 +373,9 @@ func (s *Server) seed(w http.ResponseWriter, r *http.Request) error {
 		return httpx.E(400, "bad_request", "文件序号无效")
 	}
 	want := files[idx].Path
+	extra := companions(files, idx, in.Extra)
 	if limit := s.maxPushBytes(); limit > 0 {
-		if total := wantedSize(files, s.Pool.Wanted(ctx, rec.Infohash), want); total > limit {
+		if total := wantedSize(files, s.Pool.Wanted(ctx, rec.Infohash), append([]string{want}, extra...)...); total > limit {
 			return httpx.E(http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("要下载的文件过大（超过 %d MB），服务器不参与做种", limit>>20))
 		}
 	}
@@ -379,7 +385,7 @@ func (s *Server) seed(w http.ResponseWriter, r *http.Request) error {
 	}
 	// wss + configured BT trackers + the torrent's own announce list (we don't rely on qB's
 	// "automatically add trackers"); adding with a file selection takes a few more calls
-	push := s.Pool.Seed(ctx, qb.SeedRequest{Infohash: rec.Infohash, Name: sub.Title, Torrent: torrent, Want: []string{want},
+	push := s.Pool.Seed(ctx, qb.SeedRequest{Infohash: rec.Infohash, Name: sub.Title, Torrent: torrent, Want: append([]string{want}, extra...),
 		Trackers: swarm.PushTrackers(ctx, s.St, s.Meta, rec.Infohash, nil), Timeout: 2 * timeout})
 	if len(push.Errors) > 0 {
 		s.Log.Warn("push errors", "ih", rec.Infohash, "errors", push.Errors)
@@ -474,4 +480,42 @@ func wantedSize(files []seedFile, wanted map[string]bool, extra ...string) int64
 		}
 	}
 	return total
+}
+
+// companion files (external subtitles, fonts) the player may add to a seed request
+var reCompanion = regexp.MustCompile(`(?i)\.(ass|ssa|srt|vtt|ttf|otf|ttc)$`)
+
+const (
+	companionFileMax = 32 << 20 // one subtitle / font file
+	companionMax     = 64 << 20 // all of them
+)
+
+// companions returns the paths of the valid extra files: subtitle / font files only, not the
+// video itself, deduplicated, each at most companionFileMax and in total companionMax (files
+// beyond are dropped, smallest first kept).
+func companions(files []seedFile, video int, extra []int) []string {
+	seen := map[int]bool{video: true}
+	var ok []seedFile
+	for _, i := range extra {
+		if i < 0 || i >= len(files) || seen[i] {
+			continue
+		}
+		seen[i] = true
+		f := files[i]
+		if f.Pad || f.Size > companionFileMax || !reCompanion.MatchString(f.Path) {
+			continue
+		}
+		ok = append(ok, f)
+	}
+	sort.SliceStable(ok, func(a, b int) bool { return ok[a].Size < ok[b].Size })
+	var out []string
+	var total int64
+	for _, f := range ok {
+		if total+f.Size > companionMax {
+			break
+		}
+		total += f.Size
+		out = append(out, f.Path)
+	}
+	return out
 }

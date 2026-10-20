@@ -493,7 +493,9 @@ const MAX_CHUNK = 2 * (1 << 20)
  * 这里维护滑动的 stream selection [当前 piece, 读位置 + 窗口]，缺 piece 就 critical 并等 'verified'，
  * 读失败（piece 被删）就 unverify 后重新等待，不让流断掉。读位置通过 hooks 报给预算管理器。
  */
-export function windowedIterator(file: FileLike, opts: { start?: number; end?: number; aux?: boolean } | null | undefined, Piece: PieceCtor, hooks: ReaderHooks) {
+export function windowedIterator(file: FileLike, opts: { start?: number; end?: number; aux?: boolean; background?: boolean } | null | undefined, Piece: PieceCtor, hooks: ReaderHooks) {
+  // background：低优先级的辅助读取（外挂字幕、字体）——优先级 0 的选择，不 critical，不与播放抢 piece
+  const background = !!opts?.background
   const t = file._torrent!
   const start = opts?.start ?? 0
   const end = opts?.end !== undefined && opts.end < file.length ? opts.end : file.length - 1
@@ -511,7 +513,7 @@ export function windowedIterator(file: FileLike, opts: { start?: number; end?: n
     if (!force && sel && sel[0] === p && sel[1] === to) return
     const old = sel
     sel = [p, to]
-    t._select(p, to, 1, null, true)
+    t._select(p, to, background ? 0 : 1, null, true)
     if (old) t._deselect(old[0], old[1], true)
   }
 
@@ -530,7 +532,7 @@ export function windowedIterator(file: FileLike, opts: { start?: number; end?: n
       abort = () => done(false)
       t.on("verified", onVerified)
       t.once("close", onClose)
-      t.critical(i, Math.min(i + 1, file._endPiece))
+      if (!background) t.critical(i, Math.min(i + 1, file._endPiece))
     })
 
   const read = (i: number, offset: number, length: number) =>
@@ -613,6 +615,6 @@ export function windowedIterator(file: FileLike, opts: { start?: number; end?: n
 export function installReaders(t: TorrentLike, Piece: PieceCtor, hooks: ReaderHooks) {
   for (const f of t.files) {
     if (f.length === 0) continue
-    ;(f as { [Symbol.asyncIterator]: unknown })[Symbol.asyncIterator] = (opts?: { start?: number; end?: number; aux?: boolean }) => windowedIterator(f, opts, Piece, hooks)
+    ;(f as { [Symbol.asyncIterator]: unknown })[Symbol.asyncIterator] = (opts?: { start?: number; end?: number; aux?: boolean; background?: boolean }) => windowedIterator(f, opts, Piece, hooks)
   }
 }

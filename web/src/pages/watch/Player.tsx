@@ -323,7 +323,7 @@ export function Player({
     if (!reqs.begin(file)) return
     void (async () => {
       try {
-        const r = await api.seed(ih, file)
+        const r = await api.seed(ih, file, session.companionFiles?.(file))
         reqs.end(file, r.seeded ? "seeded" : "no_server")
         if (r.seeded) log("info", "已请求服务器下载并做种当前文件")
         else log("warn", "服务器暂无可用的做种节点，仅使用 P2P 网络")

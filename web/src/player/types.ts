@@ -78,7 +78,9 @@ export interface Session {
   /** 只下载这个文件（其余文件不下载；null = 都不下载）。元数据就绪前调用会在就绪后生效。 */
   focusFile?(index: number | null): void
   /** MKV 文件的内封字幕（其他文件 / mock 引擎为 null）；正在播放的文件由 focusFile 预先建好 */
-  subtitles?(fileIndex: number): import("./subs/source").SubtitleSource | null
+  subtitles?(fileIndex: number): import("./subs/set").SubtitleSet | null
+  /** 该视频的外挂字幕与种子附带的字体文件（请求服务器做种时一并下载） */
+  companionFiles?(fileIndex: number): number[]
   /** 进度条的字节 → 时间映射（容器索引）；不支持的容器 / 没有索引时为 null */
   timeMap?(fileIndex: number): Promise<TimeMapResult | null>
   /** 读取文件 [start, end) 的字节（辅助读取：容器索引等；缺的 piece 会下载） */

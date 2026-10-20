@@ -71,7 +71,9 @@ const ROOT = realInfo ? realInfo.info.name.toString("utf8") : "[E2E] Edge Test -
 const media = fs.readFileSync(MEDIA)
 const notes = Buffer.from("边缘节点端到端测试\n".repeat(40))
 const EXT = path.extname(MEDIA) || ".mp4"
-const files = SINGLE ? [{ path: ROOT, data: media }] : [{ path: `${ROOT}${EXT}`, data: media }, { path: "notes.txt", data: notes }]
+// VIDEO_NAME: the video's path inside the torrent folder; ADD_FILES="local=>path|…": extra files (after the video)
+const added_ = (process.env.ADD_FILES || "").split("|").filter(Boolean).map((x) => x.split("=>")).map(([l, p]) => ({ path: p, data: fs.readFileSync(l) }))
+const files = SINGLE ? [{ path: ROOT, data: media }] : [{ path: process.env.VIDEO_NAME || `${ROOT}${EXT}`, data: media }, ...added_, { path: "notes.txt", data: notes }]
 if (SINGLE && media.length !== realInfo.info.length) throw new Error("MEDIA does not match TORRENT")
 const all = Buffer.concat(files.map((f) => f.data))
 const NP = Math.ceil(all.length / PL)
@@ -85,7 +87,7 @@ function bencode(v) {
   const keys = Object.keys(v).sort()
   return Buffer.concat([Buffer.from("d"), ...keys.flatMap((k) => [bencode(k), bencode(v[k])]), Buffer.from("e")])
 }
-const info = { name: ROOT, "piece length": PL, pieces: Buffer.concat(hashes), files: files.map((f) => ({ length: f.data.length, path: [f.path] })) }
+const info = { name: ROOT, "piece length": PL, pieces: Buffer.concat(hashes), files: files.map((f) => ({ length: f.data.length, path: f.path.split("/") })) }
 const IH = realTorrent ? crypto.createHash("sha1").update(realTorrent.subarray(...realInfo.__infoRange)).digest("hex") : crypto.createHash("sha1").update(bencode(info)).digest("hex")
 const torrent = realTorrent ?? bencode({ info, announce: "wss://tracker.invalid/announce" })
 console.log(`torrent ${IH}: ${NP} pieces of ${PL >> 10} KiB, ${(all.length / 1e6).toFixed(1)} MB`)
@@ -96,7 +98,7 @@ const DATA = `${RUN}/data`
 const QB_SAVE = "/Data/Torrent/qbittorrent/files/默认"
 const localSave = path.join(DATA, "qbittorrent/files/默认")
 fs.mkdirSync(SINGLE ? localSave : path.join(localSave, ROOT), { recursive: true })
-const videoPath = SINGLE ? path.join(localSave, ROOT) : path.join(localSave, ROOT, `${ROOT}${EXT}`)
+const videoPath = SINGLE ? path.join(localSave, ROOT) : path.join(localSave, ROOT, files[0].path)
 const notesPath = path.join(localSave, ROOT, "notes.txt")
 const states = new Array(NP).fill(0)
 {
@@ -115,7 +117,8 @@ function writePiece(i) {
     const fEnd = fileStart + f.data.length
     const s = Math.max(off, fileStart), e = Math.min(end, fEnd)
     if (s < e) {
-      const p = f === files[0] ? (videoDone ? videoPath : videoPath + ".!qB") : notesPath
+      const p = f === files[0] ? (videoDone ? videoPath : videoPath + ".!qB") : path.join(localSave, ROOT, f.path)
+      fs.mkdirSync(path.dirname(p), { recursive: true })
       const fd = fs.openSync(p, fs.existsSync(p) ? "r+" : "w")
       fs.writeSync(fd, f.data, s - fileStart, e - s, s - fileStart)
       fs.closeSync(fd)
@@ -354,7 +357,7 @@ console.log("\nplayer log:\n  " + (logs ?? []).filter((l) => /WebSeed|边缘|种
 console.log("console errors:", consoleErr.slice(0, 5))
 
 // ---------------------------------------------------------------- direct checks against the edge
-const edgeDirect = SINGLE ? `http://127.0.0.1:${EDGE_PORT}/webseed/hash/${IH}/` : `http://127.0.0.1:${EDGE_PORT}/webseed/hash/${IH}/${encodeURIComponent(ROOT)}/${encodeURIComponent(ROOT + EXT)}`
+const edgeDirect = SINGLE ? `http://127.0.0.1:${EDGE_PORT}/webseed/hash/${IH}/` : `http://127.0.0.1:${EDGE_PORT}/webseed/hash/${IH}/${encodeURIComponent(ROOT)}/${files[0].path.split("/").map(encodeURIComponent).join("/")}`
 const noTok = await fetch(edgeDirect, { headers: { Origin: SITE, Range: "bytes=0-9", Cookie: cookie } })
 const foreign = await fetch(edgeDirect, { method: "OPTIONS", headers: { Origin: "https://evil.example", "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "authorization,range" } })
 const pre = await fetch(edgeDirect, { method: "OPTIONS", headers: { Origin: SITE, "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "authorization,range,cache-control,user-agent" } })

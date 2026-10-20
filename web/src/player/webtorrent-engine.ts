@@ -28,6 +28,8 @@ import { infoHashFromMagnet } from "./store/policy"
 import { applyRanges, bitsFromRanges, countPieces, resetToRanges } from "@/lib/webseed"
 import { classifyResponse, WebSeedHealth } from "@/lib/webseedhealth"
 import { SubtitleSource } from "./subs/source"
+import { externalSubsFor, externalToAss, fontFiles } from "./subs/external"
+import type { ExternalTrack, SubtitleSet } from "./subs/set"
 import { readCuePoints } from "./subs/mkv"
 import { mp4Points } from "./timemap/mp4"
 import { buildTimeMap } from "@/lib/timemap"
@@ -38,6 +40,10 @@ import type { WebSeedAvail, WebSeedUpdate } from "./types"
 const SW_URL = "/sw.min.js"
 /** 首尾 piece 的优先级（与旧版一致），便于尽快拿到 moov/时长信息 */
 const EDGE_PRIORITY = 10
+/** 外挂字幕文件的上限（再大不是正常字幕） */
+const MAX_EXTERNAL_SUB = 16 << 20
+/** 种子附带字体的下载上限（按需要下载的 piece 计） */
+const MAX_TORRENT_FONTS = 64 << 20
 /** 文件大于预算的这个比例时不整文件后台下载，只靠窗口化读取（否则会下载 → 淘汰 → 再下载） */
 const WINDOWED_RATIO = 0.8
 /** CacheChunkStore 在内存里缓存的完整 piece 数（piece 可能有 16 MiB） */
@@ -311,7 +317,7 @@ class WTSession implements Session {
     this.focused = index
     this.applyFocus()
     // 内封字幕：在 <video> 开始读取之前建好，第一个请求（从文件头开始）就能被解析
-    if (index !== null) this.subtitles(index)
+    if (index !== null) this.mkvSource(index)
   }
 
   // ---- 内封字幕（MKV）----
@@ -320,10 +326,10 @@ class WTSession implements Session {
   private subs = new Map<number, SubtitleSource>()
 
   /** 读取文件 [start, end) 的字节（辅助读取，经窗口化读取器：缺的 piece 会下载） */
-  async readRange(fileIndex: number, start: number, end: number): Promise<Uint8Array> {
+  async readRange(fileIndex: number, start: number, end: number, background = false): Promise<Uint8Array> {
     const f = this.torrent?.files?.[fileIndex] as unknown as FileLike | undefined
     if (!f || end <= start) return new Uint8Array(0)
-    const it = (f[Symbol.asyncIterator] as (o: { start: number; end: number; aux: boolean }) => AsyncIterator<Uint8Array>)({ start, end: Math.min(end, f.length) - 1, aux: true })
+    const it = (f[Symbol.asyncIterator] as (o: { start: number; end: number; aux: boolean; background: boolean }) => AsyncIterator<Uint8Array>)({ start, end: Math.min(end, f.length) - 1, aux: true, background })
     const parts: Uint8Array[] = []
     let n = 0
     try {
@@ -345,7 +351,80 @@ class WTSession implements Session {
     return out
   }
 
-  subtitles(fileIndex: number): SubtitleSource | null {
+  // ---- 字幕：内封 + 外挂 ----
+
+  private sets = new Map<number, SubtitleSet>()
+  private torrentFontsP: Promise<Uint8Array[]> | null = null
+
+  /** 视频文件的全部字幕（内封 + 种子里的外挂文件）；都没有时为 null */
+  subtitles(fileIndex: number): SubtitleSet | null {
+    const t = this.torrent
+    const f = t?.files?.[fileIndex]
+    if (!t || !f || this.destroyed) return null
+    const cached = this.sets.get(fileIndex)
+    if (cached) return cached
+    const files = t.files.map((x) => ({ path: x.path, length: x.length }))
+    const embedded = this.mkvSource(fileIndex)
+    const external: ExternalTrack[] = externalSubsFor(files, fileIndex).map((info) => {
+      let p: Promise<string> | null = null
+      return {
+        ...info,
+        load: () =>
+          (p ??= (async () => {
+            const len = files[info.fileIndex].length
+            if (len > MAX_EXTERNAL_SUB) throw new Error(`文件过大（${formatCacheBytes(len)}）`)
+            return externalToAss(info.format, await this.readRange(info.fileIndex, 0, len, true))
+          })()),
+      }
+    })
+    if (!embedded && !external.length) return null
+    const fontIdx = fontFiles(files)
+    const set: SubtitleSet = {
+      embedded,
+      external,
+      fonts: async () => {
+        const [att, own] = await Promise.all([embedded?.fonts() ?? [], this.torrentFonts(fontIdx)])
+        return { fonts: [...att, ...own], attachments: att.length, files: own.length }
+      },
+    }
+    this.sets.set(fileIndex, set)
+    return set
+  }
+
+  companionFiles(fileIndex: number): number[] {
+    const t = this.torrent
+    const set = this.subtitles(fileIndex)
+    if (!t?.files || !set?.external.length) return []
+    return [...set.external.map((e) => e.fileIndex), ...fontFiles(t.files.map((x) => ({ path: x.path, length: x.length })))]
+  }
+
+  /** 种子 Fonts/ 文件夹里的字体：按需下载的字节（含共享的首尾 piece）合计不超过上限时才读取 */
+  private torrentFonts(idx: number[]): Promise<Uint8Array[]> {
+    const t = this.torrent
+    if (!t || !idx.length) return Promise.resolve([])
+    this.torrentFontsP ??= (async () => {
+      const pieces = new Set<number>()
+      for (const i of idx) for (let p = t.files[i]._startPiece; p <= t.files[i]._endPiece; p++) if (!t.bitfield?.get(p)) pieces.add(p)
+      const cost = pieces.size * t.pieceLength
+      if (cost > MAX_TORRENT_FONTS) {
+        this.log("info", `种子附带的字体需下载 ${formatCacheBytes(cost)}，超过上限，未加载`)
+        return []
+      }
+      const out: Uint8Array[] = []
+      for (const i of idx) {
+        try {
+          out.push(await this.readRange(i, 0, t.files[i].length, true))
+        } catch {
+          /* 单个字体失败不影响其他 */
+        }
+      }
+      return out
+    })()
+    return this.torrentFontsP
+  }
+
+  /** MKV 内封字幕源（tap 与时间映射也用它） */
+  private mkvSource(fileIndex: number): SubtitleSource | null {
     const f = this.torrent?.files?.[fileIndex]
     if (!f || this.destroyed || !/\.mk[vs]$/i.test(f.name)) return null
     let s = this.subs.get(fileIndex)
@@ -377,7 +456,7 @@ class WTSession implements Session {
         return map ? { map, partial: false } : null
       })
     } else if (/\.mk[vs]$/i.test(f.name)) {
-      const src = this.subtitles(fileIndex)
+      const src = this.mkvSource(fileIndex)
       p = (async () => {
         const h = src && (await src.header)
         const pts = h ? await readCuePoints(read, h).catch(() => null) : null

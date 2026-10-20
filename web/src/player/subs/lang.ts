@@ -10,6 +10,8 @@ export interface TrackLangInput {
   language: string
   languageIETF: string
   name: string
+  /** 已知的语言（外挂字幕：由文件名后缀 / 文件夹识别），有时直接使用 */
+  langs?: LangKey[]
 }
 
 // 字幕组常把语言代号连写：JPSC / JPTC / JPCHS / SCJP / CHS_JP …
@@ -72,6 +74,7 @@ export function codeLang(code: string): LangKey | null {
 
 /** 轨道的语言（可能多个，按名字中出现的为准）；认不出时为空 */
 export function trackLangs(t: TrackLangInput): LangKey[] {
+  if (t.langs) return t.langs
   const fromName = [...new Set(NAME_RULES.filter(([, re]) => re.test(t.name)).map(([k]) => k))]
   if (fromName.length) return fromName
   const ietf = codeLang(t.languageIETF)

@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -92,8 +93,12 @@ func (f *selQB) handler() http.Handler {
 // packTorrent builds a 3-episode .torrent with a BEP 47 padding file between episodes 1 and 2
 // (player / .torrent index 2 = ep02; qB hides the pad: its index 1).
 func packTorrent() ([]byte, string, []string, []int64) {
-	names := []string{"ep01.mkv", ".pad/1", "ep02.mkv", "ep03.mkv"}
-	sizes := []int64{700_000, 1, 700_000, 700_000}
+	tor, ih := buildPack([]string{"ep01.mkv", ".pad/1", "ep02.mkv", "ep03.mkv"}, []int64{700_000, 1, 700_000, 700_000})
+	return tor, ih, []string{"Pack/ep01.mkv", "Pack/ep02.mkv", "Pack/ep03.mkv"}, []int64{700_000, 700_000, 700_000}
+}
+
+// buildPack builds a multi-file .torrent named Pack (".pad/…" entries are BEP 47 padding files).
+func buildPack(names []string, sizes []int64) ([]byte, string) {
 	var fl strings.Builder
 	var total int64
 	for i, n := range names {
@@ -112,7 +117,7 @@ func packTorrent() ([]byte, string, []string, []int64) {
 	n := (total + pl - 1) / pl
 	info := fmt.Sprintf("d5:filesl%se4:name4:Pack12:piece lengthi%de6:pieces%d:%se", fl.String(), pl, 20*n, strings.Repeat("x", int(20*n)))
 	sum := sha1.Sum([]byte(info))
-	return []byte("d4:info" + info + "e"), hex.EncodeToString(sum[:]), []string{"Pack/ep01.mkv", "Pack/ep02.mkv", "Pack/ep03.mkv"}, []int64{700_000, 700_000, 700_000}
+	return []byte("d4:info" + info + "e"), hex.EncodeToString(sum[:])
 }
 
 func TestSeedOnlyRequestedFiles(t *testing.T) {
@@ -210,5 +215,76 @@ func TestSeedOnlyRequestedFiles(t *testing.T) {
 	s.checkSeeded(ctx, s.Policy.Generation(), ih, "Pack", qfiles, nil, false)
 	if !fq.deleted {
 		t.Fatal("recheck kept a torrent whose wanted files exceed the limit")
+	}
+}
+
+func TestCompanions(t *testing.T) {
+	files := []seedFile{
+		{Path: "S/Ep 01.mkv", Size: 1 << 30},
+		{Path: "S/Ep 01.sc.ass", Size: 40 << 10},
+		{Path: "S/Ep 01.tc.ASS", Size: 40 << 10},
+		{Path: "S/Ep 02.mkv", Size: 1 << 30}, // a video: never a companion
+		{Path: "S/notes.txt", Size: 1 << 10}, // not a subtitle / font
+		{Path: "S/.pad/1", Size: 100, Pad: true},
+		{Path: "S/Fonts/big.ttc", Size: 40 << 20}, // over the per-file limit
+		{Path: "S/Fonts/a.otf", Size: 32 << 20},
+		{Path: "S/Fonts/b.ttf", Size: 32 << 20}, // a + b + subs > 64 MB: b dropped
+	}
+	got := companions(files, 0, []int{1, 2, 2, 3, 4, 5, 6, 7, 8, 0, -1, 99})
+	want := []string{"S/Ep 01.sc.ass", "S/Ep 01.tc.ASS", "S/Fonts/a.otf"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("companions = %q, want %q", got, want)
+	}
+	if got := companions(files, 0, nil); len(got) != 0 {
+		t.Fatalf("no extra: %q", got)
+	}
+}
+
+// The player adds the video's external subtitles (and the release's fonts) as "extra": qB
+// downloads them too; anything that isn't a subtitle / font file is ignored.
+func TestSeedWithCompanions(t *testing.T) {
+	s, h := testServer(t)
+	ctx := context.Background()
+	names := []string{"ep01.mkv", "ep01.sc.ass", "ep02.mkv", "notes.txt"}
+	sizes := []int64{700_000, 40_000, 700_000, 1_000}
+	tor, ih := buildPack(names, sizes)
+	var qbNames []string
+	for _, n := range names {
+		qbNames = append(qbNames, "Pack/"+n)
+	}
+	fq := &selQB{files: qbNames, sizes: sizes}
+	qsrv := httptest.NewServer(fq.handler())
+	defer qsrv.Close()
+	if _, err := s.St.SaveQBServer(ctx, store.QBServer{Name: "fake", URL: qsrv.URL, Username: "u", Password: "p", Enabled: true, Category: "projectk"}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.Pool.Reload(ctx)
+	s.Pool.CheckAll(ctx)
+	if err := s.Meta.PutMetainfo(ctx, ih, tor, meta.MetainfoQB); err != nil {
+		t.Fatal(err)
+	}
+	var files []meta.FileInput
+	for i, n := range qbNames {
+		files = append(files, meta.FileInput{Index: i, Path: n, Size: sizes[i]})
+	}
+	if err := s.Meta.Match(ctx, meta.TorrentInput{Infohash: ih, Title: "Pack", Source: "user", SourceKind: "user", Files: files}); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.St.UpsertTorrent(ctx, store.TorrentRecord{Infohash: ih, Title: "Pack", Size: 1_441_000, Source: "user"})
+	member := loginAs(t, s, "alice", store.RoleMember)
+	req := httptest.NewRequest("POST", "/api/v1/torrents/hash/"+ih+"/seed", strings.NewReader(`{"file":0,"extra":[1,2,3,1,7]}`))
+	req.Header.Set("X-Requested-With", "fetch")
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: sessionCookie, Value: member})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("seed: %d %s", rec.Code, rec.Body)
+	}
+	fq.mu.Lock()
+	got := slices.Clone(fq.prio)
+	fq.mu.Unlock()
+	if !slices.Equal(got, []int{1, 1, 0, 0}) {
+		t.Fatalf("priorities: %v, want video + its subtitles only", got)
 	}
 }
