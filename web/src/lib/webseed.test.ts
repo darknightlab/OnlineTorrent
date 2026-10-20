@@ -174,3 +174,10 @@ test("subscription: unavailable / timeout escalate the backoff (no reset) and ca
   assert.equal(h.seeds(), 2)
   assert.deepEqual(h.states.slice(0, 4), ["connecting", "open", "waiting-retry", "connecting"])
 })
+
+test("countPieces counts within a piece range", () => {
+  const b = bitsFromRanges(20, [0, 4, 10, 12]) // pieces 0–4 and 10–12
+  assert.equal(countPieces(b, 20), 8)
+  assert.equal(countPieces(b, 20, 10, 15), 3)
+  assert.equal(countPieces(b, 20, 3, 11), 4)
+})

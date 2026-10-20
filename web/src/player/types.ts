@@ -64,6 +64,7 @@ export interface Session {
   /** 换上边缘节点的新访问令牌（SSE token 事件；URL 不变） */
   setWebSeedToken?(url: string, token: string): void
   /** WebSeed 已宣告的分块数（日志用） */
+  /** 该 WebSeed 已有的分块数（正在播放的文件范围内） */
   webSeedPieces?(url: string): { have: number; of: number } | null
   /**
    * 元数据尚未获取时，改用服务器提供的 .torrent（GET /torrents/hash/{ih}/torrent）。

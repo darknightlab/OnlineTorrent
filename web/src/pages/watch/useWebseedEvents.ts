@@ -69,7 +69,7 @@ export function useWebseedEvents({
           st.urls.add(url)
           if (token) st.edges++
           const info = session.webSeedPieces?.(url)
-          const pct = info && info.have < info.of ? `，已有 ${Math.floor((info.have / Math.max(1, info.of)) * 100)}% 的数据，随下载进度增加` : ""
+          const pct = info && info.have < info.of ? `，当前文件已有 ${Math.floor((info.have / Math.max(1, info.of)) * 100)}% 的数据，随下载进度增加` : ""
           say("info", `已启用 HTTP WebSeed 加速（边缘节点${pct}）`, `enabled:${url}`)
         },
         have: (url, r) => session.updateWebSeed?.(url, { have: r }),

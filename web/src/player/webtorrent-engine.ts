@@ -456,10 +456,14 @@ class WTSession implements Session {
     if (ev.lost) e.handle?.remove(applyRanges(e.bits, e.pieces, ev.lost, false))
   }
 
+  /** 该 WebSeed 已有的分块：只算正在播放的文件（服务器只下载被请求的文件），没有选中文件时算整个种子 */
   webSeedPieces(url: string) {
     const e = this.webseeds.get(url)
     if (!e) return null
-    return e.bits ? { have: countPieces(e.bits, e.pieces), of: e.pieces } : { have: this.torrent?.pieces?.length ?? 0, of: this.torrent?.pieces?.length ?? 0 }
+    const f = this.focused !== null ? this.torrent?.files?.[this.focused] : undefined
+    const [from, to] = f && f.length ? [f._startPiece, f._endPiece] : [0, e.pieces - 1]
+    const of = to - from + 1
+    return e.bits ? { have: countPieces(e.bits, e.pieces, from, to), of } : { have: of, of }
   }
 
   destroy() {

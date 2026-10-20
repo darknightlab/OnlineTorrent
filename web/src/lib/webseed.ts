@@ -49,9 +49,9 @@ export function resetToRanges(bits: Uint8Array, numPieces: number, ranges: Range
   return { added, removed }
 }
 
-export function countPieces(bits: Uint8Array, numPieces: number) {
+export function countPieces(bits: Uint8Array, numPieces: number, from = 0, to = numPieces - 1) {
   let n = 0
-  for (let i = 0; i < numPieces; i++) if (hasPiece(bits, i)) n++
+  for (let i = Math.max(0, from); i <= Math.min(to, numPieces - 1); i++) if (hasPiece(bits, i)) n++
   return n
 }
 
