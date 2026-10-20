@@ -100,6 +100,10 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
     ],
   })
   const video = art.video
+  // 空 url：还没有视频（获取种子信息等）时先显示播放器与控制栏（「资源」按钮可用），不加载、不播放；
+  // 画面由外层的封面与状态提示负责（.ot-idle 让播放器背景透明、隐藏大按钮与加载动画）
+  const idle = !o.url
+  if (idle) el.classList.add("ot-idle")
   let lastPoster = o.poster
   const { $player, $state, $poster } = art.template
   $state.setAttribute("role", "button")
@@ -144,6 +148,11 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
   let needsTap = false
   const reconcile = () => {
     if (art.isDestroy) return
+    if (idle) {
+      art.loading.show = false
+      art.mask.show = false
+      return
+    }
     if (needsTap) {
       art.loading.show = false
       art.mask.show = true
@@ -198,6 +207,7 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
 
   art.on("video:loadedmetadata", () => o.onLoadedMetadata(video))
   art.on("video:error", () => {
+    if (idle) return
     // 无法解码：大按钮换成错误图标（.art-error，见 artplayer.css），控件栏回到「播放」
     showPauseIcon(false)
     if (video.error) o.onMediaError(video.error)
@@ -216,11 +226,12 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
   el.addEventListener("focusout", focusOut)
 
   // 自动播放：被拦截（NotAllowedError）时显式显示大播放按钮
-  art.play().catch((e: unknown) => {
-    if (art.isDestroy || (e as Error)?.name !== "NotAllowedError") return
-    needsTap = true
-    reconcile()
-  })
+  if (!idle)
+    art.play().catch((e: unknown) => {
+      if (art.isDestroy || (e as Error)?.name !== "NotAllowedError") return
+      needsTap = true
+      reconcile()
+    })
 
   return {
     art,

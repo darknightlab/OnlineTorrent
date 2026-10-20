@@ -133,7 +133,8 @@
   }
 }
 
-/* 倍速按钮：文字 */
+/* 文字按钮：资源、倍速（同样的字号与粗细） */
+.art-video-player .art-control-panel,
 .art-video-player .art-control-rate {
   padding: 0 6px;
   font-size: 13px;
@@ -170,4 +171,15 @@
 .ot-artplayer:focus-visible {
   outline: 2px solid var(--primary);
   outline-offset: -2px;
+}
+
+/* 还没有视频（空 url）：透明背景透出外层封面；隐藏大播放按钮、加载动画与 ArtPlayer 自带封面 */
+.ot-idle .art-video-player {
+  background-color: transparent !important;
+}
+.ot-idle .art-mask,
+.ot-idle .art-loading,
+.ot-idle .art-poster,
+.ot-idle .art-video {
+  display: none !important;
 }

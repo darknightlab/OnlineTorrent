@@ -472,20 +472,21 @@ export function Player({
                 <div aria-hidden className="absolute inset-0 bg-contain bg-center bg-no-repeat" style={{ backgroundImage: `url("${poster}")` }} />
               </>
             )}
+            {/* 状态提示下的暗层（在播放器之下，控制栏不被压暗） */}
+            {!url && <div aria-hidden className="absolute inset-0 bg-black/55" />}
             {file?.kind === "video" || !file ? (
-              url && (
-                <ArtVideo
-                  key={url}
-                  url={url}
-                  poster={poster}
-                  segments={segments}
-                  speed={snap?.downloadSpeed ?? 0}
-                  onVideo={setVideo}
-                  onLoadedMetadata={onLoadedMetadata}
-                  onMediaError={onMediaError}
-                  onPanel={openPanel}
-                />
-              )
+              // 还没有视频地址时也先挂上播放器（空 url）：控制栏与「资源」按钮始终可用
+              <ArtVideo
+                key={url ?? "idle"}
+                url={url ?? ""}
+                poster={url ? poster : undefined}
+                segments={segments}
+                speed={snap?.downloadSpeed ?? 0}
+                onVideo={url ? setVideo : undefined}
+                onLoadedMetadata={onLoadedMetadata}
+                onMediaError={onMediaError}
+                onPanel={openPanel}
+              />
             ) : file.kind === "audio" ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-gradient-to-br from-primary/40 to-accent/40 p-6">
                 <FileAudio className="h-12 w-12 text-white/80" />
@@ -496,8 +497,8 @@ export function Player({
               url && <img key={url} src={url} alt={file.name} className="absolute inset-0 h-full w-full object-contain" />
             )}
 
-            {/* 播放器控制栏还没出现时（获取种子信息、无法播放、非视频文件…）：右上角的「资源」按钮 */}
-            {!((file?.kind === "video" || !file) && url) && (
+            {/* 非视频文件（音频 / 图片）没有 ArtPlayer 控制栏：右上角的「资源」按钮 */}
+            {file && file.kind !== "video" && (
               <button
                 type="button"
                 onClick={openPanel}
@@ -705,7 +706,8 @@ export function Player({
 
 function Overlay({ children }: { children: React.ReactNode }) {
   return (
-    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/60 px-6 text-center text-sm text-white backdrop-blur-[2px]">
+    // 不盖住底部控制栏（「资源」等按钮仍可点），点击穿透到播放器
+    <div className="pointer-events-none absolute inset-x-0 bottom-12 top-0 z-10 flex flex-col items-center justify-center gap-2 px-6 text-center text-sm text-white">
       {children}
     </div>
   )
