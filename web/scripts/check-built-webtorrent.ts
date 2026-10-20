@@ -4,7 +4,7 @@
 import { readFileSync, readdirSync } from "node:fs"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
-import { checkWebTorrentBundle, installFetchRecorder } from "../src/player/store/bundle-check.ts"
+import { checkServiceWorker, checkWebTorrentBundle, installFetchRecorder } from "../src/player/store/bundle-check.ts"
 
 const dist = path.resolve(process.argv[2] ?? "dist")
 const assets = path.join(dist, "assets")
@@ -26,5 +26,9 @@ const fetchLog = installFetchRecorder() // before the import (the chunk captures
 const { default: WebTorrent } = await import(pathToFileURL(file).href)
 const problems = await checkWebTorrentBundle(WebTorrent, readFileSync(file, "utf8"), `dist/assets/${chunk}`, fetchLog)
 if (problems.length) fail(problems.map((p) => `  - ${p}`).join("\n"))
+// 站点唯一的 Service Worker（流 + 应用壳）
+const swProblems = checkServiceWorker(readFileSync(path.join(dist, "sw.js"), "utf8"), readFileSync(file, "utf8"))
+if (swProblems.length) fail(swProblems.map((p) => `  - ${p}`).join("\n"))
+console.log("✓ Service Worker：流处理在前，/webtorrent/ 不经过 workbox，预缓存清单已注入")
 console.log(`✓ WebTorrent 构建产物兼容（dist/assets/${chunk}）`)
 process.exit(0) // 浏览器包在 node 里可能留下定时器

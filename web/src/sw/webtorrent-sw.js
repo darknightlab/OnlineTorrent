@@ -27,8 +27,8 @@
 const FIREFOX = /firefox/i.test(self.navigator.userAgent)
 const FIREFOX_PULL_TIMEOUT = 60_000
 
-self.addEventListener("install", () => self.skipWaiting())
-self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()))
+// Lifecycle (install / activate / updates) lives in sw.js, the site's single service worker that
+// imports this file first, so this fetch listener runs before workbox's routes.
 
 self.addEventListener("fetch", (event) => {
   const { url } = event.request

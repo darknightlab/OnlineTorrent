@@ -6,7 +6,7 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { readFileSync } from "node:fs"
 import { createRequire } from "node:module"
-import { checkWebTorrentBundle, installFetchRecorder } from "./bundle-check.ts"
+import { checkServiceWorker, checkWebTorrentBundle, installFetchRecorder } from "./bundle-check.ts"
 import {
   checkBundleSource,
   normSource,
@@ -260,4 +260,17 @@ test("evict → re-download on demand, startup bitfield, wire fix (node, TCP)", 
   } finally {
     for (const c of [S, D, L, D2]) await new Promise((r) => c.destroy(r))
   }
+})
+
+test("service worker gate: streaming first, /webtorrent/ excluded from the navigation fallback, manifest injected", () => {
+  const stream = 'self.addEventListener(`fetch`,e=>{let{url:t}=e.request,n=self.registration.scope+`webtorrent/`;if(t.startsWith(n+`keepalive/`))return;if(t.startsWith(n+`cancel/`))return});c.body===`STREAM`?1:0;'
+  const wb = 'self.addEventListener(`fetch`,(e=>{let{request:t}=e,n=this.handleRequest({request:t,event:e})}));'
+  const manifest = '[{"revision":"1","url":"index.html"}]'
+  const nav = "denylist:[/^\\/api\\//,/^\\/webtorrent\\//]"
+  const page = "fetch(`${this.pathname}/keepalive/`);fetch(`${this.pathname}/cancel/`);body:a?`STREAM`:b"
+  assert.deepEqual(checkServiceWorker(stream + wb + manifest + nav, page), [])
+  assert.ok(checkServiceWorker(wb + stream + manifest + nav, page).some((x) => /第一个 fetch/.test(x)))
+  assert.ok(checkServiceWorker(stream + wb + manifest + "denylist:[/^\\/api\\//]", page).some((x) => /导航回退/.test(x)))
+  assert.ok(checkServiceWorker(stream + wb + "self.__WB_MANIFEST" + nav, page).some((x) => /预缓存/.test(x)))
+  assert.ok(checkServiceWorker(stream + wb + manifest + nav, "fetch(`/ping/`)").some((x) => /BrowserServer/.test(x)))
 })

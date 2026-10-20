@@ -37,7 +37,7 @@ import type { TimeMapResult } from "./types"
 import type { ClusterTap } from "./subs/tap"
 import type { WebSeedAvail, WebSeedUpdate } from "./types"
 
-const SW_URL = "/sw.min.js"
+const SW_URL = "/sw.js" // 站点唯一的 Service Worker（src/sw/sw.js；应用启动时已由 PWAUpdatePrompt 注册，这里得到同一个注册）
 /** 首尾 piece 的优先级（与旧版一致），便于尽快拿到 moov/时长信息 */
 const EDGE_PRIORITY = 10
 /** 外挂字幕文件的上限（再大不是正常字幕） */
@@ -72,7 +72,8 @@ async function getClient(iceServers: RTCIceServer[]) {
   return clientPromise
 }
 
-function waitActivated(reg: ServiceWorkerRegistration, timeoutMs = 10_000) {
+// 第一次打开网站时 Service Worker 要先完成应用壳的预缓存（约 1.5 MB）才激活：给足时间
+function waitActivated(reg: ServiceWorkerRegistration, timeoutMs = 30_000) {
   return new Promise<void>((resolve, reject) => {
     const w = reg.active ?? reg.waiting ?? reg.installing
     if (!w) return reject(new Error("no service worker"))

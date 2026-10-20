@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { ThemeProvider } from "@/lib/theme"
 import { isApiError } from "@/lib/api"
 import { Shell } from "@/components/layout/Shell"
+import { PWAUpdatePrompt } from "@/components/PWAUpdatePrompt"
 import { Toaster } from "@/components/ui/toast"
 import { PageLoading } from "@/components/states"
 import { Container } from "@/components/layout/Container"
@@ -96,6 +97,7 @@ export default function App() {
           </Routes>
         </BrowserRouter>
         <Toaster />
+        <PWAUpdatePrompt />
       </QueryClientProvider>
     </ThemeProvider>
   )

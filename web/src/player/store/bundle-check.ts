@@ -2,7 +2,7 @@
 // 用于 webtorrent-compat.test.ts（prebuild / npm test）与 scripts/check-built-webtorrent.ts（postbuild）。
 // 除源码层面的检查外，尽量做行为检查：用假 wire 驱动 _onWireWithMetadata，看 HAVE_ALL 与 'request' 处理的实际表现。
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { checkBundleSource, checkPieceCtor, checkTorrentMetadata, checkTorrentPrototype, checkWire, installEdgeFetch, installWireFix, patchWebSeed, setEdgeToken } from "./internals.ts"
+import { normSource, checkBundleSource, checkPieceCtor, checkTorrentMetadata, checkTorrentPrototype, checkWire, installEdgeFetch, installWireFix, patchWebSeed, setEdgeToken } from "./internals.ts"
 
 /** fetch calls seen by the recorder (installFetchRecorder) */
 export interface FetchRecord {
@@ -224,5 +224,27 @@ export async function checkWebTorrentBundle(WebTorrent: any, code: string, label
     await new Promise((r) => c.destroy(r))
     await new Promise((r) => seedC.destroy(r))
   }
+  return p
+}
+
+/**
+ * 构建出的 Service Worker（dist/sw.js，src/sw/sw.js：WebTorrent 流 + workbox 应用壳）与页面一侧的
+ * BrowserServer（webtorrent chunk）协议一致，且流请求不会被 workbox 接管：
+ * 第一个 fetch 监听器是流处理；/webtorrent/ 在导航回退的排除列表里；预缓存清单已注入。
+ */
+export function checkServiceWorker(sw: string, pageChunk: string): string[] {
+  const p: string[] = []
+  const s = normSource(sw)
+  if (!/registration\.scope\s*\+\s*"webtorrent\/"/.test(s)) p.push("sw.js 没有 /webtorrent/ 流处理（scope + \"webtorrent/\"）")
+  if (!/"keepalive\/"/.test(s) || !/"cancel\/"/.test(s)) p.push("sw.js 缺少 keepalive/ 或 cancel/ 处理")
+  if (!/===\s*"STREAM"/.test(s)) p.push("sw.js 不再识别页面回答的 \"STREAM\"")
+  const first = /addEventListener\(\s*"fetch"/.exec(s)
+  // 第一个 fetch 监听器的开头（到下一个 addEventListener 为止，最多 200 字符）
+  const head = first ? s.slice(first.index, first.index + 200).split("addEventListener(").slice(0, 2).join("addEventListener(") : ""
+  if (!head.includes("webtorrent/")) p.push("sw.js 的第一个 fetch 监听器不是流处理（workbox 的路由会先处理 /webtorrent/ 请求）")
+  if (!sw.includes("\\/webtorrent\\/")) p.push("sw.js 的导航回退没有排除 /webtorrent/")
+  if (sw.includes("__WB_MANIFEST") || !/"url"\s*:\s*"index\.html"/.test(sw)) p.push("sw.js 没有注入预缓存清单（index.html）")
+  const page = normSource(pageChunk)
+  if (!page.includes("/keepalive/") || !page.includes("/cancel/") || !/"STREAM"/.test(page)) p.push("webtorrent chunk 的 BrowserServer 协议（/keepalive/、/cancel/、\"STREAM\"）变了，需同步 src/sw/webtorrent-sw.js")
   return p
 }

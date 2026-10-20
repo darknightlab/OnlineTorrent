@@ -208,12 +208,23 @@ func (s *Server) spa() http.Handler {
 		if p == "" {
 			p = "index.html"
 		}
+		// the service worker before the PWA (streaming only); now /sw.js. A 404 (not index.html)
+		// makes the browser's update check of an old registration fail cleanly; the app then
+		// registers /sw.js, which replaces it.
+		if p == "sw.min.js" {
+			http.NotFound(w, r)
+			return
+		}
 		if st, err := fs.Stat(s.WebFS, p); err == nil && !st.IsDir() {
 			switch {
 			case strings.HasPrefix(p, "assets/"):
 				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-			case p == "sw.min.js" || p == "index.html":
+			case p == "sw.js" || p == "index.html" || p == "manifest.webmanifest":
+				// the app shell and its service worker: always revalidated (update detection)
 				w.Header().Set("Cache-Control", "no-cache")
+				if p == "manifest.webmanifest" {
+					w.Header().Set("Content-Type", "application/manifest+json")
+				}
 			default:
 				w.Header().Set("Cache-Control", "public, max-age=3600")
 			}

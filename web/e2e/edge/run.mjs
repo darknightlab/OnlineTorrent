@@ -28,7 +28,35 @@ const TORRENT = process.env.TORRENT
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const rnd = () => 19000 + Math.floor(Math.random() * 11000)
 const MAIN_PORT = rnd(), EDGE_PORT = rnd(), QB_PORT = rnd(), DBG_PORT = rnd()
-const SITE = `http://127.0.0.1:${MAIN_PORT}`
+// FRONT_DIR=<dir>: serve the frontend from that directory (re-read per request: swap builds while the
+// page is open — PWA update test) with the Go server's cache headers; /api /meta /webseed → otd
+const FRONT_PORT = rnd()
+const FRONT_DIR = process.env.FRONT_DIR
+const SITE = FRONT_DIR ? `http://127.0.0.1:${FRONT_PORT}` : `http://127.0.0.1:${MAIN_PORT}`
+if (FRONT_DIR) {
+  const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript", ".css": "text/css", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json", ".woff2": "font/woff2", ".wasm": "application/wasm" }
+  http
+    .createServer((req, res) => {
+      const u = new URL(req.url, "http://x")
+      if (/^\/(api|meta|webseed)\//.test(u.pathname)) {
+        const up = http.request({ host: "127.0.0.1", port: MAIN_PORT, path: req.url, method: req.method, headers: { ...req.headers, host: `127.0.0.1:${FRONT_PORT}` } }, (r) => {
+          res.writeHead(r.statusCode, r.headers)
+          r.pipe(res)
+        })
+        up.on("error", () => res.destroy())
+        req.pipe(up)
+        return
+      }
+      let p = decodeURIComponent(u.pathname).replace(/^\/+/, "") || "index.html"
+      let file = path.join(FRONT_DIR, p)
+      if (p === "sw.min.js") return res.writeHead(404).end()
+      if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) (p = "index.html"), (file = path.join(FRONT_DIR, p))
+      const cc = p.startsWith("assets/") ? "public, max-age=31536000, immutable" : ["sw.js", "index.html", "manifest.webmanifest"].includes(p) ? "no-cache" : "public, max-age=3600"
+      res.writeHead(200, { "Content-Type": types[path.extname(p)] ?? "application/octet-stream", "Cache-Control": cc })
+      res.end(fs.readFileSync(file))
+    })
+    .listen(FRONT_PORT, "127.0.0.1")
+}
 const EDGE_URL = `http://edge.test:${EDGE_PORT}`
 
 const RUN = `/tmp/edge-e2e/run-${process.pid}`
@@ -328,6 +356,9 @@ console.log("browser login:", await ev(`return (await fetch("/api/v1/auth/login"
 
 // CACHE_BYTES: the player's own cache-size override (Me page) → windowed mode for big files, like a phone
 if (process.env.CACHE_BYTES) console.log("cache override:", await ev(`localStorage.setItem(${JSON.stringify(process.env.CACHE_KEY || "ot.cacheBudgetBytes")}, ${JSON.stringify(process.env.CACHE_BYTES)}); return localStorage.getItem(${JSON.stringify(process.env.CACHE_KEY || "ot.cacheBudgetBytes")})`))
+// PWA_COLD=1: no service worker and no caches when the watch page opens (a first visit straight to
+// a watch link: the app registers the SW while playback starts; it must claim the page at once)
+if (process.env.PWA_COLD) console.log("pwa cold start:", await ev(`const rs = await navigator.serviceWorker.getRegistrations(); await Promise.all(rs.map((r) => r.unregister())); const ks = await caches.keys(); await Promise.all(ks.map((k) => caches.delete(k))); return rs.length + " registrations, " + ks.length + " caches removed"`))
 const t0 = Date.now()
 await send("Page.navigate", { url: `${SITE}/watch/hash/${IH}` })
 let playAt = -1
@@ -385,7 +416,7 @@ const checks = {
 // extra checks (e.g. e2e/subtitles/checks.mjs): run against the same page
 if (process.env.EXTRA) {
   const extra = await import(path.resolve(process.env.EXTRA))
-  Object.assign(checks, await extra.default({ ev, send, sleep, consoleErr, consoleAll, RUN, requests: allRequests, onCDP: (l) => (cdpListeners.add(l), () => cdpListeners.delete(l)), EDGE_URL, SITE }))
+  Object.assign(checks, await extra.default({ ev, send, sleep, consoleErr, consoleAll, RUN, requests: allRequests, onCDP: (l) => (cdpListeners.add(l), () => cdpListeners.delete(l)), EDGE_URL, SITE, IH }))
 }
 console.log(`\nplayback started at +${playAt}s; edge ${JSON.stringify(stat.edge)}; preflights ${stat.preflight}; tokens seen ${stat.auth.size}`)
 for (const [k, v] of Object.entries(checks)) console.log(`${v ? "  ok  " : "  FAIL"} ${k}`)
