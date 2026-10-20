@@ -57,6 +57,7 @@ declare module "webtorrent/dist/webtorrent.min.js" {
     on(ev: "wire", cb: (wire: WTWire, addr?: string) => void): void
     on(ev: "evicted", cb: (index: number) => void): void
     removeAllListeners(): void
+    removeListener(ev: string, cb: (...args: never[]) => void): void
   }
   export interface WTClientOptions {
     tracker?: { rtcConfig?: RTCConfiguration }

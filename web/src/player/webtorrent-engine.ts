@@ -199,7 +199,8 @@ class WTSession implements Session {
       const tf = (torrent as unknown as { torrentFile?: Uint8Array }).torrentFile
       if (!this.lease.temp && tf) void pieceCache.saveTorrentFile(this.lease.key, tf)
       installReaders(t, Piece, {
-        windowBytes: () => pieceCache.protection(pieceCache.entries.get(this.lease.key)!).aheadBytes,
+        // 起播时先取文件首尾（见 edgesPending）：此前读取不预取后面的 piece
+        windowBytes: () => (this.edgesPending() ? 0 : pieceCache.protection(pieceCache.entries.get(this.lease.key)!).aheadBytes),
         register: (r) => live.readers.add(r),
         unregister: (r) => {
           live.readers.delete(r)
@@ -506,9 +507,35 @@ class WTSession implements Session {
       this.windowed = true
       this.log("info", `视频（${formatCacheBytes(f.length)}）大于缓存预算的 80%，只缓存播放位置附近的数据`)
     }
-    if (!this.windowed) t.select(next.start, next.end, 0)
     t.select(next.end, next.end, EDGE_PRIORITY)
     t.select(next.start, next.start, EDGE_PRIORITY)
+    if (!this.windowed) this.selectWholeAfterEdges(t, next)
+  }
+
+  /**
+   * 起播先取当前文件的首尾 piece：MKV 的 Cues、MP4 尾部的 moov 在文件尾，浏览器起播前就要读。
+   * WebTorrent 不按优先级先后取 piece——新连接（WebSeed）的第一个请求取最后一个（优先级最低的）选择的末尾，
+   * 之后在所有优先级非 0 的选择之间轮流取——所以首尾的高优先级选择会被读取窗口的预取与整文件下载挤到后面
+   * （线上：1 GB 的 MKV 尾部 piece 到第 26 秒才到，起播要 25 秒）。在首尾都校验之前：读取不预取
+   * （windowBytes = 0，只取正在读的 piece）、不选整个文件；可请求的只有首、尾和正在读的 piece。
+   */
+  private edgesPending(): boolean {
+    const t = this.torrent
+    const a = this.applied
+    return !!t && !!a && !(t.bitfield?.get(a.start) && t.bitfield?.get(a.end))
+  }
+
+  /** 首尾都到了以后再选整个文件（非窗口模式的后台下载） */
+  private selectWholeAfterEdges(t: WTTorrent, range: { start: number; end: number }) {
+    const still = () => this.torrent === t && this.applied === range && !this.windowed && !this.destroyed
+    if (!this.edgesPending()) return void t.select(range.start, range.end, 0)
+    const on = () => {
+      if (!still()) return void t.removeListener("verified", on)
+      if (this.edgesPending()) return
+      t.removeListener("verified", on)
+      t.select(range.start, range.end, 0)
+    }
+    t.on("verified", on)
   }
 
   on<K extends keyof SessionEvents>(ev: K, cb: SessionEvents[K]) {

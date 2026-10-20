@@ -49,7 +49,7 @@ if (FRONT_DIR) {
       }
       let p = decodeURIComponent(u.pathname).replace(/^\/+/, "") || "index.html"
       let file = path.join(FRONT_DIR, p)
-      if (p === "sw.min.js") return res.writeHead(404).end()
+      if (p === "sw.min.js" && !fs.existsSync(file)) return res.writeHead(404).end()
       if (!fs.existsSync(file) || fs.statSync(file).isDirectory()) (p = "index.html"), (file = path.join(FRONT_DIR, p))
       const cc = p.startsWith("assets/") ? "public, max-age=31536000, immutable" : ["sw.js", "index.html", "manifest.webmanifest"].includes(p) ? "no-cache" : "public, max-age=3600"
       res.writeHead(200, { "Content-Type": types[path.extname(p)] ?? "application/octet-stream", "Cache-Control": cc })
@@ -94,7 +94,7 @@ function bdecode(b, p = 0) {
 const realTorrent = TORRENT ? fs.readFileSync(TORRENT) : null
 const realInfo = realTorrent ? bdecode(realTorrent)[0] : null
 const SINGLE = !!realInfo && !realInfo.info.files
-const PL = realInfo ? realInfo.info["piece length"] : 64 << 10
+const PL = realInfo ? realInfo.info["piece length"] : Number(process.env.PIECE_LENGTH || 64 << 10)
 const ROOT = realInfo ? realInfo.info.name.toString("utf8") : "[E2E] Edge Test - 01"
 const media = fs.readFileSync(MEDIA)
 const notes = Buffer.from("边缘节点端到端测试\n".repeat(40))
@@ -302,6 +302,7 @@ const ev = async (code) => {
 }
 const stat = { edge: { 206: 0, 200: 0, 503: 0, 401: 0, other: 0, bytes: 0 }, main: { n: 0, bytes: 0 }, preflight: 0, auth: new Set(), noAuth: 0, cookieToEdge: 0 }
 const reqs = new Map()
+const edgeReqs = [] // edge GETs: { t, range, done } (ms epoch)
 const allRequests = []
 const cdpListeners = new Set() // EXTRA modules: (method, params) => void
 ws.onmessage = (m) => {
@@ -320,6 +321,10 @@ ws.onmessage = (m) => {
       if (!url.includes("/webseed/hash/")) break
       const edge = url.startsWith(EDGE_URL)
       reqs.set(p.requestId, edge ? "edge" : "main")
+      if (edge && p.request.method !== "OPTIONS") {
+        const range = Object.entries(p.request.headers).find(([k]) => k.toLowerCase() === "range")?.[1] ?? ""
+        edgeReqs.push({ id: p.requestId, t: Date.now(), range, done: 0 })
+      }
       if (p.request.method === "OPTIONS") stat.preflight++
       else if (edge) {
         const a = Object.entries(p.request.headers).find(([k]) => k.toLowerCase() === "authorization")?.[1]
@@ -340,6 +345,7 @@ ws.onmessage = (m) => {
     case "Network.loadingFinished": {
       const k = reqs.get(p.requestId)
       if (k === "edge") stat.edge.bytes += p.encodedDataLength
+      if (k === "edge") { const e = edgeReqs.find((x) => x.id === p.requestId); if (e) e.done = Date.now() }
       if (k === "main") stat.main.bytes += p.encodedDataLength
       break
     }
@@ -348,6 +354,10 @@ ws.onmessage = (m) => {
 await send("Page.enable")
 await send("Runtime.enable")
 await send("Network.enable")
+// THROTTLE=<bytes/s>: the internet path to the edge (latency 80 ms), localhost is unrealistically fast
+if (process.env.THROTTLE) await send("Network.emulateNetworkConditions", { offline: false, latency: 80, downloadThroughput: Number(process.env.THROTTLE), uploadThroughput: Number(process.env.THROTTLE) })
+// first "playing" of a media element, page clock (performance.now() since navigation)
+await send("Page.addScriptToEvaluateOnNewDocument", { source: `document.addEventListener("playing", () => { if (location.pathname.startsWith("/watch") && window.__otFirstPlay === undefined) window.__otFirstPlay = performance.now() }, true)` })
 // small storage quota → small piece-cache budget → windowed mode (only around the playhead), like a phone
 if (process.env.QUOTA_BYTES) console.log("quota override:", JSON.stringify((await send("Storage.overrideQuotaForOrigin", { origin: SITE, quotaSize: Number(process.env.QUOTA_BYTES) })).error ?? "ok"))
 await send("Page.navigate", { url: SITE + "/" })
@@ -416,7 +426,7 @@ const checks = {
 // extra checks (e.g. e2e/subtitles/checks.mjs): run against the same page
 if (process.env.EXTRA) {
   const extra = await import(path.resolve(process.env.EXTRA))
-  Object.assign(checks, await extra.default({ ev, send, sleep, consoleErr, consoleAll, RUN, requests: allRequests, onCDP: (l) => (cdpListeners.add(l), () => cdpListeners.delete(l)), EDGE_URL, SITE, IH }))
+  Object.assign(checks, await extra.default({ ev, send, sleep, consoleErr, consoleAll, RUN, requests: allRequests, onCDP: (l) => (cdpListeners.add(l), () => cdpListeners.delete(l)), EDGE_URL, SITE, IH, edgeLog: edgeReqs, t0, PL, videoLength: media.length }))
 }
 console.log(`\nplayback started at +${playAt}s; edge ${JSON.stringify(stat.edge)}; preflights ${stat.preflight}; tokens seen ${stat.auth.size}`)
 for (const [k, v] of Object.entries(checks)) console.log(`${v ? "  ok  " : "  FAIL"} ${k}`)
