@@ -23,6 +23,8 @@ export interface ArtVideoProps {
   onVideo?: (v: HTMLVideoElement | null) => void
   onLoadedMetadata?: (v: HTMLVideoElement) => void
   onMediaError?: (err: MediaError) => void
+  /** 控制栏「资源」按钮 */
+  onPanel?: () => void
 }
 
 /**
@@ -30,14 +32,15 @@ export interface ArtVideoProps {
  * StrictMode 下 effect 会执行两次：第一次的实例在清理时 destroy（移除 DOM 与事件，释放流请求），第二次重新创建；
  * 模块尚未加载完就被清理时不会创建实例。
  */
-export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetadata, onMediaError }: ArtVideoProps) {
+export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel }: ArtVideoProps) {
   const box = useRef<HTMLDivElement>(null)
   const handle = useRef<ArtHandle | null>(null)
   const [ready, setReady] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   // 回调与动态数据用 ref 读取最新值，不触发重建
-  const latest = useRef({ poster, segments, speed, onVideo, onLoadedMetadata, onMediaError })
-  latest.current = { poster, segments, speed, onVideo, onLoadedMetadata, onMediaError }
+  const latest = useRef({ poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel })
+  latest.current = { poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel }
+  const hasPanel = !!onPanel
 
   useEffect(() => {
     const el = box.current
@@ -55,6 +58,7 @@ export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetada
           speed: l.speed,
           onLoadedMetadata: (v) => latest.current.onLoadedMetadata?.(v),
           onMediaError: (e) => latest.current.onMediaError?.(e),
+          onPanel: hasPanel ? () => latest.current.onPanel?.() : undefined,
         })
         handle.current = h
         setReady(true)
@@ -73,7 +77,7 @@ export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetada
       handle.current = null
       setReady(false)
     }
-  }, [url])
+  }, [url, hasPanel])
 
   useEffect(() => handle.current?.setPoster(poster), [poster, ready])
   useEffect(() => handle.current?.setSegments(segments), [segments, ready])

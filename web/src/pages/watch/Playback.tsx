@@ -202,8 +202,12 @@ export default function PlaybackPage() {
     navigate(`${epBase}/hash/${seg(f.infohash)}/file/${f.file_index}`, { replace: true })
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
-  const side = epData ? (
-    <EpisodeSide data={epData} ranked={ranked} ep={ep!} ih={ih} fileIndex={fileIndex ?? playing} listed={!!listed} playName={ready ? state.play?.name : undefined} hint={hint} selected={selected} onSelect={select} />
+  const sideProps = epData
+    ? { data: epData, ranked, ep: ep!, ih, fileIndex: fileIndex ?? playing, listed: !!listed, playName: ready ? state.play?.name : undefined, hint, selected, onSelect: select }
+    : null
+  // 有播放器时资源列表放进播放器的「资源」弹窗，页面上只留选集；没有播放器时（如无权播放）仍在页面上列出资源以便换源
+  const side = sideProps ? (
+    <EpisodeSide {...sideProps} part={ready ? "episodes" : "all"} />
   ) : epQ.error ? (
     <Card>
       <ErrorState error={epQ.error} onRetry={() => epQ.refetch()} />
@@ -231,7 +235,7 @@ export default function PlaybackPage() {
           poster={epData ? (epData.subject.cover ?? "") : undefined}
           renderInfo={(parts) => info(parts)}
           side={side}
-          collapseDetails
+          panelSources={sideProps ? (close) => <EpisodeSide {...sideProps} part="sources" onPicked={close} /> : undefined}
         />
       ) : (
         <div className={GRID}>
@@ -279,6 +283,8 @@ function EpisodeSide({
   hint,
   selected,
   onSelect,
+  part = "all",
+  onPicked,
 }: {
   data: EpisodeResponse
   ranked: Scored<EpisodeFile>[]
@@ -290,6 +296,10 @@ function EpisodeSide({
   hint?: PlayHint
   selected: string | null
   onSelect: (f: EpisodeFile) => void
+  /** all：选集 + 资源（没有播放器时）；episodes：只有选集；sources：只有资源列表（播放器弹窗里） */
+  part?: "all" | "episodes" | "sources"
+  /** 资源被点选后（弹窗里用来关闭弹窗） */
+  onPicked?: () => void
 }) {
   // 播放页轮询留下的收录状态（只读缓存，不发请求）提供文件名与大小
   const status = useQuery<TorrentStatus>({ queryKey: qk.torrentStatus(ih ?? ""), queryFn: () => api.torrentStatus(ih!), enabled: false }).data
@@ -311,10 +321,23 @@ function EpisodeSide({
       access: { action: "allow", reason: "" },
     }
   }, [ih, listed, fileIndex, status, playName, hint?.title, hint?.team])
+  const sources = (
+    <SourceList
+      ranked={ranked}
+      extra={extra}
+      selected={extra ? sourceKey(extra) : selected}
+      onSelect={(f) => {
+        onSelect(f)
+        onPicked?.()
+      }}
+      bare={part === "sources"}
+    />
+  )
+  if (part === "sources") return sources
   return (
     <>
       <EpisodeList subject={data.subject} ep={ep} hasItems={data.items.length > 0 || !!ih} />
-      <SourceList ranked={ranked} extra={extra} selected={extra ? sourceKey(extra) : selected} onSelect={onSelect} />
+      {part === "all" && sources}
     </>
   )
 }

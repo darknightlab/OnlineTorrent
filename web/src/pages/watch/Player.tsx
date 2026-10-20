@@ -20,8 +20,7 @@ import {
   Share2,
   Users,
   Captions,
-  ChevronDown,
-  SlidersHorizontal,
+  Layers,
   Tv,
 } from "lucide-react"
 import { loadEngine } from "@/player/engine"
@@ -33,7 +32,7 @@ import { useStallWatchdog } from "./useStallWatchdog"
 import { ReportDialog } from "./ReportDialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
+import { Dialog, DialogContent } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
 import { errorMessage } from "@/components/states"
@@ -94,7 +93,7 @@ export function Player({
   showMeta = true,
   renderInfo,
   side,
-  collapseDetails = false,
+  panelSources,
 }: {
   magnet: string
   play: PlayResponse | null
@@ -111,10 +110,10 @@ export function Player({
   showMeta?: boolean
   /** 自定义播放器下方的信息区（替换默认的标题 / 操作 / 统计块），参数为可复用的部件 */
   renderInfo?: (parts: PlayerParts) => React.ReactNode
-  /** 右栏（移动端为信息区下方）在「播放详情」之前的内容，如单集页的选集 / 资源 */
+  /** 右栏（移动端为信息区下方）的内容，如单集页的选集 */
   side?: React.ReactNode
-  /** 移动端把文件 / 节点 / 详情 / 日志折叠为「播放详情」 */
-  collapseDetails?: boolean
+  /** 播放器「资源」弹窗的第一个标签页（如单集页的资源列表）；参数 close 关闭弹窗 */
+  panelSources?: (close: () => void) => React.ReactNode
 }) {
   const site = useSiteOrFallback()
   const [engine, setEngine] = useState<Engine | null>(null)
@@ -129,8 +128,21 @@ export function Player({
   const [fatal, setFatal] = useState<string | null>(null)
   const [noPicture, setNoPicture] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
-  const [tab, setTab] = useState("files")
-  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [tab, setTab] = useState(panelSources ? "sources" : "files")
+  // 「资源」弹窗：资源 / 文件 / 节点 / 详情 / 日志（页面上不再常驻）
+  const [panelOpen, setPanelOpen] = useState(false)
+  const openPanel = useCallback(() => setPanelOpen(true), [])
+  const playerBox = useRef<HTMLDivElement>(null)
+  // 播放器全屏时弹窗要挂在全屏元素里，否则看不到
+  const [fsHost, setFsHost] = useState<HTMLElement | null>(null)
+  useEffect(() => {
+    const on = () => {
+      const el = document.fullscreenElement as HTMLElement | null
+      setFsHost(el && playerBox.current?.contains(el) ? el : null)
+    }
+    document.addEventListener("fullscreenchange", on)
+    return () => document.removeEventListener("fullscreenchange", on)
+  }, [])
   const [seededBy, setSeededBy] = useState<string[]>([])
   /** 有 WebSeed 权限且已启用：连接 SSE 等待服务器就绪 */
   const [webseedArmed, setWebseedArmed] = useState(false)
@@ -385,6 +397,7 @@ export function Player({
 
   const onSelectFile = (f: FileSnap) => {
     if (isPlayable(f.kind)) {
+      setPanelOpen(false)
       setCurrent(f.index)
       onFileChange?.(f.index)
       if (window.matchMedia("(max-width: 1023px)").matches) window.scrollTo({ top: 0, behavior: "smooth" })
@@ -443,10 +456,10 @@ export function Player({
   )
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-5 xl:grid-cols-[minmax(0,1fr)_400px]">
+    <div className={cn("grid gap-4", side && "lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-5 xl:grid-cols-[minmax(0,1fr)_400px]")}>
       <section className="min-w-0">
         {/* 播放区：移动端吸顶、全宽 */}
-        <div className="sticky top-[env(safe-area-inset-top)] z-20 -mx-3 bg-black sm:-mx-4 sm:top-14 lg:static lg:mx-0 lg:overflow-hidden lg:rounded-xl">
+        <div ref={playerBox} className="sticky top-[env(safe-area-inset-top)] z-20 -mx-3 bg-black sm:-mx-4 sm:top-14 lg:static lg:mx-0 lg:overflow-hidden lg:rounded-xl">
           <div className="relative aspect-video w-full overflow-hidden bg-black select-none">
             {/* 未出画面时：竖版封面两侧用模糊背景填满，避免大片纯黑 */}
             {poster && !url && (
@@ -470,6 +483,7 @@ export function Player({
                   onVideo={setVideo}
                   onLoadedMetadata={onLoadedMetadata}
                   onMediaError={onMediaError}
+                  onPanel={openPanel}
                 />
               )
             ) : file.kind === "audio" ? (
@@ -482,6 +496,17 @@ export function Player({
               url && <img key={url} src={url} alt={file.name} className="absolute inset-0 h-full w-full object-contain" />
             )}
 
+            {/* 播放器控制栏还没出现时（获取种子信息、无法播放、非视频文件…）：右上角的「资源」按钮 */}
+            {!((file?.kind === "video" || !file) && url) && (
+              <button
+                type="button"
+                onClick={openPanel}
+                className="absolute right-2 top-2 z-20 inline-flex h-8 items-center gap-1 rounded-md bg-black/55 px-2.5 text-[13px] text-white hover:bg-black/70"
+              >
+                <Layers className="h-4 w-4" />
+                资源
+              </button>
+            )}
             {/* 状态浮层 */}
             {fatal ? (
               <Overlay>
@@ -616,25 +641,19 @@ export function Player({
         )}
       </section>
 
-      {/* 侧栏 / 移动端下方：附加内容 + 标签页 */}
-      <aside className={cn("min-w-0 space-y-4 lg:space-y-5", !side && "lg:sticky lg:top-[4.5rem] lg:self-start")}>
-        {side}
-        <Card className="overflow-hidden">
-          {collapseDetails && (
-            <button
-              type="button"
-              onClick={() => setDetailsOpen((v) => !v)}
-              aria-expanded={detailsOpen}
-              className="flex h-12 w-full items-center gap-2 px-3 text-left text-sm font-semibold hover:bg-muted/60 lg:hidden"
-            >
-              <SlidersHorizontal className="h-4 w-4 text-primary-text" />
-              播放详情
-              <span className="min-w-0 flex-1 truncate text-xs font-normal text-muted-foreground">文件 · 节点 · 种子信息 · 日志</span>
-              <ChevronDown className={cn("h-4 w-4 shrink-0 text-muted-foreground transition-transform", detailsOpen && "rotate-180")} />
-            </button>
-          )}
-          <Tabs value={tab} onValueChange={setTab} className={cn(collapseDetails && !detailsOpen && "max-lg:hidden", collapseDetails && "max-lg:border-t")}>
-            <TabsList className="px-1">
+      {side && <aside className="min-w-0 space-y-4 lg:space-y-5">{side}</aside>}
+
+      {/* 「资源」弹窗（全屏时挂在全屏元素里） */}
+      <Dialog open={panelOpen} onOpenChange={setPanelOpen}>
+        <DialogContent container={fsHost} title="资源与播放详情" className="gap-3 sm:max-w-2xl">
+          <Tabs value={tab} onValueChange={setTab} className="-mx-5 -mb-5 min-h-0 min-w-0">
+            <TabsList className="overflow-x-auto px-3 scrollbar-none">
+              {panelSources && (
+                <TabsTrigger value="sources">
+                  <Layers />
+                  资源
+                </TabsTrigger>
+              )}
               <TabsTrigger value="files">
                 <ListTree />
                 文件{snap ? ` ${snap.files.length}` : ""}
@@ -652,7 +671,8 @@ export function Player({
                 日志
               </TabsTrigger>
             </TabsList>
-            <div className={cn("max-h-[60vh] overflow-y-auto", side ? "lg:max-h-[min(60vh,32rem)]" : "lg:max-h-[calc(100dvh-10rem)]")}>
+            <div className="h-[min(60dvh,32rem)] overflow-y-auto">
+              {panelSources && <TabsContent value="sources">{panelSources(() => setPanelOpen(false))}</TabsContent>}
               <TabsContent value="files">
                 {!snap ? (
                   <PanelLoading text="等待种子信息…" />
@@ -675,8 +695,8 @@ export function Player({
               </TabsContent>
             </div>
           </Tabs>
-        </Card>
-      </aside>
+        </DialogContent>
+      </Dialog>
 
       {infoHash && canReport && <ReportDialog open={reportOpen} onOpenChange={setReportOpen} infohash={infoHash} title={title} />}
     </div>

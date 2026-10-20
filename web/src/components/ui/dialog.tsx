@@ -15,10 +15,16 @@ export function DialogContent({
   children,
   title,
   description,
+  container,
   ...props
-}: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & { title: React.ReactNode; description?: React.ReactNode }) {
+}: React.ComponentPropsWithoutRef<typeof DialogPrimitive.Content> & {
+  title: React.ReactNode
+  description?: React.ReactNode
+  /** 挂载位置（默认 body）；全屏元素里弹窗时传全屏元素，否则会被挡住 */
+  container?: HTMLElement | null
+}) {
   return (
-    <DialogPrimitive.Portal>
+    <DialogPrimitive.Portal container={container ?? undefined}>
       <DialogPrimitive.Overlay className={overlay} />
       <DialogPrimitive.Content
         className={cn(

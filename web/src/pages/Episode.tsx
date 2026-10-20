@@ -168,6 +168,15 @@ function baseName(path: string) {
   return i >= 0 ? path.slice(i + 1) : path
 }
 
+function SourcesWrap({ bare, count, children }: { bare?: boolean; count: number; children: React.ReactNode }) {
+  if (bare) return <>{children}</>
+  return (
+    <SideSection id="sources-title" icon={Layers} title="资源" extra={`${count} 个`}>
+      {children}
+    </SideSection>
+  )
+}
+
 /** 资源的唯一键 */
 export const sourceKey = (f: Pick<EpisodeFile, "infohash" | "file_index">) => `${f.infohash}:${f.file_index}`
 
@@ -180,18 +189,21 @@ export function SourceList({
   extra,
   selected,
   onSelect,
+  bare,
 }: {
   ranked: Scored<EpisodeFile>[]
   extra?: EpisodeFile | null
   selected: string | null
   onSelect: (f: EpisodeFile) => void
+  /** 只渲染列表（播放器「资源」弹窗里用，没有标题卡片） */
+  bare?: boolean
 }) {
   const now = useNow()
   const items = ranked.map((r) => r.file)
   const list = extra ? [extra, ...items] : items
   return (
-    <SideSection id="sources-title" icon={Layers} title="资源" extra={`${list.length} 个`}>
-      <ul className={cn(BLEED, "divide-y border-y lg:-mx-4 lg:-mb-4 lg:border-b-0")}>
+    <SourcesWrap bare={bare} count={list.length}>
+      <ul className={cn(bare ? "divide-y" : cn(BLEED, "divide-y border-y lg:-mx-4 lg:-mb-4 lg:border-b-0"))}>
         {list.map((f, n) => {
           const i = extra ? n - 1 : n
           const pinned = !!extra && n === 0
@@ -239,7 +251,7 @@ export function SourceList({
           )
         })}
       </ul>
-    </SideSection>
+    </SourcesWrap>
   )
 }
 

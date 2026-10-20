@@ -30,6 +30,8 @@ export interface MountOptions {
   speed: number
   onLoadedMetadata: (v: HTMLVideoElement) => void
   onMediaError: (err: MediaError) => void
+  /** 控制栏「资源」按钮（倍速左边） */
+  onPanel?: () => void
 }
 
 export interface ArtHandle {
@@ -71,6 +73,18 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
       loading: `<div class="ot-loading"><span class="ot-spin">${ICON_SPIN}</span><span class="ot-loading-text"></span></div>`,
     },
     controls: [
+      ...(o.onPanel
+        ? [
+            {
+              name: "panel",
+              position: "right" as const,
+              index: 4,
+              html: "资源",
+              tooltip: "资源与播放详情",
+              click: () => o.onPanel?.(),
+            },
+          ]
+        : []),
       {
         name: "rate",
         position: "right",
