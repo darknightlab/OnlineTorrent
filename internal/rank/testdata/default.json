@@ -51,6 +51,12 @@
       "pattern": "hevc|[hx]\\.?265",
       "score": 2,
       "group": ""
+    },
+    {
+      "label": "浏览器无法播放的音频",
+      "pattern": "e-?ac-?3|\\bdd(?:p|pa|\\+)?[ ._-]?[257][ ._][01]\\b|\\bddp\\b|\\bdd\\+|\\bac-?3\\b|\\bdts\\b|true-?hd|\\batmos\\b",
+      "score": -100,
+      "group": "音频"
     }
   ],
   "teams": [],

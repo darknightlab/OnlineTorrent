@@ -1,4 +1,4 @@
-import { DEFAULT_RANK_RULES } from "./rank"
+import { DEFAULT_RANK_RULES } from "./rank.ts"
 
 /** 字幕语言：与推荐规则「字幕」组同一套匹配（简繁日可同时出现） */
 const LANG_SHORT: Record<string, string> = { 简体中文: "简体", 繁体中文: "繁体", 日文: "日文" }
@@ -6,8 +6,20 @@ const LANGS = DEFAULT_RANK_RULES.keywords
   .filter((k) => k.group === "字幕")
   .map((k) => ({ tag: LANG_SHORT[k.label] ?? k.label, re: new RegExp(k.pattern, "i") }))
 
+/** 音频编码（多音轨可有多个）：DDP / AC3 / DTS / TrueHD 在 Chrome、Firefox 里没有声音 */
+const AUDIO: [string, RegExp][] = [
+  ["AAC", /\bAAC/i],
+  ["FLAC", /\bFLAC\b/i],
+  ["Opus", /\bOpus\b/i],
+  ["DDP", /\bDD(?:PA?|\+)|\bE-?AC-?3\b/i],
+  ["AC3", /\bAC-?3\b|\bDD[ ._-]?[257][ ._][01]\b/i],
+  ["DTS", /\bDTS\b/i],
+  ["TrueHD", /\bTrue-?HD\b/i],
+]
+const AUDIO_TAGS = AUDIO.map(([t]) => t)
+
 /**
- * 从文件名 / 种子标题粗略解析 分辨率 · 字幕语言 · 来源 · 编码 · 容器（单集页资源列表与种子列表共用）。
+ * 从文件名 / 种子标题粗略解析 分辨率 · 字幕语言 · 来源 · 视频编码 · 音频编码 · 容器（单集页资源列表与种子列表共用）。
  * path：文件路径（容器取扩展名）；没有时从文本里找 .mkv / [MKV] 等。
  */
 export function releaseTags(text: string, path?: string) {
@@ -19,12 +31,13 @@ export function releaseTags(text: string, path?: string) {
   if (src) tags.push(src)
   if (/\b(HEVC|[xh]\.?265)\b/i.test(text)) tags.push("HEVC")
   else if (/\b(AVC|[xh]\.?264)\b/i.test(text)) tags.push("AVC")
+  for (const [t, re] of AUDIO) if (re.test(text)) tags.push(t)
   const ext = (path ?? "").match(/\.(mkv|mp4|webm|avi)$/i)?.[1] ?? (path ? undefined : text.match(/(?:\.|\b)(mkv|mp4)\b/i)?.[1])
   if (ext) tags.push(ext.toUpperCase())
   return tags
 }
 
-/** 标签排序：分辨率（高→低）· 字幕语言 · 来源 · 编码 · 容器 */
+/** 标签排序：分辨率（高→低）· 字幕语言 · 来源 · 视频编码 · 音频编码 · 容器 */
 const RES_ORDER = ["4K", "1080P", "720P", "480P"]
 export function releaseTagRank(tag: string) {
   const r = RES_ORDER.indexOf(tag)
@@ -32,6 +45,8 @@ export function releaseTagRank(tag: string) {
   const l = LANGS.findIndex((x) => x.tag === tag)
   if (l >= 0) return 50 + l
   if (tag === "HEVC" || tag === "AVC") return 200
+  const a = AUDIO_TAGS.indexOf(tag)
+  if (a >= 0) return 250 + a
   if (["MKV", "MP4", "WEBM", "AVI"].includes(tag)) return 300
   return 100 // 来源
 }

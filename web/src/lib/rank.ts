@@ -12,6 +12,8 @@ export const DEFAULT_RANK_RULES: RankRules = {
     { label: "1080p", pattern: String.raw`1080[pi]?\b|1920x1080`, score: 20, group: "分辨率" },
     { label: "720p", pattern: String.raw`720p\b|1280x720`, score: 10, group: "分辨率" },
     { label: "HEVC", pattern: String.raw`hevc|[hx]\.?265`, score: 2, group: "" },
+    // Dolby（AC-3 / E-AC-3 / TrueHD / Atmos）与 DTS：Chrome、Firefox 不解码（无声）
+    { label: "浏览器无法播放的音频", pattern: String.raw`e-?ac-?3|\bdd(?:p|pa|\+)?[ ._-]?[257][ ._][01]\b|\bddp\b|\bdd\+|\bac-?3\b|\bdts\b|true-?hd|\batmos\b`, score: -100, group: "音频" },
   ],
   teams: [],
   size: { from_mb: 200, from_score: 0, to_mb: 1000, to_score: -16, extend: true },

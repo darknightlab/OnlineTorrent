@@ -148,6 +148,8 @@ func Default() Rules {
 			{Label: "1080p", Pattern: `1080[pi]?\b|1920x1080`, Score: 20, Group: "分辨率"},
 			{Label: "720p", Pattern: `720p\b|1280x720`, Score: 10, Group: "分辨率"},
 			{Label: "HEVC", Pattern: `hevc|[hx]\.?265`, Score: 2},
+			// Dolby (AC-3 / E-AC-3 / TrueHD / Atmos) 与 DTS：Chrome、Firefox 不解码（无声），只有 Edge / Safari 借系统解码器能播
+			{Label: "浏览器无法播放的音频", Pattern: `e-?ac-?3|\bdd(?:p|pa|\+)?[ ._-]?[257][ ._][01]\b|\bddp\b|\bdd\+|\bac-?3\b|\bdts\b|true-?hd|\batmos\b`, Score: -100, Group: "音频"},
 		},
 		Teams: []Team{},
 		Size:  SizeRule{FromMB: 200, FromScore: 0, ToMB: 1000, ToScore: -16, Extend: true},
@@ -165,6 +167,8 @@ var legacyDefaults = []string{
 	`{"availability":{"server_complete":2,"wt_seeder":2,"wt_cap":6,"bt_seeder":1,"bt_cap":10,"curve":"log","dead":-100},"keywords":[{"label":"简体中文","pattern":"简|chs|\\bsc\\b|\\bgb\\b|zh-?hans","score":25,"group":"字幕"},{"label":"繁体中文","pattern":"繁|cht|\\btc\\b|big5|zh-?hant","score":20,"group":"字幕"},{"label":"1080p","pattern":"1080[pi]?\\b|1920x1080","score":15,"group":"分辨率"},{"label":"4K","pattern":"2160p?\\b|3840x2160|\\b4k\\b","score":8,"group":"分辨率"},{"label":"720p","pattern":"720p\\b|1280x720","score":5,"group":"分辨率"},{"label":"HEVC","pattern":"hevc|[hx]\\.?265","score":2,"group":""}],"teams":[],"size":{"max":16,"full_below_mb":200,"zero_above_mb":1000},"oversize":-10}`,
 	// v4 (2026-10, deployed with the tanh curves): server_complete +2
 	`{"availability":{"server_complete":2,"wt_seeder":20,"wt_cap":20,"wt_scale":20,"bt_seeder":10,"bt_cap":10,"bt_scale":20,"curve":"tanh","dead":-100},"keywords":[{"label":"简体中文","pattern":"简|chs|\\bsc\\b|\\bgb\\b|zh-?hans|jpsc","score":25,"group":"字幕"},{"label":"繁体中文","pattern":"繁|cht|\\btc\\b|big5|zh-?hant|jptc","score":20,"group":"字幕"},{"label":"日文","pattern":"\\bjpn?\\b|\\bjapanese\\b|日字|日文|日[语語]|[简繁中]日|ch[st][_&.-]?jp|jp[_&.-]?ch[st]","score":10,"group":"字幕"},{"label":"4K 及以上","pattern":"2160p?\\b|3840x2160|4320p?\\b|7680x4320|\\b[48]k\\b","score":30,"group":"分辨率"},{"label":"1080p","pattern":"1080[pi]?\\b|1920x1080","score":20,"group":"分辨率"},{"label":"720p","pattern":"720p\\b|1280x720","score":10,"group":"分辨率"},{"label":"HEVC","pattern":"hevc|[hx]\\.?265","score":2,"group":""}],"teams":[],"size":{"from_mb":200,"from_score":0,"to_mb":1000,"to_score":-16,"extend":true}}`,
+	// v5 (2026-10): server_complete removed
+	`{"availability":{"wt_seeder":20,"wt_cap":20,"wt_scale":20,"bt_seeder":10,"bt_cap":10,"bt_scale":20,"curve":"tanh","dead":-100},"keywords":[{"label":"简体中文","pattern":"简|chs|\\bsc\\b|\\bgb\\b|zh-?hans|jpsc","score":25,"group":"字幕"},{"label":"繁体中文","pattern":"繁|cht|\\btc\\b|big5|zh-?hant|jptc","score":20,"group":"字幕"},{"label":"日文","pattern":"\\bjpn?\\b|\\bjapanese\\b|日字|日文|日[语語]|[简繁中]日|ch[st][_&.-]?jp|jp[_&.-]?ch[st]","score":10,"group":"字幕"},{"label":"4K 及以上","pattern":"2160p?\\b|3840x2160|4320p?\\b|7680x4320|\\b[48]k\\b","score":30,"group":"分辨率"},{"label":"1080p","pattern":"1080[pi]?\\b|1920x1080","score":20,"group":"分辨率"},{"label":"720p","pattern":"720p\\b|1280x720","score":10,"group":"分辨率"},{"label":"HEVC","pattern":"hevc|[hx]\\.?265","score":2,"group":""}],"teams":[],"size":{"from_mb":200,"from_score":0,"to_mb":1000,"to_score":-16,"extend":true}}`,
 }
 
 // IsLegacyDefault reports whether raw equals (as JSON) an earlier built-in default.

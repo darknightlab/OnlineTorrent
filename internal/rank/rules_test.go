@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -15,7 +16,7 @@ func TestDefaultValid(t *testing.T) {
 	}
 	a := r.Availability
 	if a.ServerComplete != nil || a.BTSeeder != 10 || a.BTScale != 20 || a.WTSeeder != 20 || a.WTScale != 20 || a.Dead != -100 || a.Curve != CurveTanh ||
-		len(r.Keywords) != 7 || r.Oversize != nil || r.Size != (SizeRule{FromMB: 200, ToMB: 1000, ToScore: -16, Extend: true}) {
+		len(r.Keywords) != 8 || r.Oversize != nil || r.Size != (SizeRule{FromMB: 200, ToMB: 1000, ToScore: -16, Extend: true}) {
 		t.Fatalf("%+v", r)
 	}
 	// the dead penalty stays decisive: more than every bonus together (size only subtracts)
@@ -156,5 +157,41 @@ func TestParseValidation(t *testing.T) {
 	r, err = Parse([]byte(`{"availability":{"server_complete":1},"oversize":-1}`))
 	if err != nil || r.Keywords == nil || r.Teams == nil {
 		t.Fatalf("nil lists: %+v %v", r, err)
+	}
+}
+
+// The audio rule hits Dolby / DTS releases (silent in Chrome / Firefox) and nothing else.
+func TestDefaultAudioRule(t *testing.T) {
+	var re *regexp.Regexp
+	for _, k := range Default().Keywords {
+		if k.Group == "音频" {
+			re = regexp.MustCompile("(?i)" + k.Pattern)
+			if k.Score != -100 {
+				t.Fatalf("score %v", k.Score)
+			}
+		}
+	}
+	if re == nil {
+		t.Fatal("no audio rule")
+	}
+	for _, s := range []string{
+		"Cyberpunk Edgerunners S02 MULTi AD 1080p NF WEB-DL DDP5.1 H.265-Tsundere-Raws",
+		"Show.S01E01.1080p.NF.WEB-DL.DDP5.1.Atmos.H.264-VARYG",
+		"X.2160p.BluRay.TrueHD.7.1.Atmos", "X 1080p BluRay DTS-HD MA 5.1", "X.1080p.WEB-DL.DD5.1.H264",
+		"X [BDRip 1080p x265 AC3]", "X 1080p EAC3", "X.DDP2.0.x264", "X DD+ 5.1", "X.E-AC-3.1080p", "X.DDPA5.1.H.265",
+	} {
+		if !re.MatchString(s) {
+			t.Errorf("miss %q", s)
+		}
+	}
+	for _, s := range []string{
+		"[LoliHouse] Frieren - 03 [WebRip 1080p HEVC-10bit AAC ASSx2]",
+		"[ANi] 魔法少女育成計畫 restart - 03 [1080P][Baha][WEB-DL][AAC AVC][CHT].mp4",
+		"X.1080p.WEB-DL.AAC2.0.H.264", "X [BDRip 1080p HEVC FLAC]", "Odds and Ends 01", "X.Opus.x265",
+		"addams family 2.0", "Studio DTSx", "[DDD] Show 01", "dd 2 01",
+	} {
+		if re.MatchString(s) {
+			t.Errorf("false hit %q", s)
+		}
 	}
 }
