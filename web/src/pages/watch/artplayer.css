@@ -8,7 +8,8 @@
   --art-progress-height: 6px;
   --art-progress-color: rgb(255 255 255 / 0.2);
   --art-hover-color: rgb(255 255 255 / 0.15);
-  --art-loaded-color: rgb(255 255 255 / 0.2);
+  /* 不显示浏览器的「已缓冲」：它总在已下载（蓝）的范围内，叠上去会把蓝色冲淡成「部分下载」的淡蓝 */
+  --art-loaded-color: transparent;
   --art-indicator-size: 14px;
   --art-state-size: 64px;
   --art-state-opacity: 1;
@@ -26,7 +27,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 已缓冲条（浏览器 buffered）叠在 piece 图层之上，较淡 */
+/* piece 图层：已下载 / 部分下载（浏览器的「已缓冲」不显示，见 --art-loaded-color） */
 .art-video-player .art-control-progress-inner .ot-progress-pieces {
   position: absolute;
   inset: 0;
