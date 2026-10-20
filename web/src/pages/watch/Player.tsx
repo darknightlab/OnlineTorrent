@@ -420,6 +420,10 @@ export function Player({
   )
   const compactStats = (
     <div className="flex min-w-0 flex-wrap items-center gap-x-3.5 gap-y-1 text-[13px] tabular-nums text-muted-foreground">
+      <span className="inline-flex items-center gap-1">
+        <Users className="h-3.5 w-3.5" />
+        {snap?.numPeers ?? 0}
+      </span>
       <span className="inline-flex items-center gap-0.5" title={`已下载 ${formatBytes(snap?.downloaded ?? 0)}`}>
         <ArrowDown className="h-3.5 w-3.5 text-primary-text" />
         {formatSpeed(snap?.downloadSpeed ?? 0)}
@@ -427,10 +431,6 @@ export function Player({
       <span className="inline-flex items-center gap-0.5" title={`已上传 ${formatBytes(snap?.uploaded ?? 0)}`}>
         <ArrowUp className="h-3.5 w-3.5 text-accent-text" />
         {formatSpeed(snap?.uploadSpeed ?? 0)}
-      </span>
-      <span className="inline-flex items-center gap-1" title={`${snap?.numPeers ?? 0} 个节点${snap?.peers.some((p) => p.type === "webSeed") ? "（含 WebSeed）" : ""}`}>
-        <Users className="h-3.5 w-3.5" />
-        {snap?.numPeers ?? 0}
       </span>
       {direct && <Badge variant="warning">直连模式</Badge>}
       {seededBy.length ? (
