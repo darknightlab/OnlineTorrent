@@ -233,7 +233,7 @@ export function Player({
         try {
           const r = await api.seed(ih)
           if (cancelled) return
-          if (r.seeded_by?.length) log("info", "已请求服务器做种")
+          if (r.seeded) log("info", "已请求服务器做种")
           else log("warn", "服务器暂无可用的做种节点，仅使用 P2P 网络")
         } catch (e) {
           if (!cancelled) log("warn", `服务器做种未启用：${errorMessage(e)}`)

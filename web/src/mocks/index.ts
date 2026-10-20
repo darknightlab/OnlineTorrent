@@ -263,7 +263,7 @@ const MOCK_RESOLVE = new URLSearchParams(location.search).get("mock_resolve") ||
 const resolved = new Map<string, string>()
 
 function pendingPlay(ih: string): PlayResponse {
-  return { status: "pending", access: { action: "pending", reason: "" }, infohash: ih, name: "", magnet: "", seeded_by: [], webseeds: [], meta: null }
+  return { status: "pending", access: { action: "pending", reason: "" }, infohash: ih, name: "", magnet: "", webseeds: [], meta: null }
 }
 
 function resolvedPlay(ih: string): PlayResponse | null {
@@ -273,7 +273,7 @@ function resolvedPlay(ih: string): PlayResponse | null {
   if (r === "redirect") {
     const a = subjects[0]
     return {
-      status: "ready", access: { action: "allow", reason: "" }, infohash: ih, name: "[Mock] 新种子 - 01", magnet: `magnet:?xt=urn:btih:${ih}`, seeded_by: [], webseeds: [],
+      status: "ready", access: { action: "allow", reason: "" }, infohash: ih, name: "[Mock] 新种子 - 01", magnet: `magnet:?xt=urn:btih:${ih}`, webseeds: [],
       meta: { subject_id: a.subject_id, subject_key: a.key, bgm_id: a.bgm_id, title: a.title_cn || a.title, episode: 1, episode_key: "1", episode_label: "第 1 话", file_index: 0 },
     }
   }
@@ -302,7 +302,6 @@ function playOf(t: Torrent | undefined, ih: string): PlayResponse {
     infohash: ih,
     name,
     magnet: `magnet:?xt=urn:btih:${ih}&dn=${encodeURIComponent(name)}&tr=${encodeURIComponent("wss://tracker.projectk.org")}`,
-    seeded_by: [],
     webseeds: [],
     meta:
       a && k
@@ -521,7 +520,7 @@ const routes: [string, string, Handler][] = [
     if (t?.access.action === "block") throw new HttpError(451, "blocked", t.access.reason || "该资源已被屏蔽")
     if (t && t.size_bytes > fx.site.max_auto_size_bytes) throw new HttpError(413, "too_large", `该种子过大（超过 ${fx.site.max_auto_size_bytes >> 20} MB），服务器不参与做种`)
     if (!seededAt.has(params.ih.toLowerCase())) seededAt.set(params.ih.toLowerCase(), Date.now())
-    return { seeded_by: ["ams"] }
+    return { seeded: true }
   }],
   ["POST", "/torrents/hash/:ih/report", () => (requirePerm("POST /api/v1/torrents/hash/{ih}/report"), {})],
 

@@ -309,15 +309,14 @@ export interface PlayResponse {
   infohash: string
   name: string
   magnet: string
-  /** 恒为 []：服务器做种改由 POST /torrents/hash/{ih}/seed 单独请求 */
-  seeded_by: string[]
   /** 恒为 []：WebSeed（边缘节点）地址就绪后由 SSE 推送 */
   webseeds: string[]
   meta: PlayMeta | null
 }
 
 export interface SeedResponse {
-  seeded_by: string[]
+  /** 至少一台服务器接受了做种（不透露是哪台） */
+  seeded: boolean
 }
 
 

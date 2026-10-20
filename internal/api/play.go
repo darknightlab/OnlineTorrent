@@ -54,10 +54,8 @@ type playResp struct {
 	Infohash string        `json:"infohash"`
 	Name     string        `json:"name"`
 	Magnet   string        `json:"magnet"`
-	// kept for compatibility: /play no longer pushes; see POST /torrents/{ih}/seed
-	SeededBy []string  `json:"seeded_by"`
-	Webseeds []string  `json:"webseeds"`
-	Meta     *playMeta `json:"meta"`
+	Webseeds []string      `json:"webseeds"` // always empty (edge WebSeeds arrive over SSE)
+	Meta     *playMeta     `json:"meta"`
 }
 
 func denyError(d policy.Decision, u *store.User) error {
@@ -155,7 +153,7 @@ func (s *Server) play(w http.ResponseWriter, r *http.Request, in playReq) error 
 
 	resp := playResp{
 		Status: "ready", Access: d.Access(), Infohash: t.Infohash, Name: t.Title,
-		Magnet: magnet.Build(t.Infohash, t.Title, s.St.List(store.KeyTrackers)), SeededBy: []string{}, Webseeds: []string{},
+		Magnet: magnet.Build(t.Infohash, t.Title, s.St.List(store.KeyTrackers)), Webseeds: []string{},
 	}
 	// metadata over HTTP (BEP 9 xs=): webtorrent fetches it at start (same origin, with the
 	// login cookie), so the file list shows up even when no WebRTC peer is reachable
@@ -355,6 +353,7 @@ func (s *Server) seed(w http.ResponseWriter, r *http.Request) error {
 			s.startPostCheck(rec.Infohash, uid(u))
 		}
 	}
-	httpx.JSON(w, 200, map[string]any{"seeded_by": push.SeededBy})
+	// which servers took it is never revealed (admins see it in the play log)
+	httpx.JSON(w, 200, map[string]any{"seeded": len(push.SeededBy) > 0})
 	return nil
 }

@@ -205,7 +205,7 @@ Torrent：
 { "status": "ready",                           // ready | pending（见上）
   "access": {"action":"allow","reason":""},
   "infohash": "...", "name": "...", "magnet": "magnet:?xt=...&tr=wss://...",
-  "seeded_by": [], "webseeds": [] ,           // 恒为空，保留字段兼容
+  "webseeds": [],                              // 恒为空，保留字段兼容
   "meta": { "subject_id": 1034, "subject_key": "bgm:123", "bgm_id": "123", "title": "…",
             "episode": 2,                      // 仅正片，特别篇为 null
             "episode_key": "2", "episode_label": "第 2 话",   // 特别篇如 "ncop1" / "NCOP1"
@@ -223,8 +223,8 @@ Torrent：
 - `timeout {}`：60 秒内没拿到元数据（队列继续尝试；前端「暂时无法获取种子信息」+ 重试，重试会重新 POST play）。没有 P2P 回退。
 - 用户提交的种子获取元数据后会被复查；此外后台每 10 分钟用 qB 中的真实名称与文件列表复查本站分类下所有种子，命中屏蔽规则或超过大小上限的会被移除。
 
-### `POST /torrents/hash/{ih}/seed` → `{"seeded_by": ["ams"]}`
-让所有在线 qB 下载并做种（消耗服务器带宽 / 磁盘）。推给 qB 的 tracker 由本站管理（不依赖 qB 的「自动添加 tracker」）：`webtorrent.trackers` + `bt.trackers` + 种子自带的 announce 列表（本地存的 .torrent），去重后最多 30 个；磁力带上全部，`torrents/add` 之后再 `torrents/addTrackers` 一次（qB 跳过已有的，所以已在 qB 里的种子也会补上缺少的 tracker）。wss 只有在该 qB 开启 `add_wss_trackers` 时才经 addTrackers 添加（qB 会过滤磁力里的 wss）。抓取源的 qB 元数据队列同样使用 Feed 磁力的 tracker + 以上列表。默认仅会员及以上。种子须先经 play 打开过（且元数据已知）；会对当前用户重新做策略 + 内容范围判定。超过 `play.max_push_size_mb` 返回 413 `too_large`。
+### `POST /torrents/hash/{ih}/seed` → `{"seeded": true}`
+让所有在线 qB 下载并做种（消耗服务器带宽 / 磁盘）。推给 qB 的 tracker 由本站管理（不依赖 qB 的「自动添加 tracker」）：`webtorrent.trackers` + `bt.trackers` + 种子自带的 announce 列表（本地存的 .torrent），去重后最多 30 个；磁力带上全部，`torrents/add` 之后再 `torrents/addTrackers` 一次（qB 跳过已有的，所以已在 qB 里的种子也会补上缺少的 tracker）。wss 只有在该 qB 开启 `add_wss_trackers` 时才经 addTrackers 添加（qB 会过滤磁力里的 wss）。抓取源的 qB 元数据队列同样使用 Feed 磁力的 tracker + 以上列表。默认仅会员及以上。种子须先经 play 打开过（且元数据已知）；会对当前用户重新做策略 + 内容范围判定。超过 `play.max_push_size_mb` 返回 413 `too_large`。`seeded` 为至少一台服务器接受了做种；不返回是哪几台（管理员在后台「播放记录」里可见）。
 qB 拿到元数据后，后端把文件列表写入本地库并刮削（每个 infohash 一次）；期间 `GET /torrents/hash/{ih}` 返回 `pending`，完成后 `ready`。若该种子正好在抓取源的元数据队列里（qB 分类 `projectk-meta`），会被转入做种分类并开始下载，不会被队列删除。
 
 ### `GET /torrents/hash/{ih}/torrent` → `application/x-bittorrent`

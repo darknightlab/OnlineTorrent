@@ -115,7 +115,7 @@ func (s *Server) playPending(w http.ResponseWriter, r *http.Request, ih string) 
 			return err
 		}
 	}
-	httpx.JSON(w, 200, playResp{Status: "pending", Access: policy.Access{Action: "pending"}, Infohash: ih, SeededBy: []string{}, Webseeds: []string{}})
+	httpx.JSON(w, 200, playResp{Status: "pending", Access: policy.Access{Action: "pending"}, Infohash: ih, Webseeds: []string{}})
 	return nil
 }
 
