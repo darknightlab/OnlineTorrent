@@ -238,12 +238,24 @@ func (p *Pool) CheckAll(ctx context.Context) {
 }
 
 // Remove deletes a torrent (with files) from every server.
+// Remove deletes ih from every online server, but only where it is in one of our own
+// categories (seeding / metadata): torrents the qB owner added under other categories are
+// never deleted by otd.
 func (p *Pool) Remove(ctx context.Context, ih string) {
 	for _, s := range p.Servers() {
-		if s.Status().Online {
-			if err := s.Client.Delete(ctx, []string{ih}); err != nil {
-				p.log.Warn("delete failed", "server", s.Cfg.Name, "err", err)
-			}
+		if !s.Status().Online {
+			continue
+		}
+		ts, err := s.Client.Info(ctx, "", ih)
+		if err != nil || len(ts) == 0 {
+			continue
+		}
+		if c := ts[0].Category; c != s.Cfg.Category && c != s.MetaCategory() {
+			p.log.Info("not removing: not in our category", "server", s.Cfg.Name, "hash", ih, "category", c)
+			continue
+		}
+		if err := s.Client.Delete(ctx, []string{ih}); err != nil {
+			p.log.Warn("delete failed", "server", s.Cfg.Name, "err", err)
 		}
 	}
 }

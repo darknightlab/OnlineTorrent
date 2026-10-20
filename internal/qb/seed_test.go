@@ -363,3 +363,28 @@ func TestMatchFile(t *testing.T) {
 		t.Fatal("unknown file matched")
 	}
 }
+
+// Remove (policy block / review block / oversize) deletes only torrents in our own
+// categories; the qB owner's torrents under other categories are left alone.
+func TestRemoveOnlyOurCategories(t *testing.T) {
+	f := newFake(t)
+	p, _ := testPool(t, f)
+	ours, meta, owner := strings.Repeat("b1", 20), strings.Repeat("b2", 20), strings.Repeat("b3", 20)
+	f.mu.Lock()
+	for _, x := range []struct{ h, cat string }{{ours, "projectk"}, {meta, "projectk-meta"}, {owner, "动画/手动"}} {
+		f.t[x.h] = &fakeT{id: x.h, v1: x.h, category: x.cat, tags: map[string]bool{}, hasMeta: true, files: fakeFiles, prio: []int{1, 1, 1}}
+	}
+	f.mu.Unlock()
+	ctx := context.Background()
+	for _, h := range []string{ours, meta, owner} {
+		p.Remove(ctx, h)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.t[ours] != nil || f.t[meta] != nil {
+		t.Fatal("our torrents not removed")
+	}
+	if f.t[owner] == nil {
+		t.Fatal("owner's torrent was removed")
+	}
+}
