@@ -4,6 +4,7 @@ import type {
   AdminUser,
   AdminUserUpdate,
   AuditEntry,
+  BangumiDataStatus,
   BgmArchiveStatus,
   InviteCode,
   InviteCreate,
@@ -244,6 +245,8 @@ export const api = {
     metadataJobs: () => get<{ items: MetadataJob[] }>("/admin/metadata-jobs"),
     bgmArchive: () => get<BgmArchiveStatus>("/admin/bgm-archive"),
     runBgmArchive: () => post<BgmArchiveStatus>("/admin/bgm-archive/run"),
+    bangumiData: () => get<BangumiDataStatus>("/admin/bangumi-data"),
+    runBangumiData: () => post<BangumiDataStatus>("/admin/bangumi-data/run"),
 
     trackers: () => get<TrackersResponse>("/admin/trackers"),
     rankRules: () => get<RankRulesResponse>("/admin/rank-rules"),

@@ -42,6 +42,8 @@ func (s *Server) adminRoutes(mux *http.ServeMux) {
 	adm("GET", "/api/v1/admin/metadata-jobs", "元数据队列 · 查看", s.adminListMetadataJobs)
 	adm("GET", "/api/v1/admin/bgm-archive", "bangumi 数据同步 · 查看", s.adminArchiveStatus)
 	adm("POST", "/api/v1/admin/bgm-archive/run", "bangumi 数据同步 · 立即同步", s.adminArchiveRun)
+	adm("GET", "/api/v1/admin/bangumi-data", "bangumi-data 同步 · 查看", s.adminBangumiDataStatus)
+	adm("POST", "/api/v1/admin/bangumi-data/run", "bangumi-data 同步 · 立即同步", s.adminBangumiDataRun)
 	adm("GET", "/api/v1/admin/users", "用户 · 查看", s.adminListUsers)
 	adm("PUT", "/api/v1/admin/users/id/{id}", "用户 · 修改", s.adminUpdateUser)
 	adm("GET", "/api/v1/admin/invites", "邀请码 · 查看", s.adminListInvites)

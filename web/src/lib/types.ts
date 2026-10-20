@@ -616,6 +616,19 @@ export interface MetadataJob {
 }
 
 /** GET /admin/bgm-archive：bangumi Archive（bgm.tv 官方每周数据导出）同步状态 */
+/** GET /admin/bangumi-data：bangumi-data 同步状态（每 12 小时一次，服务启动时也同步） */
+export interface BangumiDataStatus {
+  url: string
+  running: boolean
+  synced_at: string | null
+  /** 上次成功同步导入的番剧数 */
+  works: number
+  duration_sec: number
+  error?: string
+  error_at?: string | null
+  next_at: string | null
+}
+
 export interface BgmArchiveStatus {
   /** 当前已导入的导出文件名 */
   dump: string

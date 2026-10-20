@@ -25,3 +25,22 @@ func (s *Server) adminArchiveRun(w http.ResponseWriter, r *http.Request) error {
 	httpx.JSON(w, 202, st)
 	return nil
 }
+
+// GET /api/v1/admin/bangumi-data — bangumi-data sync status
+func (s *Server) adminBangumiDataStatus(w http.ResponseWriter, r *http.Request) error {
+	httpx.JSON(w, 200, s.Cat.BangumiDataState())
+	return nil
+}
+
+// POST /api/v1/admin/bangumi-data/run — sync now; 202 with the live status, 409 if running.
+func (s *Server) adminBangumiDataRun(w http.ResponseWriter, r *http.Request) error {
+	if s.Cat.BangumiDataState().Running {
+		return httpx.E(409, "busy", "bangumi-data 正在同步")
+	}
+	go s.Cat.SyncBangumiData(s.BaseCtx)
+	s.audit(r, "bangumi_data.run", "", "")
+	st := s.Cat.BangumiDataState()
+	st.Running = true
+	httpx.JSON(w, 202, st)
+	return nil
+}

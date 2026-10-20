@@ -80,7 +80,7 @@ func TestSwarmInListingsAndSiteRules(t *testing.T) {
 		} `json:"rank_rules"`
 	}
 	getJSON(t, h, "/api/v1/site", &site)
-	if site.RankRules.Availability.Dead != -100 || len(site.RankRules.Keywords) != 7 {
+	if site.RankRules.Availability.Dead != -100 || len(site.RankRules.Keywords) != 8 {
 		t.Fatalf("site rank_rules %+v", site.RankRules)
 	}
 }

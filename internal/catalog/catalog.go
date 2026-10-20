@@ -142,6 +142,8 @@ type Catalog struct {
 	sched     *Schedule
 	rebuildMu sync.Mutex
 
+	bd bdState // bangumi-data sync status (admin)
+
 	coversMu sync.RWMutex
 	covers   map[string]string // moe tag id -> cover URL
 
@@ -398,15 +400,17 @@ func FromCatalogList(rs []*meta.CatalogTorrent) []*Torrent {
 func (c *Catalog) Run(ctx context.Context) {
 	c.wg.Go(func() { c.archiveLoop(ctx) })
 	c.wg.Go(func() {
-		c.refreshBangumiData(ctx)
-		t := time.NewTicker(12 * time.Hour)
+		c.setBangumiDataNext(time.Now().Add(bangumiDataEvery))
+		c.SyncBangumiData(ctx)
+		t := time.NewTicker(bangumiDataEvery)
 		defer t.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-t.C:
-				c.refreshBangumiData(ctx)
+			case now := <-t.C:
+				c.setBangumiDataNext(now.Add(bangumiDataEvery))
+				c.SyncBangumiData(ctx)
 			}
 		}
 	})
@@ -435,12 +439,22 @@ func (c *Catalog) Run(ctx context.Context) {
 // Wait blocks until the background jobs started by Run have exited.
 func (c *Catalog) Wait() { c.wg.Wait() }
 
+// refreshBangumiData imports bangumi-data (call through SyncBangumiData, which sets Running).
 func (c *Catalog) refreshBangumiData(ctx context.Context) {
+	start := time.Now()
 	cctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
 	defer cancel()
 	hc := c.HTTPClient()
 	hc.Timeout = 3 * time.Minute
 	n, err := c.meta.ImportBangumiData(cctx, hc, c.st.Str(store.KeyBangumiDataURL), 3)
+	c.bd.mu.Lock()
+	c.bd.st.Running = false
+	if err != nil {
+		c.bd.st.Error, c.bd.st.ErrorAt = err.Error(), ts(time.Now())
+	} else {
+		c.bd.st.SyncedAt, c.bd.st.Works, c.bd.st.DurationSec = ts(time.Now()), n, time.Since(start).Seconds()
+	}
+	c.bd.mu.Unlock()
 	if err != nil {
 		c.log.Warn("bangumi-data import failed", "err", err)
 		return
