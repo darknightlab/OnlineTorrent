@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/darknightlab/onlinetorrent/internal/store"
@@ -1028,49 +1029,77 @@ func (s *Store) QueueAnomalies(ctx context.Context, list []AnomalousTorrent) (in
 
 // reSeasonWords: season / part markers removed before comparing names (the season itself is
 // checked separately, SeasonFits).
-var reSeasonWords = regexp.MustCompile(`(?i)\b(?:S\d{1,2}|season\s*\d{1,2}|\d{1,2}(?:st|nd|rd|th)\s*season|part\s*\d|cour\s*\d|II|III|IV)\b|第\s*[0-9一二三四五六七八九十]+\s*(?:季|期|部|クール)|[（(][^)）]{0,20}[)）]`)
+var reSeasonWords = regexp.MustCompile(`(?i)\b(?:S\d{1,2}|season\s*\d{1,2}|\d{1,2}(?:st|nd|rd|th)\s*season|part\s*\d|cour\s*\d|II|III|IV)\b|第\s*[0-9一二三四五六七八九十壱弐参]+\s*(?:季|期|部|クール|幕)|(?:^|[^a-z])dai[\s_.~-]*(?:ichi|ni|san|yon|shi|go)[\s_.~-]*maku|[（(][^)）]{0,20}[)）]`)
 
 func seasonless(s string) string { return normName(reSeasonWords.ReplaceAllString(normWidth(s), " ")) }
 
 // NameEvidence reports whether the torrent title / file paths literally carry a name of the
-// work: one of its titles or aliases occurs in the text, or a title fragment of the text
-// occurs in one of its names — compared after normName and without season / part markers
-// (≥ 3 runes with CJK, ≥ 5 otherwise). A decision without such evidence (the model inferred
-// the work from something else) is not applied automatically.
+// work: one of its names occurs in the text, or a title fragment of the text occurs in one
+// of its names — compared after normName and without season / part markers (≥ 3 runes
+// with CJK, ≥ 5 otherwise). A decision without such evidence (the model inferred the work
+// from something else) is not applied automatically. The work's names are its titles and
+// aliases plus (WorkNames):
+//
+//   - the names of its direct prequels / sequels (a franchise name: 夜桜 第2期第2クール has
+//     no romanised alias of its own, its prequel "Yozakura-san Chi no Daisakusen Season 2"
+//     does). Which entry of the franchise it is stays the job of the episode list, season
+//     and date checks;
+//   - an English / romanised name derived from related works titled "<its title> <subtitle>"
+//     whose aliases read "<name>: <subtitle>" (名探偵コナン → "Detective Conan", from the
+//     movies), when at least two such works agree.
+//
+// A name of only two CJK characters (遮天) counts when a whole bracketed part of the text
+// equals it ("[遮天]").
 func (s *Store) NameEvidence(ctx context.Context, workKey string, texts []string) bool {
-	w, err := s.GetWork(ctx, workKey)
-	if err != nil {
+	names := s.WorkNames(ctx, workKey)
+	if len(names) == 0 {
 		return false
 	}
 	long := func(n string) bool {
 		c := utf8.RuneCountInString(n)
 		return c >= 5 || (c >= 3 && hasNonASCII(n))
 	}
-	var names []string
-	for _, n := range append([]string{w.Title, w.TitleCN}, w.Aliases...) {
+	short := func(n string) bool { return utf8.RuneCountInString(n) == 2 && cjkOnly(n) }
+	var keep, shorts []string
+	seen := map[string]bool{}
+	for _, n := range names {
 		for _, v := range []string{normName(n), seasonless(n)} {
+			if seen[v] {
+				continue
+			}
+			seen[v] = true
 			if long(v) {
-				names = append(names, v)
+				keep = append(keep, v)
+			} else if short(v) {
+				shorts = append(shorts, v)
 			}
 		}
 	}
 	var all strings.Builder
 	var frags []string
+	brackets := map[string]bool{}
 	for _, t := range texts {
 		all.WriteString(normName(t))
 		all.WriteByte('|')
 		all.WriteString(seasonless(t))
 		all.WriteByte('|')
-		for _, f := range titleFragments(stem(t)) {
-			for _, v := range []string{normName(f), seasonless(f)} {
-				if long(v) {
-					frags = append(frags, v)
+		// fragments of the last path part, and of the whole text: a torrent title
+		// "[G] 牧神记 / Tales of Herding Gods - 105" is not a path ("/" separates titles)
+		for _, src := range []string{stem(t), t} {
+			for _, f := range titleFragments(src) {
+				for _, v := range []string{normName(f), seasonless(f)} {
+					if long(v) {
+						frags = append(frags, v)
+					}
 				}
 			}
 		}
+		for _, m := range reBracketPart.FindAllStringSubmatch(normWidth(t), -1) {
+			brackets[normName(m[1])] = true
+		}
 	}
 	text := all.String()
-	for _, n := range names {
+	for _, n := range keep {
 		if strings.Contains(text, n) {
 			return true
 		}
@@ -1080,7 +1109,94 @@ func (s *Store) NameEvidence(ctx context.Context, workKey string, texts []string
 			}
 		}
 	}
+	for _, n := range shorts {
+		if brackets[n] {
+			return true
+		}
+	}
 	return false
+}
+
+// reBracketPart: the content of one bracket pair.
+var reBracketPart = regexp.MustCompile(`[\[【〔「『(（]([^\]】〕」』)）\[【]{1,40})[\]】〕」』)）]`)
+
+func cjkOnly(s string) bool {
+	for _, r := range s {
+		if !unicode.Is(unicode.Han, r) && !unicode.Is(unicode.Hiragana, r) && !unicode.Is(unicode.Katakana, r) {
+			return false
+		}
+	}
+	return s != ""
+}
+
+// directFamily: bgm relation types of a direct prequel (前传 2) / sequel (续集 3).
+var directFamily = map[int]bool{2: true, 3: true}
+
+// WorkNames are the names that count as naming the work (NameEvidence): its titles and
+// aliases, those of its direct prequels / sequels, and English / romanised names derived
+// from related works (see NameEvidence).
+func (s *Store) WorkNames(ctx context.Context, workKey string) []string {
+	w, err := s.GetWork(ctx, workKey)
+	if err != nil {
+		return nil
+	}
+	names := append([]string{w.Title, w.TitleCN}, w.Aliases...)
+	id := bgmIDOf(w)
+	if id == 0 {
+		return names
+	}
+	for _, rid := range s.relatedBgm(ctx, id, directFamily, 1, 12) {
+		if rw, err := s.WorkByExternal(ctx, "bgm", strconv.FormatInt(rid, 10)); err == nil {
+			names = append(names, rw.Title, rw.TitleCN)
+			names = append(names, rw.Aliases...)
+		}
+	}
+	return append(names, s.derivedNames(ctx, w, id)...)
+}
+
+// derivedNames: related works (any family relation, one step) whose Japanese title is the
+// work's title followed by a subtitle and that have a Latin alias "<name>: <subtitle>" or
+// "<name> - <subtitle>" give <name>; a name needs two such works.
+func (s *Store) derivedNames(ctx context.Context, w *Work, id int64) []string {
+	base := normName(w.Title)
+	if utf8.RuneCountInString(base) < 2 {
+		return nil
+	}
+	votes := map[string]int{}
+	shown := map[string]string{}
+	for _, rid := range s.relatedBgm(ctx, id, familyRelations, 1, 200) {
+		rw, err := s.WorkByExternal(ctx, "bgm", strconv.FormatInt(rid, 10))
+		if err != nil || !strings.HasPrefix(normName(rw.Title), base) || normName(rw.Title) == base {
+			continue
+		}
+		mine := map[string]bool{}
+		for _, a := range rw.Aliases {
+			if hasNonASCII(a) {
+				continue
+			}
+			i := strings.IndexAny(a, ":：")
+			if j := strings.Index(a, " - "); i < 0 || (j > 0 && j < i) {
+				i = j
+			}
+			if i <= 0 {
+				continue
+			}
+			p := strings.TrimSpace(a[:i])
+			if n := normName(p); len(n) >= 5 && !mine[n] {
+				mine[n] = true
+				votes[n]++
+				shown[n] = p
+			}
+		}
+	}
+	var out []string
+	for n, v := range votes {
+		if v >= 2 {
+			out = append(out, shown[n])
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // SearchOnlyCandidates is candidate retrieval without the rules' anchor and hints (search +
@@ -1115,13 +1231,30 @@ const (
 	DateLateDays  = 30
 )
 
+// DateCheck is the outcome of the date gate. Late: the release is too long after the
+// episode / the work (a re-release such as a BD batch); otherwise a failure means too early
+// (the episode can't have aired yet).
+type DateCheck struct {
+	OK     bool
+	Late   bool
+	Detail string // why (Chinese, for the admin)
+}
+
 // CheckDate compares a release time with the airdate of the (canonical) episode, else with
 // the work's airing window (start − 7 d … end + 30 d; open-ended without an end date).
-// ok=false: the decision goes to human review; detail says why (Chinese, for the admin).
-// Unknown dates pass.
+// ok=false: the decision goes to human review; detail says why. Unknown dates pass.
 func (s *Store) CheckDate(ctx context.Context, workKey string, k EpisodeKey, released time.Time, releasedBy string) (bool, string) {
+	c := s.CheckDateFull(ctx, workKey, k, released, releasedBy)
+	return c.OK, c.Detail
+}
+
+// CheckDateFull is CheckDate with the direction of a failure. A main episode without an
+// airdate counts as not aired yet when an earlier main episode of the work airs more than
+// 7 days after the release (bangumi lists future episodes before their dates are known:
+// "S2 [14]" released after S2's 2nd broadcast is not episode 14).
+func (s *Store) CheckDateFull(ctx context.Context, workKey string, k EpisodeKey, released time.Time, releasedBy string) DateCheck {
 	if released.IsZero() {
-		return true, ""
+		return DateCheck{OK: true}
 	}
 	by := "发布时间"
 	if releasedBy == "submitted" {
@@ -1134,25 +1267,36 @@ func (s *Store) CheckDate(ctx context.Context, workKey string, k EpisodeKey, rel
 		if err == nil {
 			switch {
 			case released.Before(air.Add(-early)):
-				return false, fmt.Sprintf("%s %s 早于本集播出 %s 超过 %d 天", by, rel, d, DateEarlyDays)
+				return DateCheck{Detail: fmt.Sprintf("%s %s 早于本集播出 %s 超过 %d 天", by, rel, d, DateEarlyDays)}
 			case released.After(air.Add(24*time.Hour + late)):
-				return false, fmt.Sprintf("%s %s 晚于本集播出 %s 超过 %d 天", by, rel, d, DateLateDays)
+				return DateCheck{Late: true, Detail: fmt.Sprintf("%s %s 晚于本集播出 %s 超过 %d 天", by, rel, d, DateLateDays)}
 			}
-			return true, ""
+			return DateCheck{OK: true}
+		}
+	}
+	if k.Kind == KeyMain {
+		var sort sql.NullFloat64
+		var d sql.NullString
+		_ = s.R.QueryRowContext(ctx, `SELECT sort, airdate FROM episodes WHERE work_key = ? AND type = 0 AND sort < ? AND airdate != ''
+			ORDER BY airdate DESC LIMIT 1`, workKey, k.Number).Scan(&sort, &d)
+		if d.Valid {
+			if air, err := time.ParseInLocation("2006-01-02", d.String, jst); err == nil && released.Before(air.Add(-early)) {
+				return DateCheck{Detail: fmt.Sprintf("%s %s 时本集尚未播出（本集无播出日期，前面的第 %s 集 %s 才播出）", by, rel, strconv.FormatFloat(sort.Float64, 'f', -1, 64), d.String)}
+			}
 		}
 	}
 	w, err := s.GetWork(ctx, workKey)
 	if err != nil {
-		return true, ""
+		return DateCheck{OK: true}
 	}
 	begin, end := parseDay(w.Begin), parseDay(w.End)
 	if !begin.IsZero() && released.Before(begin.Add(-early)) {
-		return false, fmt.Sprintf("%s %s 早于条目开播 %s 超过 %d 天（本集无播出日期）", by, rel, begin.In(jst).Format("2006-01-02"), DateEarlyDays)
+		return DateCheck{Detail: fmt.Sprintf("%s %s 早于条目开播 %s 超过 %d 天（本集无播出日期）", by, rel, begin.In(jst).Format("2006-01-02"), DateEarlyDays)}
 	}
 	if !end.IsZero() && released.After(end.Add(24*time.Hour+late)) {
-		return false, fmt.Sprintf("%s %s 晚于条目完结 %s 超过 %d 天（本集无播出日期）", by, rel, end.In(jst).Format("2006-01-02"), DateLateDays)
+		return DateCheck{Late: true, Detail: fmt.Sprintf("%s %s 晚于条目完结 %s 超过 %d 天（本集无播出日期）", by, rel, end.In(jst).Format("2006-01-02"), DateLateDays)}
 	}
-	return true, ""
+	return DateCheck{OK: true}
 }
 
 // Review reasons shared by the decision model and the rules (the decision goes to human
@@ -1166,14 +1310,21 @@ const (
 // automatically given the task's release time: never without one; otherwise the
 // per-episode date gate (CheckDate). "" when it may, else the review reason.
 func (s *Store) ReleaseGate(ctx context.Context, t *ClefTask, workKey string, k EpisodeKey) string {
+	r, _ := s.ReleaseCheck(ctx, t, workKey, k)
+	return r
+}
+
+// ReleaseCheck is ReleaseGate; late reports a date mismatch because the release is too
+// long after the airing (only those may be lifted by the batch rule, clef.Refine).
+func (s *Store) ReleaseCheck(ctx context.Context, t *ClefTask, workKey string, k EpisodeKey) (reason string, late bool) {
 	rt, err := time.Parse(time.RFC3339, t.Released)
 	if t.Released == "" || err != nil {
-		return ReasonMissingRelease
+		return ReasonMissingRelease, false
 	}
-	if ok, detail := s.CheckDate(ctx, workKey, k, rt, t.ReleasedBy); !ok {
-		return ReasonDateMismatch + ": " + detail
+	if c := s.CheckDateFull(ctx, workKey, k, rt, t.ReleasedBy); !c.OK {
+		return ReasonDateMismatch + ": " + c.Detail, c.Late
 	}
-	return ""
+	return "", false
 }
 
 // hasRuleDecision: a rule decision (any status) exists for the file and mapping, so a

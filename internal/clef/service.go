@@ -259,26 +259,6 @@ func (s *Service) chat(c Config, cl LLMClient) func(context.Context, ChatRequest
 	}
 }
 
-// GateRelease sends decisions that would be applied to human review when the torrent has no
-// release time (缺少发布时间) or its release doesn't fit the episode's airdate (日期不符: more
-// than 30 days after / 7 days before; without an airdate the work's airing window) —
-// meta.ReleaseGate. Both backends.
-func GateRelease(ctx context.Context, ms *meta.Store, t *meta.ClefTask, ds []FileDecision) {
-	for i := range ds {
-		d := &ds[i]
-		if d.Status != StatusApplied || d.Candidate == nil {
-			continue
-		}
-		k, ok := meta.ParseEpisodeKey(d.Key)
-		if !ok {
-			continue
-		}
-		if r := ms.ReleaseGate(ctx, t, d.Candidate.WorkKey, k); r != "" {
-			d.Status, d.Reason = StatusPending, r
-		}
-	}
-}
-
 // TaskEvidence checks the task's title and file paths for a name of the work.
 func TaskEvidence(ms *meta.Store, t *meta.ClefTask) Evidence {
 	texts := []string{t.Title}
@@ -331,7 +311,7 @@ func (s *Service) Decide(ctx context.Context, c Config, ih string, all bool) (*O
 			return out, err
 		}
 		out.Decisions = DecideLLM(ctx, t, run.Answers, c.LLM.Thresholds, s.Meta.ValidEpisode, TaskEvidence(s.Meta, t))
-		GateRelease(ctx, s.Meta, t, out.Decisions)
+		Refine(ctx, s.Meta, t, out.Decisions, c.LLM.Thresholds)
 		return out, nil
 	}
 	out.Answers = map[string]Answer{}
@@ -354,7 +334,7 @@ func (s *Service) Decide(ctx context.Context, c Config, ih string, all bool) (*O
 	// the subject questions are asked once (separate request); episode/kind requests may be
 	// split, but every file's questions are in one of them: decide over all answers
 	out.Decisions = Decide(ctx, t, out.Answers, c.Thresholds, s.Meta.ValidEpisode)
-	GateRelease(ctx, s.Meta, t, out.Decisions)
+	Refine(ctx, s.Meta, t, out.Decisions, LLMThresholds{Apply: c.Thresholds.Apply, Review: c.Thresholds.Review, Agreement: true})
 	return out, nil
 }
 

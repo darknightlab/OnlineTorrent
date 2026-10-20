@@ -68,6 +68,8 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		err = run(os.Args[2:])
+	case "replay":
+		err = replay(os.Args[2:])
 	case "recall":
 		err = recall(os.Args[2:])
 	case "llm":

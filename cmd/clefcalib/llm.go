@@ -272,7 +272,7 @@ func analyzeLLM(ctx context.Context, ms *meta.Store, path string, recs []record)
 		for i, d := range gated {
 			preDate[i] = d.Status
 		}
-		clef.GateRelease(ctx, ms, r.Task, gated)
+		clef.Refine(ctx, ms, r.Task, gated, *llmTh)
 		for i, d := range alone {
 			t := r.Truth[d.File.Index]
 			x := llmRes{set: r.Set, conf: d.Confidence, posLabel: t.Subject != "" && t.Kind != ""}

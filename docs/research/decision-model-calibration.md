@@ -10,6 +10,67 @@ backends, chosen by the setting `clef.provider` (settings group 决策模型):
 
 Design: [plan.md](../plan.md) 「规则收紧 + 决策模型」. API: [api.md](../api.md) 「后台」→「决策模型」.
 
+## Post-checks v3: unresolved decisions (2026-10-21)
+
+The 152 production files that went through the decision model and still weren't applied
+automatically (25 torrents) were analysed one by one. Six changes to the checks *after* the
+model answers were made; the model, prompt and candidates are unchanged. Code:
+`clef.Refine` (`internal/clef/refine.go`), plus `meta` name / season / date helpers.
+
+1. **Prequel numbering + "not aired yet"** (归还者 S2 `[14]`).
+   - A main episode without an airdate counts as not aired when an earlier episode of the
+     same work airs more than 7 days after the release. bangumi lists future episodes
+     without dates, and episode 14 had become "valid".
+   - For a stated season ≥ 2, a number the entry doesn't list, or one that can't have aired
+     yet, is retried as the number minus the direct prequel's episode count (14 − 12 = 2).
+     It is only used if that episode is listed and passes the date gate.
+   - The change is recorded in `answers.rule`.
+2. **Parser agreement after the split-cour shift.** "Slime 4th Season - 24(96)" is the same
+   official episode (96) whether read as 24 or 96.
+3. **Late-release batch rule.** A release more than 30 days after airing (never an early
+   one) is applied anyway when all of these hold:
+   - the torrent has ≥ 3 main files on the same work, each passing every other check;
+   - their numbers, with the stated season, fit no other work the torrent names, among the
+     candidates and the work's family (`meta.UniqueFit`);
+   - any year written in the title or those paths lies in the work's airing years.
+
+   The work's specials that were held only for being late follow.
+4. **Name evidence** (`meta.NameEvidence` / `WorkNames`):
+   - " / " in a torrent title no longer cuts it like a path;
+   - a two-CJK-character name counts when a whole bracket equals it (`[遮天]`);
+   - the names of direct prequels / sequels count;
+   - an English name derived from related works "<title> <subtitle>" with aliases
+     "<name>: <subtitle>" counts when ≥ 2 such works agree (名探偵コナン → "Detective Conan").
+5. **Season continuation.** A stated season that doesn't fit is accepted when all of these
+   hold:
+   - the entry is the direct sequel of a prequel whose numbering it continues (first sort =
+     the prequel's last + 1, the file numbered in that continuation);
+   - the same torrent has files with the same stated season mapped to the prequel.
+
+   Example: SAO "S04E13–E23" after S04E01–E12 → War of Underworld part 1.
+6. **第弐幕 / Dai Ni Maku = part 2**, as a stated season and as an entry's season (old
+   numerals 壱弐参 too).
+
+Offline replays (recorded answers, no API calls; `clefcalib analyze` / `clefcalib replay`):
+
+| set | before | after |
+|---|---|---|
+| calibration v2 (240 torrents, 458 files): applied / wrong | 244 / 0 (coverage 91.4 %) | **255 / 0 (coverage 95.5 %)** |
+| the 152 unresolved production files | 0 applied | **149 applied**, 2 not mapped, 1 rule decision unchanged |
+
+- **Calibration:**
+  - The date gate's three wrong catches (single-episode torrents) are still caught.
+  - The second-cour 桃源暗鬼 answer is now caught by the date gate (released before the
+    entry airs) instead of the name gate.
+  - 武神 for 獸王武神 is still caught by the name gate.
+- **Production replay:**
+  - Run on a copy of the dev meta DB with the 25 torrents and fresh episode lists from
+    production.
+  - Two answers change: 归还者 S2 `[14]` → episode 2 (correct; 14 hadn't aired).
+  - Still not mapped: the Kamen Rider film (not in the catalogue) and Chitose S02E13
+    (genuinely ambiguous).
+  - Sintel stays a rule decision without a release time.
+
 ## LLM backend v2 (current, 2026-10-19)
 
 Owner decisions after testing reasoning effort on two failures (Onegai AiPri with the true entry

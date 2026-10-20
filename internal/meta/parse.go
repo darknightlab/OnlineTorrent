@@ -206,7 +206,8 @@ type cjkPat struct {
 	fn func(m []string) token
 }
 
-var cjkNumerals = map[rune]float64{'一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10}
+var cjkNumerals = map[rune]float64{'一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10,
+	'壱': 1, '弐': 2, '参': 3} // old forms (第弐幕)
 
 func cjkNum(s string) (float64, bool) {
 	if v, err := strconv.ParseFloat(s, 64); err == nil {
@@ -245,7 +246,8 @@ var cjkPats = []cjkPat{
 	{regexp.MustCompile(`\d{1,4}\s*[-~]\s*\d{1,4}\s*[话話集]`), func(m []string) token { return token{text: m[0], cat: cRange} }},
 	{regexp.MustCompile(`第\s*(\d{1,4}(?:\.\d)?)\s*[话話集回]`), func(m []string) token { t := numTok(cEpisode, m[1]); t.text = m[0]; return t }},
 	{regexp.MustCompile(`(\d{1,4}(?:\.\d)?)\s*[话話集]`), func(m []string) token { t := numTok(cEpisode, m[1]); t.text = m[0]; return t }},
-	{regexp.MustCompile(`第\s*([0-9一二三四五六七八九十]{1,3})\s*[季期部]`), func(m []string) token { t := numTok(cSeason, m[1]); t.text = m[0]; return t }},
+	// 第2季 / 第二期 / 第三部; 第弐幕 (an "act" = part / season: 東京魔人學園剣風帖 龖 第弐幕)
+	{regexp.MustCompile(`第\s*([0-9一二三四五六七八九十壱弐参]{1,3})\s*[季期部幕]`), func(m []string) token { t := numTok(cSeason, m[1]); t.text = m[0]; return t }},
 	{regexp.MustCompile(`(\d{1,2})\s*[기期]`), func(m []string) token { t := numTok(cSeason, m[1]); t.text = m[0]; return t }},
 	{regexp.MustCompile(`\d{1,2}\s*月`), func(m []string) token { return token{text: m[0], cat: cIdent} }},
 	{regexp.MustCompile(`((?:19|20)\d\d)\s*年`), func(m []string) token { t := numTok(cYear, m[1]); t.text = m[0]; return t }},
@@ -808,6 +810,9 @@ func parseName(name string, allowBare bool) analysis {
 		}
 	}
 	a.Season = routeSeason(toks)
+	if a.Season == 0 {
+		a.Season = makuSeason(name)
+	}
 
 	// file type from trusted keywords; priority sample > op/ed > extra > pv > cm > sp
 	kinds := map[string]bool{}
@@ -1240,6 +1245,21 @@ type routeHint struct {
 }
 
 var reSeasonEp = regexp.MustCompile(`^S(\d{1,2})E\d`)
+
+// reMaku: "Dai Ni Maku" / "Dai_Ni_Maku" (romanised 第二幕, "act two" = the second part /
+// season of a work; separators may be spaces, _ . ~ -)
+var reMaku = regexp.MustCompile(`(?i)(?:^|[^a-z])dai[\s_.~-]*(ichi|ni|san|yon|shi|go)[\s_.~-]*maku(?:[^a-z]|$)`)
+
+var makuNumbers = map[string]float64{"ichi": 1, "ni": 2, "san": 3, "yon": 4, "shi": 4, "go": 5}
+
+// makuSeason is the season a romanised "Dai N Maku" states (0 = none).
+func makuSeason(s string) float64 {
+	if m := reMaku.FindStringSubmatch(s); m != nil {
+		return makuNumbers[strings.ToLower(m[1])]
+	}
+	return 0
+}
+
 var reOVAWord = regexp.MustCompile(`^(?:OVA|OAD|OAV)S?\d{0,3}$`)
 
 // routeSeason is the single TV season written in a name: S2, Season 2, 2nd Season, 第二季,
@@ -1303,6 +1323,9 @@ func nameHint(s string) routeHint {
 	toks := tokenize(s)
 	trustTypes(toks)
 	h := routeHint{Season: routeSeason(toks), Norm: normName(s), Years: yearsIn(s)}
+	if h.Season == 0 {
+		h.Season = makuSeason(s)
+	}
 	types := map[string]bool{}
 	for _, t := range toks {
 		u := strings.ToUpper(t.text)

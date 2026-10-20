@@ -398,7 +398,8 @@ type Evidence func(ctx context.Context, workKey string) bool
 // nearly everything, right or wrong): confidence ≥ Apply, the torrent title / paths name the
 // chosen work (evidence; nil = not checked), a special kind the work's official list has (or
 // next to an applied main episode), the parser's number when it found one. Otherwise review.
-// The release-date gate (GateRelease) runs afterwards, for both backends.
+// The catalogue post-checks (Refine: date gate, batch rule, prequel numbering, season
+// continuation) run afterwards, for both backends.
 func DecideLLM(ctx context.Context, t *meta.ClefTask, answers map[int]LLMFileOut, th LLMThresholds, valid Validator, evidence Evidence) []FileDecision {
 	cands := map[string]*meta.ClefCandidate{}
 	for i := range t.Candidates {
@@ -485,22 +486,7 @@ func DecideLLM(ctx context.Context, t *meta.ClefTask, answers map[int]LLMFileOut
 			discard(ReasonNotOfficial)
 			continue
 		}
-		// the parser's reading: its number (when it found one) and a clear special kind
-		// (NCOP/NCED/PV/CM keyword, or Menu/Preview/特典 = extra) must not be contradicted
-		disagrees := th.Agreement && ((f.Episode != nil && *f.Episode != *num) ||
-			(strictKinds[f.Kind] && f.Kind != d.Kind))
-		switch {
-		case conf >= th.Apply && disagrees:
-			d.Status, d.Reason = StatusPending, ReasonDisagrees
-		case conf >= th.Apply && evidence != nil && !evidence(ctx, c.WorkKey):
-			d.Status, d.Reason = StatusPending, ReasonNoName
-		case conf >= th.Apply:
-			d.Status = StatusApplied
-		case conf >= th.Review:
-			d.Status = StatusPending
-		default:
-			d.Status, d.Reason = StatusDiscarded, ReasonLowConfidence
-		}
+		gateLLM(ctx, &d, th, evidence, numberAgrees(ctx, &d, valid))
 		out = append(out, d)
 	}
 	// a special the work's official list doesn't have (OP/ED/PV are rarely listed) is only
@@ -522,6 +508,46 @@ func DecideLLM(ctx context.Context, t *meta.ClefTask, answers map[int]LLMFileOut
 		}
 	}
 	return out
+}
+
+// numberAgrees: the parser found no number, or the same one — compared after the split-cour
+// shift, so "Slime 4th Season - 24(96)" read as 24 by the parser and as 96 by the model is
+// the same official episode (96).
+func numberAgrees(ctx context.Context, d *FileDecision, valid Validator) bool {
+	f := d.File
+	if f.Episode == nil || d.Episode == nil || *f.Episode == *d.Episode {
+		return true
+	}
+	if d.Kind != "episode" || d.Candidate == nil {
+		return false
+	}
+	pk, ok := meta.KeyOfFile("episode", f.Episode)
+	if !ok {
+		return false
+	}
+	pc, _ := valid(ctx, d.Candidate.WorkKey, pk)
+	return pc.String() == d.Key
+}
+
+// gateLLM routes a validated answer: confidence ≥ Apply, the parser's number (numberAgrees)
+// and a clear special kind of the parser (NCOP/NCED/PV/CM keyword, or Menu/Preview/特典 =
+// extra) not contradicted, and the work named by the torrent (evidence) → applied; else
+// review / not mapped.
+func gateLLM(ctx context.Context, d *FileDecision, th LLMThresholds, evidence Evidence, numberOK bool) {
+	f, conf := d.File, d.Confidence
+	disagrees := th.Agreement && (!numberOK || (strictKinds[f.Kind] && f.Kind != d.Kind))
+	switch {
+	case conf >= th.Apply && disagrees:
+		d.Status, d.Reason = StatusPending, ReasonDisagrees
+	case conf >= th.Apply && evidence != nil && !evidence(ctx, d.Candidate.WorkKey):
+		d.Status, d.Reason = StatusPending, ReasonNoName
+	case conf >= th.Apply:
+		d.Status, d.Reason = StatusApplied, ""
+	case conf >= th.Review:
+		d.Status, d.Reason = StatusPending, ""
+	default:
+		d.Status, d.Reason = StatusDiscarded, ReasonLowConfidence
+	}
 }
 
 func fmtNum(v float64) string {
