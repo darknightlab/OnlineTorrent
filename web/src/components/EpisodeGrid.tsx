@@ -1,6 +1,6 @@
 // 选集：正片 + 特别篇（SP / NCOP / NCED / PV / CM）。单集页右栏（side）与番剧页（page）共用。
 import { useEffect, useMemo, useRef, useState } from "react"
-import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react"
+import { ChevronLeft, ChevronRight } from "lucide-react"
 import { Link } from "react-router-dom"
 import { useEpisodes } from "@/lib/queries"
 import {
@@ -243,62 +243,14 @@ export function EpisodeGrid({
   return <div className="grid grid-cols-5 gap-2 sm:grid-cols-8 lg:grid-cols-12">{ordered.map(chip)}</div>
 }
 
-/** 列表视图折叠：显示的集数 / 超过多少集才折叠 / 最新一集之后多显示几集（移动端与 sm 以上分别计算） */
-const FOLD = { mobile: { size: 6, min: 8, lead: 3 }, wide: { size: 12, min: 15, lead: 4 } }
-
-/** 折叠窗口 [start, end)；不需要折叠时为整个列表 */
-function foldWindow(len: number, hi: number, f: { size: number; min: number; lead: number }): [number, number] {
-  if (len <= f.min) return [0, len]
-  const start = Math.max(0, Math.min(hi - f.size + f.lead, len - f.size))
-  return [start, start + f.size]
-}
-
-/**
- * 番剧页的列表视图：每集一行（编号 · 标题 · 放送日期 · 资源数），移动端 1 列、平板 2 列、桌面 3 列。
- * 正片较多时折叠（移动端 6 集、sm 以上 12 集；连载中时窗口包含 highlight）；特别篇分组列在正片之后。
- */
+/** 番剧页的列表视图：每集一行（编号 · 标题 · 放送日期 · 资源数），移动端 1 列、平板 2 列、桌面 3 列；正片在前、特别篇在后（分页见 useEpisodePage） */
 export function EpisodeRows({ subject, chips, highlight }: { subject: Subject; chips: EpisodeChip[]; highlight?: string | null }) {
-  const [expanded, setExpanded] = useState(false)
-  const gs = groups(chips)
-  const main = gs.find((g) => g.kind === "main")?.items ?? []
-  const specials = gs.filter((g) => g.kind !== "main").flatMap((g) => g.items)
-  // 连载中（还有未播出的集）时折叠窗口包含最新一集，否则从第 1 话开始
-  const hi = main.some(isFuture) ? Math.max(0, main.findIndex((c) => c.key === highlight)) : 0
-  const [m0, m1] = foldWindow(main.length, hi, FOLD.mobile)
-  const [w0, w1] = foldWindow(main.length, hi, FOLD.wide)
-  const foldMobile = main.length > FOLD.mobile.min
-  const foldWide = main.length > FOLD.wide.min
-  const grid = "grid gap-2 sm:grid-cols-2 lg:grid-cols-3"
-  const row = (c: EpisodeChip, i?: number) => (
-    <EpisodeRow
-      key={c.key}
-      subject={subject}
-      c={c}
-      highlight={c.key === highlight}
-      className={cn(i !== undefined && !expanded && (i < m0 || i >= m1) && "max-sm:hidden", i !== undefined && !expanded && (i < w0 || i >= w1) && "sm:hidden")}
-    />
-  )
+  const ordered = groups(chips).flatMap((g) => g.items)
   return (
-    <div className="space-y-3">
-      {/* 正片与特别篇同一个列表，不分组、不加分隔线（折叠只作用于正片） */}
-      <div className={grid}>
-        {main.map((c, i) => row(c, i))}
-        {specials.map((c) => row(c))}
-      </div>
-      {foldMobile && (
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          aria-expanded={expanded}
-          className={cn(
-            "flex h-9 w-full items-center justify-center gap-1 rounded-lg border bg-card text-[13px] text-muted-foreground hover:border-primary/50 hover:text-primary-text",
-            !foldWide && "sm:hidden",
-          )}
-        >
-          {expanded ? "收起" : `展开全部 ${main.length} 话`}
-          <ChevronDown className={cn("h-4 w-4 transition-transform", expanded && "rotate-180")} />
-        </button>
-      )}
+    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+      {ordered.map((c) => (
+        <EpisodeRow key={c.key} subject={subject} c={c} highlight={c.key === highlight} />
+      ))}
     </div>
   )
 }

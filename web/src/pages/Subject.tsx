@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react"
-import { Link, Navigate, useParams } from "react-router-dom"
+import { Link, Navigate, useParams, useSearchParams } from "react-router-dom"
 import { ChevronDown, CalendarClock, CalendarDays, Clapperboard, ExternalLink, Film, LayoutGrid, List, ListVideo, Play, Star, Tv } from "lucide-react"
 import { Container } from "@/components/layout/Container"
 import { Cover } from "@/components/Cover"
@@ -13,7 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { useSubject, useEpisodes } from "@/lib/queries"
 import { airStatus, displayTitle } from "@/lib/schedule"
 import { formatDate, timeUntil, WEEKDAYS } from "@/lib/format"
-import { useDocumentTitle, useNow } from "@/lib/hooks"
+import { useDocumentTitle, useMediaQuery, useNow } from "@/lib/hooks"
 import { isApiError } from "@/lib/api"
 import type { ExternalIds, Subject } from "@/lib/types"
 import { cn, episodeHref, watchHref } from "@/lib/utils"
@@ -298,24 +298,31 @@ function Rating({ subject: a }: { subject: Subject }) {
 }
 
 type EpisodeView = "list" | "grid"
-const VIEW_KEY = "subject.episodeView"
 
-/** 选集：正片 + 特别篇分组（无任何集时不显示）。有官方标题时默认列表视图，可切换为网格（记住选择） */
+/**
+ * 选集（无任何集时不显示）。默认：手机网格；桌面有官方标题时列表。
+ * 切换视图写在网址参数 ?view=list|grid（只影响当前页面，可分享 / 刷新保留，不影响其他番剧）。
+ */
 function SubjectEpisodes({ subject, latest }: { subject: Subject; latest: string | null }) {
   const { chips, loading } = useEpisodeChips(subject)
   const { items, pager } = useEpisodePage(chips, latest)
-  const [pref, setPref] = useState<EpisodeView | null>(() => {
-    const v = localStorage.getItem(VIEW_KEY)
-    return v === "list" || v === "grid" ? v : null
-  })
+  const wide = useMediaQuery("(min-width: 640px)")
+  const [sp, setSp] = useSearchParams()
+  const v = sp.get("view")
+  const pref: EpisodeView | null = v === "list" || v === "grid" ? v : null
   // 未选过视图时等选集加载完再决定默认视图（避免网格 → 列表闪烁）
   if (loading && !pref) return <Skeleton className="h-40 w-full rounded-xl" />
   if (chips.length === 0) return null
-  const view: EpisodeView = pref ?? (chips.some((c) => c.title) ? "list" : "grid")
-  const choose = (v: EpisodeView) => {
-    localStorage.setItem(VIEW_KEY, v)
-    setPref(v)
-  }
+  const view: EpisodeView = pref ?? (wide && chips.some((c) => c.title) ? "list" : "grid")
+  const choose = (next: EpisodeView) =>
+    setSp(
+      (p) => {
+        p.set("view", next)
+        return p
+      },
+      { replace: true },
+    )
+
   return (
     <section aria-labelledby="episodes-title">
       <SectionHeader
