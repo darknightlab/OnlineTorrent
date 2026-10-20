@@ -24,6 +24,7 @@ import { loadEngine } from "@/player/engine"
 import { isPlayable, likelyUnsupported, type Engine, type FileKind, type FileSnap, type LogLevel, type Session, type TorrentSnap } from "@/player/types"
 import { segmentCount } from "@/lib/pieces"
 import { ArtVideo, loadArtplayer } from "./ArtVideo"
+import { PlayerSpinner } from "@/components/PlayerSpinner"
 import { useWebseedEvents } from "./useWebseedEvents"
 import { useStallWatchdog } from "./useStallWatchdog"
 import { ReportDialog } from "./ReportDialog"
@@ -522,9 +523,8 @@ export function Player({
               <Overlay>
                 {!snap ? (
                   <>
-                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    <PlayerSpinner />
                     <p className="font-medium">正在获取种子信息…</p>
-                    <p className="text-xs text-white/70">首次连接节点可能需要十几秒</p>
                   </>
                 ) : isMock ? (
                   <>
@@ -545,7 +545,7 @@ export function Player({
                     <p className="text-xs text-white/70">可在文件列表中下载</p>
                   </>
                 ) : (
-                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  <PlayerSpinner />
                 )}
               </Overlay>
             )}
@@ -652,8 +652,8 @@ export function Player({
 
 function Overlay({ children }: { children: React.ReactNode }) {
   return (
-    // 不盖住底部控制栏（「资源」等按钮仍可点），点击穿透到播放器
-    <div className="pointer-events-none absolute inset-x-0 bottom-12 top-0 z-10 flex flex-col items-center justify-center gap-2 px-6 text-center text-sm text-white">
+    // 在整个画面居中（与播放中的缓冲圈同一位置）；点击穿透，底部控制栏仍可点
+    <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-2.5 px-6 text-center text-sm text-white">
       {children}
     </div>
   )
@@ -897,7 +897,7 @@ export function PlayerShell({ poster, panelSources, children }: { poster?: strin
         <div aria-hidden className="absolute inset-0 bg-black/65" />
         <ArtVideo url="" segments={EMPTY_SEGMENTS} speed={0} onPanel={panelSources ? openPanel : undefined} />
         {/* 状态提示：不盖住底部控制栏；按钮可点 */}
-        <div className="pointer-events-none absolute inset-x-0 bottom-12 top-0 z-10 flex items-center justify-center [&_a]:pointer-events-auto [&_button]:pointer-events-auto">
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center [&_a]:pointer-events-auto [&_button]:pointer-events-auto">
           {children}
         </div>
       </div>

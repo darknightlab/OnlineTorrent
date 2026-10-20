@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { Loader2 } from "lucide-react"
+import { PlayerSpinner } from "@/components/PlayerSpinner"
 import type { ArtHandle } from "./artplayer-setup"
 import type { SubtitleSource } from "@/player/subs/source"
 import { chooseTrack, loadPref, prefFor, savePref } from "@/player/subs/prefs"
@@ -140,13 +140,14 @@ export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetada
 
   return (
     <>
-      {!ready && (
+      {/* 播放器模块加载中（空 url 的外壳由外层显示状态，这里不再重复转圈） */}
+      {!ready && (url || loadError) && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-white">
           {poster && <div aria-hidden className="absolute inset-0 bg-contain bg-center bg-no-repeat" style={{ backgroundImage: `url("${poster}")` }} />}
           {loadError ? (
             <p className="relative z-10 rounded bg-black/70 px-3 py-1.5">播放器加载失败，请刷新页面重试</p>
           ) : (
-            <Loader2 className="relative z-10 h-8 w-8 animate-spin text-primary" />
+            <PlayerSpinner className="relative z-10" />
           )}
         </div>
       )}

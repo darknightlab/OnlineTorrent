@@ -2,6 +2,7 @@ import { createContext, useContext } from "react"
 import { Link } from "react-router-dom"
 import { AlertTriangle, Ban, CloudOff, Crown, Loader2, Lock, RotateCw, SearchCode } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { PlayerSpinner } from "@/components/PlayerSpinner"
 import { Card } from "@/components/ui/card"
 import { useUser } from "@/lib/queries"
 import { useDocumentTitle } from "@/lib/hooks"
@@ -40,14 +41,14 @@ export function PlayGate({
     <OverlayCtx.Provider value={!!overlay}>
       <GateFrame className={className} subject={state.status === "loading" || state.status === "redirect" ? undefined : title}>
         {(state.status === "loading" || state.status === "redirect") && (
-          <Gate docTitle={docTitle} icon={<Loader2 className="h-7 w-7 animate-spin text-primary" />} title="正在请求播放…" description={title ?? "服务器正在检查资源"} />
+          <Gate docTitle={docTitle} spin icon={<Loader2 className="h-7 w-7 animate-spin text-primary" />} title="正在请求播放…" />
         )}
         {state.status === "pending" && (
           <Gate
             docTitle={docTitle}
+            spin
             icon={<SearchCode className="h-7 w-7 animate-pulse" />}
             title="正在获取种子信息…"
-            description="本站还没有这个种子的信息，服务器正在获取文件列表并判断能否播放，通常需要十几秒。"
           />
         )}
         {state.status === "timeout" && (
@@ -56,7 +57,6 @@ export function PlayGate({
             tone="warning"
             icon={<CloudOff className="h-7 w-7" />}
             title="暂时无法获取种子信息"
-            description="可能暂时没有节点分享这个种子。服务器会继续尝试，稍后可以重试。"
             actions={
               <>
                 <Button onClick={retry}>
@@ -186,6 +186,7 @@ function Gate({
   actions,
   tone = "primary",
   docTitle,
+  spin,
 }: {
   icon: React.ReactNode
   title: React.ReactNode
@@ -193,14 +194,16 @@ function Gate({
   actions?: React.ReactNode
   tone?: keyof typeof toneCls
   docTitle: boolean
+  /** 进行中的状态：播放器画面里显示与缓冲同样的加载圈 */
+  spin?: boolean
 }) {
   useDocumentTitle(docTitle ? (typeof title === "string" ? title : "播放") : undefined)
   if (useContext(OverlayCtx))
     return (
       <div className="flex max-w-md flex-col items-center text-center" role="status">
-        <span className={cn("inline-flex h-10 w-10 items-center justify-center rounded-full [&_svg]:h-5 [&_svg]:w-5", toneCls[tone])}>{icon}</span>
-        <h1 className="mt-2 text-[15px] font-semibold sm:mt-3 sm:text-base">{title}</h1>
-        {description && <p className="mt-1 line-clamp-2 wrap-anywhere text-xs text-white/70 sm:text-[13px]">{description}</p>}
+        {spin ? <PlayerSpinner /> : <span className={cn("inline-flex h-10 w-10 items-center justify-center rounded-full [&_svg]:h-5 [&_svg]:w-5", toneCls[tone])}>{icon}</span>}
+        <h1 className="mt-2.5 text-[15px] font-semibold sm:text-base">{title}</h1>
+        {description && <p className="mt-1 line-clamp-1 wrap-anywhere text-xs text-white/70 sm:line-clamp-2 sm:text-[13px]">{description}</p>}
         {actions && <div className="mt-3 flex flex-wrap justify-center gap-2 [&_a]:h-8 [&_button]:h-8 sm:mt-4">{actions}</div>}
       </div>
     )
