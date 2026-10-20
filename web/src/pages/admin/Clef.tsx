@@ -15,7 +15,7 @@ import { api } from "@/lib/api"
 import type { ClefAnomalies, ClefAnswerSummary, ClefDecision, ClefFileDecision, ClefStatus, ClefStatusName, ClefTestResponse, SettingItem, SettingValue } from "@/lib/types"
 import { formatDateTime, timeAgo } from "@/lib/format"
 import { useNow } from "@/lib/hooks"
-import { cn, watchHref } from "@/lib/utils"
+import { cn, parseTorrentInput, watchHref } from "@/lib/utils"
 import { AdminHeader, Mono, StatusDot } from "./components"
 import { SettingRow } from "./Settings"
 
@@ -164,7 +164,14 @@ function StatusCard({ s }: { s?: ClefStatus }) {
 function Decisions() {
   const [status, setStatus] = useState<string>("pending")
   const [page, setPage] = useState(1)
-  const q = useQuery({ queryKey: ["admin", "clef", "decisions", status, page], queryFn: () => api.admin.clefDecisions(status === "all" ? "" : status, page) })
+  // 按种子查：infohash / 磁力链接 / 播放页地址；查某个种子时显示全部状态
+  const [search, setSearch] = useState("")
+  const ih = useMemo(() => {
+    const m = search.match(/\/hash\/([0-9a-fA-F]{40}|[A-Za-z2-7]{32})/)
+    return parseTorrentInput(m ? m[1] : search.trim())
+  }, [search])
+  const st = ih ? "" : status === "all" ? "" : status
+  const q = useQuery({ queryKey: ["admin", "clef", "decisions", st, page, ih], queryFn: () => api.admin.clefDecisions(st, page, ih ?? undefined) })
   const items = q.data?.items ?? []
   return (
     <section aria-labelledby="clef-decisions">
@@ -188,6 +195,20 @@ function Decisions() {
           </TabsList>
         </Tabs>
       </div>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <Input
+          value={search}
+          onChange={(e) => {
+            setSearch(e.target.value)
+            setPage(1)
+          }}
+          placeholder="按种子查：infohash / 磁力链接 / 播放页地址"
+          aria-label="按种子查决策记录"
+          className="min-w-0 flex-1 sm:max-w-md"
+        />
+        {ih && <RequeueButton ih={ih} label="重新判断这个种子" />}
+        {search && !ih && <span className="text-xs text-warning-text">无法识别的 infohash</span>}
+      </div>
       {q.error ? (
         <Card>
           <ErrorState error={q.error} onRetry={() => q.refetch()} />
@@ -198,7 +219,7 @@ function Decisions() {
         </Card>
       ) : items.length === 0 ? (
         <Card>
-          <EmptyState icon={Check} title={status === "pending" ? "审核队列已清空" : "暂无记录"} />
+          <EmptyState icon={Check} title={ih ? "这个种子没有决策记录" : status === "pending" ? "审核队列已清空" : "暂无记录"} />
         </Card>
       ) : (
         <ul className="grid gap-3">
@@ -277,6 +298,13 @@ function DecisionCard({ d }: { d: ClefDecision }) {
               {d.decided_by === "clef" ? "自动应用" : `${d.decided_by} 处理`} · {timeAgo(d.decided_at)}
             </span>
           )}
+          <RequeueButton ih={d.infohash} label="重新判断" />
+          {(d.status === "discarded" || d.status === "rejected") && d.work_key && d.episode_key && (
+            <Button size="sm" variant="soft" onClick={() => m.mutate(true)} disabled={m.isPending} title="忽略校验，按模型的答案人工确认映射">
+              {m.isPending ? <Loader2 className="animate-spin" /> : <Check />}
+              仍然接受
+            </Button>
+          )}
           {d.status === "pending" && (
             <>
               <Button variant="outline" size="sm" onClick={() => m.mutate(false)} disabled={m.isPending}>
@@ -298,6 +326,26 @@ function DecisionCard({ d }: { d: ClefDecision }) {
         </div>
       </Card>
     </li>
+  )
+}
+
+/** 把种子重新交给决策模型（只处理还没映射的文件；已映射的不变） */
+function RequeueButton({ ih, label }: { ih: string; label: string }) {
+  const qc = useQueryClient()
+  const m = useMutation({
+    mutationFn: () => api.admin.clefRequeue(ih),
+    onSuccess: (st) => {
+      qc.setQueryData(KEY, st)
+      toast.success("已加入决策队列，稍后刷新查看结果")
+      void qc.invalidateQueries({ queryKey: ["admin", "clef", "decisions"] })
+    },
+    onError: (e) => toast.error(errorMessage(e)),
+  })
+  return (
+    <Button variant="outline" size="sm" onClick={() => m.mutate()} disabled={m.isPending}>
+      {m.isPending ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+      {label}
+    </Button>
   )
 }
 

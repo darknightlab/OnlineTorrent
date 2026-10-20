@@ -343,6 +343,21 @@ func (s *Store) ApplyReviewed(ctx context.Context, ih string, idx int, workKey, 
 	return s.applyDecision(ctx, ih, idx, workKey, kind, ep, 1, MethodReview, "verified", by)
 }
 
+// ApplyOverride applies a decision an admin accepts against the gates (discarded / rejected):
+// the file must be unmapped (an existing mapping is never overwritten), whatever its status —
+// a file the admin earlier confirmed as unmapped can be mapped now.
+func (s *Store) ApplyOverride(ctx context.Context, ih string, idx int, workKey, kind string, ep *float64, by string) error {
+	res, err := s.W.ExecContext(ctx, `UPDATE torrent_files SET work_key=?, kind=?, episode=?, confidence=1, method=?, status='verified', updated_at=?, updated_by=?
+		WHERE infohash=? AND file_index=? AND work_key IS NULL`, workKey, kind, ep, MethodReview, store.Now(), by, ih, idx)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrClefConflict
+	}
+	return nil
+}
+
 func (s *Store) applyDecision(ctx context.Context, ih string, idx int, workKey, kind string, ep *float64, conf float64, method, status, by string) error {
 	res, err := s.W.ExecContext(ctx, `UPDATE torrent_files SET work_key=?, kind=?, episode=?, confidence=?, method=?, status=?, updated_at=?, updated_by=?
 		WHERE infohash=? AND file_index=? AND status='auto' AND (work_key IS NULL OR (method != ? AND instr(','||(SELECT files FROM clef_jobs WHERE infohash=?)||',', ','||file_index||',') > 0))`,

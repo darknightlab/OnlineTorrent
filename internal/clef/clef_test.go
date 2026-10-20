@@ -398,6 +398,15 @@ func TestServiceQueueApplyReviewRevert(t *testing.T) {
 	if tm, _ := ms.GetTorrentMap(ctx, "aa"); tm.Files[0].Work != nil || tm.Files[0].Status != "verified" {
 		t.Errorf("reverted: %+v", tm.Files[0])
 	}
+	// an admin can still accept the rejected decision (override): mapped, human-verified
+	if d, err := svc.Accept(ctx, pend[0].ID, "admin"); err != nil || d.Status != StatusApplied {
+		t.Fatalf("override accept: %v %+v", err, d)
+	}
+	if tm, _ := ms.GetTorrentMap(ctx, "aa"); tm.Files[0].Work == nil || tm.Files[0].Work.Key != "bgm:101" || tm.Files[0].Method != meta.MethodReview || tm.Files[0].Status != "verified" {
+		t.Errorf("override: %+v", tm.Files[0])
+	}
+	// … and revert it again (the next steps expect an unmapped file)
+	_, _ = ms.W.Exec(`UPDATE torrent_files SET work_key=NULL, status='verified', method='manual' WHERE infohash='aa'`)
 	// a clef mapping survives a re-delivery of the torrent (Match does not overwrite it)
 	if err := ms.Match(ctx, meta.TorrentInput{Infohash: "bb", PublishedAt: "2025-02-01T00:00:00Z", Title: "[G] Show S2 - 04 [1080p]", Files: []meta.FileInput{{Index: 0, Path: "[G] Show S2 - 04 [1080p].mkv", Size: 1}}}); err != nil {
 		t.Fatal(err)
@@ -427,8 +436,9 @@ func TestServiceQueueApplyReviewRevert(t *testing.T) {
 	if err != nil || len(out.Decisions) != 1 || out.Sent != 2 || len(out.Task.Candidates) < 2 {
 		t.Fatalf("dry run: %v %+v", err, out)
 	}
+	// the rejected decision was accepted again as an override above: 2 applied, 0 rejected
 	sv, err := svc.Status(ctx)
-	if err != nil || sv.Today < 3 || sv.Decisions[StatusRejected] != 1 {
+	if err != nil || sv.Today < 3 || sv.Decisions[StatusApplied] != 2 || sv.Decisions[StatusRejected] != 0 {
 		t.Errorf("status: %v %+v", err, sv)
 	}
 }

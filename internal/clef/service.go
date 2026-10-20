@@ -589,7 +589,10 @@ func (s *Service) Accept(ctx context.Context, id int64, by string) (*meta.ClefDe
 	if err != nil {
 		return nil, err
 	}
-	if d.Status != StatusPending || d.WorkKey == "" {
+	// pending: the review queue; discarded / rejected: an admin overrides the gates (e.g. a
+	// right answer dropped by the season check) — applied as a human-verified mapping
+	manual := d.Status == StatusDiscarded || d.Status == StatusRejected
+	if (d.Status != StatusPending && !manual) || d.WorkKey == "" {
 		return nil, fmt.Errorf("%w: %s", ErrState, d.Status)
 	}
 	k, ok := meta.KeyOfFile(d.Kind, d.Episode)
@@ -600,7 +603,9 @@ func (s *Service) Accept(ctx context.Context, id int64, by string) (*meta.ClefDe
 		return nil, fmt.Errorf("%w: episode not official", ErrState)
 	}
 	var apply error
-	if d.Source == "rule" {
+	if manual {
+		apply = s.Meta.ApplyOverride(ctx, d.Infohash, d.FileIndex, d.WorkKey, d.Kind, d.Episode, by)
+	} else if d.Source == "rule" {
 		apply = s.Meta.ApplyReviewed(ctx, d.Infohash, d.FileIndex, d.WorkKey, d.Kind, d.Episode, by)
 	} else {
 		apply = s.Meta.ApplyClef(ctx, d.Infohash, d.FileIndex, d.WorkKey, d.Kind, d.Episode, d.Score)
