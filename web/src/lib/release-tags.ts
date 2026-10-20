@@ -14,3 +14,13 @@ export function releaseTags(text: string, path?: string) {
   if (ext) tags.push(ext.toUpperCase())
   return tags
 }
+
+/** 标签排序：分辨率（高→低）· 来源 · 编码 · 容器 */
+const RES_ORDER = ["4K", "1080P", "720P", "480P"]
+export function releaseTagRank(tag: string) {
+  const r = RES_ORDER.indexOf(tag)
+  if (r >= 0) return r
+  if (tag === "HEVC" || tag === "AVC") return 200
+  if (["MKV", "MP4", "WEBM", "AVI"].includes(tag)) return 300
+  return 100 // 来源
+}

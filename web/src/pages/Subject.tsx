@@ -18,6 +18,7 @@ import { isApiError } from "@/lib/api"
 import type { ExternalIds, Subject } from "@/lib/types"
 import { cn, episodeHref, watchHref } from "@/lib/utils"
 import { StatusPage } from "./NotFound"
+import { releaseTagRank, releaseTags } from "@/lib/release-tags"
 
 const EXTERNAL: { key: keyof ExternalIds; label: string; url: (id: string | number) => string }[] = [
   { key: "bgm", label: "Bangumi", url: (id) => `https://bgm.tv/subject/${id}` },
@@ -50,7 +51,20 @@ export default function SubjectPage() {
     for (const t of data?.torrents ?? []) if (t.team?.name) m.set(t.team.name, (m.get(t.team.name) ?? 0) + 1)
     return [...m.entries()].sort((a, b) => b[1] - a[1])
   }, [data])
-  const torrents = useMemo(() => (data?.torrents ?? []).filter((t) => !team || t.team?.name === team), [data, team])
+  // 字幕组单选；标签（1080P、WEB-DL、AVC、MKV…）多选，同时满足（AND）
+  const [picked, setPicked] = useState<string[]>([])
+  const byTeam = useMemo(() => (data?.torrents ?? []).filter((t) => !team || t.team?.name === team), [data, team])
+  const tagsOf = useMemo(() => new Map((data?.torrents ?? []).map((t) => [t.id, releaseTags(t.title)])), [data])
+  const releaseTagCounts = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const t of byTeam) for (const g of tagsOf.get(t.id) ?? []) m.set(g, (m.get(g) ?? 0) + 1)
+    for (const g of picked) if (!m.has(g)) m.set(g, 0)
+    return [...m.entries()].sort((a, b) => releaseTagRank(a[0]) - releaseTagRank(b[0]) || b[1] - a[1] || a[0].localeCompare(b[0]))
+  }, [byTeam, tagsOf, picked])
+  const torrents = useMemo(
+    () => byTeam.filter((t) => picked.every((g) => tagsOf.get(t.id)?.includes(g))),
+    [byTeam, tagsOf, picked],
+  )
 
   if (isPending) return <SubjectSkeleton />
   if (error) {
@@ -166,21 +180,46 @@ export default function SubjectPage() {
 
         <section aria-labelledby="torrents-title">
           <SectionHeader id="torrents-title" icon={Film} title="种子资源" extra={<span className="text-xs text-muted-foreground">{torrents.length} 个</span>} />
-          {teams.length > 1 && (
-            <div className="-mx-3 mb-3 flex gap-2 overflow-x-auto px-3 pb-1 scrollbar-none sm:mx-0 sm:flex-wrap sm:px-0">
-              <Chip active={!team} onClick={() => setTeam(null)}>
-                全部
-              </Chip>
-              {teams.map(([name, n]) => (
-                <Chip key={name} active={team === name} onClick={() => setTeam(name)}>
-                  {name}
-                  <span className="ml-1 text-[11px] opacity-70">{n}</span>
-                </Chip>
-              ))}
+          {(teams.length > 1 || releaseTagCounts.length > 0) && (
+            // 第一部分：字幕组（单选）｜第二部分：标签（多选，同时满足）。手机：两行各自横滑；sm 以上：一行换行，竖线分隔
+            <div className="mb-3 space-y-2 sm:flex sm:flex-wrap sm:items-center sm:gap-1.5 sm:space-y-0">
+              {teams.length > 1 && (
+                <div className="-mx-3 flex items-center gap-1.5 overflow-x-auto px-3 scrollbar-none sm:contents">
+                  <FilterChip kind="team" active={!team} onClick={() => setTeam(null)}>
+                    全部
+                  </FilterChip>
+                  {teams.map(([name, n]) => (
+                    <FilterChip key={name} kind="team" active={team === name} count={n} onClick={() => setTeam(team === name ? null : name)}>
+                      {name}
+                    </FilterChip>
+                  ))}
+                </div>
+              )}
+              {teams.length > 1 && releaseTagCounts.length > 0 && <span aria-hidden className="mx-1 hidden h-4 w-px shrink-0 bg-border sm:block" />}
+              {releaseTagCounts.length > 0 && (
+                <div className="-mx-3 flex items-center gap-1.5 overflow-x-auto px-3 scrollbar-none sm:contents">
+                  {releaseTagCounts.map(([g, n]) => (
+                    <FilterChip
+                      key={g}
+                      active={picked.includes(g)}
+                      count={n}
+                      onClick={() => setPicked((p) => (p.includes(g) ? p.filter((x) => x !== g) : [...p, g]))}
+                    >
+                      {g}
+                    </FilterChip>
+                  ))}
+                </div>
+              )}
             </div>
           )}
           <Card className="overflow-hidden">
-            {torrents.length ? <TorrentList items={torrents} now={now} /> : <EmptyState icon={Film} title="暂无种子" description="字幕组发布后会自动出现在这里。" />}
+            {torrents.length ? (
+              <TorrentList items={torrents} now={now} />
+            ) : picked.length > 0 ? (
+              <EmptyState icon={Film} title="没有同时符合这些标签的种子" description="取消一些标签试试。" />
+            ) : (
+              <EmptyState icon={Film} title="暂无种子" description="字幕组发布后会自动出现在这里。" />
+            )}
           </Card>
         </section>
       </Container>
@@ -310,18 +349,36 @@ function Meta({ icon: Icon, label, children }: { icon: typeof Tv; label: string;
   )
 }
 
-function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+/** 筛选标签：与番剧标签同样的小圆角框；字幕组选中为蓝色，其余选中为绿色 */
+function FilterChip({
+  active,
+  onClick,
+  count,
+  kind,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  count?: number
+  kind?: "team"
+  children: React.ReactNode
+}) {
   return (
     <button
       type="button"
       aria-pressed={active}
       onClick={onClick}
       className={cn(
-        "inline-flex h-9 shrink-0 items-center rounded-full border px-3.5 text-[13px] font-medium transition-colors",
-        active ? "border-primary bg-primary text-white" : "bg-card text-foreground/80 hover:border-primary hover:text-primary-text",
+        "inline-flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 text-xs font-medium transition-colors",
+        active
+          ? kind === "team"
+            ? "border-accent bg-accent-soft text-accent-text"
+            : "border-primary bg-primary-soft text-primary-text"
+          : "border-border bg-card text-foreground/75 hover:border-primary/60 hover:text-primary-text",
       )}
     >
       {children}
+      {count !== undefined && <span className="text-[11px] tabular-nums opacity-60">{count}</span>}
     </button>
   )
 }

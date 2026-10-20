@@ -11,7 +11,7 @@ export function useSwarmViewer(): Viewer {
 }
 
 /**
- * 做种统计两行（BT / RTC）：三列网格 —— 名称左对齐、↑ 与 ↑ 对齐、↓ 与 ↓ 对齐（位数不同也对齐）。
+ * 做种统计两行（BT / RTC）：网格 —— 名称左对齐，↑、↓ 上下对齐，人数右对齐。
  * 未统计 / tracker 无响应时该行显示「—」。
  */
 export function SwarmGrid({ swarm }: { swarm?: SwarmStats | null }) {
@@ -22,7 +22,7 @@ export function SwarmGrid({ swarm }: { swarm?: SwarmStats | null }) {
     { name: "RTC", full: "WebRTC", up: known ? s!.wt_seeders : null, down: known ? s!.wt_leechers : null },
   ]
   return (
-    <span className="grid grid-cols-[auto_auto_auto] gap-x-1.5 text-left tabular-nums">
+    <span className="grid grid-cols-[auto_auto_auto_auto_auto] gap-x-0.5 text-left tabular-nums [&>span>:nth-child(2)]:ml-1 [&>span>:nth-child(4)]:ml-1.5">
       {rows.map((r) => {
         const title = !known
           ? "做种人数尚未统计"
@@ -33,16 +33,18 @@ export function SwarmGrid({ swarm }: { swarm?: SwarmStats | null }) {
           <span key={r.name} className="contents" title={title}>
             <span title={title}>{r.name}</span>
             {r.up === null ? (
-              <span className="col-span-2" title={title} aria-label="未知">
+              <span className="col-span-4 text-right" title={title} aria-label="未知">
                 —
               </span>
             ) : (
               <>
-                <span title={title} aria-label="做种">
-                  ↑{r.up}
+                <span aria-hidden>↑</span>
+                <span className="text-right" title={title} aria-label="做种">
+                  {r.up}
                 </span>
-                <span title={title} aria-label="下载中">
-                  ↓{r.down ?? 0}
+                <span aria-hidden>↓</span>
+                <span className="text-right" title={title} aria-label="下载中">
+                  {r.down ?? 0}
                 </span>
               </>
             )}

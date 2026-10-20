@@ -1,5 +1,5 @@
 // 种子 / 资源行（番剧页、搜索页的种子列表与单集页的资源列表共用）：
-// 左侧：标签行 · 标题 · 大小与发布时间，超长时整块可左右滑动；右侧固定：分数 / BT / WebRTC。
+// 左侧：标签行 · 标题 · 大小与发布时间，超长时整块可左右滑动；右侧固定：BT / RTC / 分数。
 import type { ReactNode } from "react"
 import { HardDrive } from "lucide-react"
 import { AccessBadge } from "./badges"
@@ -88,12 +88,12 @@ export function ReleaseRowBody({
           )}
         </span>
       </span>
-      {/* 右：固定不动 —— 分数 / BT / WebRTC */}
+      {/* 右：固定不动 —— BT / RTC / 分数 */}
       <span className="flex shrink-0 flex-col items-end justify-between text-right text-[11px] leading-5 tabular-nums text-muted-foreground">
+        <SwarmGrid swarm={swarm} />
         <span className={cn("font-medium", score && score.score < 0 ? "text-destructive-text" : "text-foreground/80")} title={score ? describeScore(score) : undefined}>
           {score ? `${score.score > 0 ? "+" : ""}${Math.round(score.score)} 分` : "\u00a0"}
         </span>
-        <SwarmGrid swarm={swarm} />
       </span>
     </>
   )
