@@ -3,6 +3,7 @@ package meta
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -240,14 +241,50 @@ func titleSeasonFits(title string, w *Work) bool {
 	return ws == ts || (ts == 1 && ws == 0)
 }
 
-// workSeason is the season number a work's own titles state (0 = none).
+// workSeason is the season number a work's own titles state (0 = none): season markers
+// (第2期, Season 2, S2, Ⅱ …), else a sequel number ending a title ("Cyberpunk: Edgerunners 2",
+// "エッジランナーズ２").
 func workSeason(w *Work) float64 {
-	for _, n := range append([]string{w.TitleCN, w.Title}, w.Aliases...) {
+	names := append([]string{w.TitleCN, w.Title}, w.Aliases...)
+	for _, n := range names {
 		if v := nameHint(n).Season; v > 0 {
 			return v
 		}
 	}
+	// sequel numbers: the main titles only (aliases are noisy)
+	for _, n := range []string{w.TitleCN, w.Title} {
+		if v := sequelNumber(n); v > 0 {
+			return v
+		}
+	}
 	return 0
+}
+
+// reSequelNumber: a title ending in a lone 2–9 (ASCII or full-width) after a non-digit,
+// optionally space-separated. The number must not be part of a name: "Kaiju No. 8",
+// "怪兽8号" (ends in 号, no match), "#8", "Vol. 2", "Part 2" (a cour, not a season),
+// "らんま1/2" (a fraction), "今日の5の2", "Lv2".
+var (
+	reSequelNumber = regexp.MustCompile(`([^\d０-９.#/／の])[\s\x{3000}]*([2-9２-９])$`)
+	reSequelNotNum = regexp.MustCompile(`(?i)(?:\bno|\bnum|\bvol|\bpart|\bep|\bepisode|lv|パート|第|＃)[\s.:：\x{3000}]*[2-9２-９]$`)
+)
+
+// sequelNumber is the sequel number ending a work title (0 = none).
+func sequelNumber(title string) float64 {
+	t := strings.TrimSpace(title)
+	m := reSequelNumber.FindStringSubmatch(t)
+	if m == nil || reSequelNotNum.MatchString(t) {
+		return 0
+	}
+	body := strings.TrimSpace(strings.TrimSuffix(t, m[2]))
+	if utf8.RuneCountInString(body) < 2 {
+		return 0
+	}
+	r, _ := utf8.DecodeRuneInString(m[2])
+	if r >= '２' && r <= '９' {
+		return float64(r - '０')
+	}
+	return float64(r - '0')
 }
 
 // titleFragments splits a torrent title into the parts that may be a whole title: bracket
