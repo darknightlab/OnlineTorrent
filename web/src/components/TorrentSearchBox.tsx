@@ -63,7 +63,7 @@ export function TorrentSearchBox({
         className={cn(
           "w-full border border-input bg-card text-foreground transition-colors placeholder:text-muted-foreground/80 focus:border-primary focus:outline-none [&::-webkit-search-cancel-button]:hidden",
           entry && "cursor-pointer",
-          lg ? "h-12 rounded-xl pl-4 pr-[7.25rem] text-[15px] focus:ring-2 focus:ring-primary/25 sm:h-14 sm:pl-5 sm:pr-32 sm:text-base" : "h-9 rounded-lg bg-muted/60 pl-3 pr-10 text-base md:text-sm",
+          lg ? "h-12 rounded-xl pl-4 pr-[7.25rem] text-[15px] focus:ring-2 focus:ring-primary/25 sm:h-14 sm:pl-5 sm:pr-32 sm:text-base" : "h-9 rounded-lg bg-muted/60 pl-3 pr-10 text-base sm:text-sm",
         )}
       />
       {lg ? (

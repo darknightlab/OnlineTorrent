@@ -219,7 +219,7 @@ function Group({
       {open && (
         <>
           {/* 桌面：矩阵 */}
-          <div role="table" aria-label={`${name}接口权限`} className="hidden border-t md:block">
+          <div role="table" aria-label={`${name}接口权限`} className="hidden border-t sm:block">
             <div role="row" className="grid grid-cols-[minmax(0,1fr)_repeat(4,5.5rem)] items-center border-b bg-muted/40 px-5 text-xs font-medium text-muted-foreground lg:grid-cols-[minmax(0,1fr)_repeat(4,6.5rem)]">
               <span role="columnheader" className="py-2">
                 接口
@@ -238,7 +238,7 @@ function Group({
           </div>
 
           {/* 移动端：卡片 */}
-          <ul className="divide-y border-t md:hidden">
+          <ul className="divide-y border-t sm:hidden">
             {items.map((i) => (
               <MobileRow key={i.key} item={i} min={draft[i.key] ?? null} baseMin={base[i.key] ?? null} onSet={(m) => onSet(i.key, m)} />
             ))}

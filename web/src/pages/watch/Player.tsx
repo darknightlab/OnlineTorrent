@@ -453,7 +453,7 @@ export function Player({
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-5 xl:grid-cols-[minmax(0,1fr)_400px]">
       <section className="min-w-0">
         {/* 播放区：移动端吸顶、全宽 */}
-        <div className="sticky top-[env(safe-area-inset-top)] z-20 -mx-3 bg-black sm:-mx-4 md:top-14 lg:static lg:mx-0 lg:overflow-hidden lg:rounded-xl">
+        <div className="sticky top-[env(safe-area-inset-top)] z-20 -mx-3 bg-black sm:-mx-4 sm:top-14 lg:static lg:mx-0 lg:overflow-hidden lg:rounded-xl">
           <div className="relative aspect-video w-full overflow-hidden bg-black select-none">
             {/* 未出画面时：竖版封面两侧用模糊背景填满，避免大片纯黑 */}
             {poster && !url && (
@@ -542,7 +542,7 @@ export function Player({
         ) : (
           <>
             {/* 标题与操作 */}
-            <div className="mt-3 flex flex-col gap-3 sm:mt-4 md:flex-row md:items-start md:justify-between">
+            <div className="mt-3 flex flex-col gap-3 sm:mt-4 sm:flex-row sm:items-start sm:justify-between">
               <div className="min-w-0">
                 <h1 className="line-clamp-2 wrap-anywhere text-[15px] font-semibold leading-snug sm:text-lg" title={title}>
                   {title}
@@ -574,30 +574,30 @@ export function Player({
                 </div>
               </div>
               <div className="flex shrink-0 gap-2">
-                <Button variant="soft" size="sm" onClick={share} className="flex-1 md:flex-none">
+                <Button variant="soft" size="sm" onClick={share} className="flex-1 sm:flex-none">
                   <Share2 />
                   分享
                 </Button>
                 {file && url ? (
-                  <Button asChild variant="outline" size="sm" className="flex-1 md:flex-none">
+                  <Button asChild variant="outline" size="sm" className="flex-1 sm:flex-none">
                     <a href={url} download={file.name}>
                       <Download />
                       下载
                     </a>
                   </Button>
                 ) : (
-                  <Button variant="outline" size="sm" disabled className="flex-1 md:flex-none">
+                  <Button variant="outline" size="sm" disabled className="flex-1 sm:flex-none">
                     <Download />
                     下载
                   </Button>
                 )}
                 {canReport ? (
-                  <Button variant="ghost" size="sm" onClick={() => setReportOpen(true)} disabled={!infoHash} className="flex-1 text-muted-foreground md:flex-none">
+                  <Button variant="ghost" size="sm" onClick={() => setReportOpen(true)} disabled={!infoHash} className="flex-1 text-muted-foreground sm:flex-none">
                     <Flag />
                     举报
                   </Button>
                 ) : meReady && !loggedIn ? (
-                  <Button asChild variant="ghost" size="sm" className="flex-1 text-muted-foreground md:flex-none">
+                  <Button asChild variant="ghost" size="sm" className="flex-1 text-muted-foreground sm:flex-none">
                     <Link to={loginHref} title="登录后可举报该资源">
                       <Flag />
                       举报

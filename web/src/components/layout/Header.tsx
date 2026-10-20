@@ -27,13 +27,13 @@ export function Header() {
     <header
       className={cn(
         "sticky top-0 z-40 border-b bg-header pt-safe backdrop-blur-md supports-[backdrop-filter]:bg-header",
-        !isAdmin && "hidden md:block",
+        !isAdmin && "hidden sm:block",
       )}
     >
       <Container className="flex h-14 items-center gap-3">
         <Logo />
         <div className="ml-auto flex min-w-0 items-center gap-2">
-          {!onSearch && <TorrentSearchBox size="sm" className="hidden w-56 md:block lg:w-72" />}
+          {!onSearch && <TorrentSearchBox size="sm" className="hidden w-56 sm:block lg:w-72" />}
           <UserMenu />
         </div>
       </Container>

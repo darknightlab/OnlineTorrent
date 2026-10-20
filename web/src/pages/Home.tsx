@@ -79,7 +79,7 @@ function ScheduleSection() {
   return (
     <section aria-labelledby="schedule-title" id="schedule">
       <SectionHeader id="schedule-title" icon={CalendarDays} title="新番时间表" />
-      <div role="tablist" aria-label="选择星期" className="mb-3 grid grid-cols-7 border-b sm:mb-4 md:flex md:gap-1">
+      <div role="tablist" aria-label="选择星期" className="mb-3 grid grid-cols-7 border-b sm:mb-4 sm:flex sm:gap-1">
         {WEEK_ORDER.map((w) => {
           const active = w === day
           const isToday = w === today
@@ -96,13 +96,13 @@ function ScheduleSection() {
                 embla?.scrollTo(WEEK_ORDER.indexOf(w))
               }}
               className={cn(
-                "relative -mb-px flex h-10 items-center justify-center border-b-2 text-sm font-medium transition-colors md:px-4",
+                "relative -mb-px flex h-10 items-center justify-center border-b-2 text-sm font-medium transition-colors sm:px-4",
                 active ? "border-primary text-primary-text" : "border-transparent text-muted-foreground hover:text-foreground",
                 !active && isToday && "text-primary-text",
               )}
             >
               {WEEKDAYS[w]}
-              {isToday && !active && <span aria-hidden className="absolute right-[18%] top-2 h-1.5 w-1.5 rounded-full bg-primary md:right-1.5" />}
+              {isToday && !active && <span aria-hidden className="absolute right-[18%] top-2 h-1.5 w-1.5 rounded-full bg-primary sm:right-1.5" />}
             </button>
           )
         })}

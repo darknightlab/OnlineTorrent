@@ -37,9 +37,9 @@ export function Shell() {
         className={cn(
           "flex-1",
           // 移动端没有顶栏：避开刘海/状态栏
-          !isAdmin && !mobileTopBarVisible(pathname) && "pt-safe md:pt-0",
+          !isAdmin && !mobileTopBarVisible(pathname) && "pt-safe sm:pt-0",
           // 为移动端底部 Tab 栏留出空间
-          !isAdmin && "pb-[calc(3.25rem+env(safe-area-inset-bottom))] md:pb-0",
+          !isAdmin && "pb-[calc(3.25rem+env(safe-area-inset-bottom))] sm:pb-0",
         )}
       >
         <Outlet />

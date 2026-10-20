@@ -12,7 +12,7 @@ export function MobileTabBar() {
   return (
     <nav
       aria-label="底部导航"
-      className="fixed inset-x-0 bottom-0 z-40 border-t bg-header pb-safe backdrop-blur-md md:hidden"
+      className="fixed inset-x-0 bottom-0 z-40 border-t bg-header pb-safe backdrop-blur-md sm:hidden"
     >
       <div className="grid h-[3.25rem] grid-cols-2">
         {tabs.map((t) => (

@@ -66,7 +66,7 @@ export function DataView<T>({
   const titleCol = columns.find((c) => c.mobile === "title") ?? columns[0]
   return (
     <>
-      <Card className="hidden overflow-hidden md:block">
+      <Card className="hidden overflow-hidden sm:block">
         <Table>
           <TableHeader>
             <TableRow className="hover:bg-transparent">
@@ -96,7 +96,7 @@ export function DataView<T>({
           </TableBody>
         </Table>
       </Card>
-      <ul className="grid gap-2.5 md:hidden">
+      <ul className="grid gap-2.5 sm:hidden">
         {rows.map((r) => (
           <li key={rowKey(r)}>
             <Card className="p-3.5">

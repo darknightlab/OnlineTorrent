@@ -20,7 +20,7 @@ function safeNext(next: string | null) {
 
 function AuthCard({ title, subtitle, children, footer }: { title: string; subtitle: ReactNode; children: ReactNode; footer: ReactNode }) {
   return (
-    <Container className="flex min-h-[calc(100dvh-3rem-3.25rem)] items-center justify-center py-8 md:min-h-[calc(100dvh-3.5rem-6rem)]">
+    <Container className="flex min-h-[calc(100dvh-3rem-3.25rem)] items-center justify-center py-8 sm:min-h-[calc(100dvh-3.5rem-6rem)]">
       <div className="w-full max-w-sm">
         <div className="mb-5 flex flex-col items-center text-center">
           <LogoMark className="h-11 w-11" />

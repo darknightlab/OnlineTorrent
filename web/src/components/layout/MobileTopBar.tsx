@@ -18,7 +18,7 @@ export function MobileTopBar() {
   if (!mobileTopBarVisible(pathname)) return null
 
   return (
-    <div className="bg-background pt-safe md:hidden">
+    <div className="bg-background pt-safe sm:hidden">
       <div className={isHome ? "flex items-center px-3 pt-3" : "flex h-12 items-center justify-end px-2"}>
         {isHome ? (
           // 与搜索页同一个搜索框组件（只读），点一下进入搜索页（搜索页会自动聚焦输入框）
