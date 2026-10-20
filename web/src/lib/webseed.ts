@@ -169,6 +169,16 @@ export class WebseedSubscription {
     this.set("stopped")
   }
 
+  /**
+   * 立即重新连接：需要新的边缘节点令牌时（服务器在连接时重发 seed 及令牌）。已结束（done：全部完整，
+   * 服务器不再推送令牌刷新）的订阅也重新打开——否则令牌过期后边缘节点只会回 401。stop 之后不做。
+   */
+  reconnect() {
+    if (this.st === "stopped") return
+    this.clearTimer()
+    this.connect()
+  }
+
   /** 页面可见 / 网络恢复：如果正在等待重试，立即重连 */
   kick() {
     if (this.st !== "waiting-retry") return

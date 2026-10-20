@@ -272,10 +272,12 @@ const ev = async (code) => {
 const stat = { edge: { 206: 0, 200: 0, 503: 0, 401: 0, other: 0, bytes: 0 }, main: { n: 0, bytes: 0 }, preflight: 0, auth: new Set(), noAuth: 0, cookieToEdge: 0 }
 const reqs = new Map()
 const allRequests = []
+const cdpListeners = new Set() // EXTRA modules: (method, params) => void
 ws.onmessage = (m) => {
   const d = JSON.parse(m.data)
   if (d.id && pend.has(d.id)) { pend.get(d.id)(d); pend.delete(d.id); return }
   const p = d.params
+  for (const l of cdpListeners) try { l(d.method, p) } catch (e) { console.error("listener", e) }
   switch (d.method) {
     case "Runtime.consoleAPICalled":
       if (p.type === "error") consoleErr.push(p.args.map((a) => a.value ?? a.description).join(" ").slice(0, 200))
@@ -380,7 +382,7 @@ const checks = {
 // extra checks (e.g. e2e/subtitles/checks.mjs): run against the same page
 if (process.env.EXTRA) {
   const extra = await import(path.resolve(process.env.EXTRA))
-  Object.assign(checks, await extra.default({ ev, send, sleep, consoleErr, consoleAll, RUN, requests: allRequests }))
+  Object.assign(checks, await extra.default({ ev, send, sleep, consoleErr, consoleAll, RUN, requests: allRequests, onCDP: (l) => (cdpListeners.add(l), () => cdpListeners.delete(l)), EDGE_URL, SITE }))
 }
 console.log(`\nplayback started at +${playAt}s; edge ${JSON.stringify(stat.edge)}; preflights ${stat.preflight}; tokens seen ${stat.auth.size}`)
 for (const [k, v] of Object.entries(checks)) console.log(`${v ? "  ok  " : "  FAIL"} ${k}`)

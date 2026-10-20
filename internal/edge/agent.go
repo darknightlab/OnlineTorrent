@@ -572,6 +572,8 @@ func (a *Agent) serveWebseed(w http.ResponseWriter, r *http.Request) {
 	body, err := a.disk.ReadRange(ctx, ih, fi, start, end)
 	switch {
 	case errors.Is(err, ErrNotAvailable):
+		// The browser tells expected 503s from failures by these bodies ("pieces not downloaded
+		// yet", "busy"; web/src/lib/webseedhealth.ts classifyResponse): keep them in sync.
 		h.Set("Retry-After", "5")
 		fail(http.StatusServiceUnavailable, "pieces not downloaded yet")
 		return

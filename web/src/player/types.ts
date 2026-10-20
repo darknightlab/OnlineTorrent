@@ -44,6 +44,8 @@ export interface SessionEvents {
   log: (level: LogLevel, msg: string) => void
   /** 无法继续（如播放器内核不兼容）；会话已停止 */
   fatal: (msg: string) => void
+  /** 边缘节点拒绝了令牌（401/403）：请重新连接 WebSeed 状态订阅以取得新令牌 */
+  webseedToken: (url: string) => void
 }
 
 export interface Session {
@@ -63,6 +65,8 @@ export interface Session {
   updateWebSeed?(url: string, ev: WebSeedUpdate): void
   /** 换上边缘节点的新访问令牌（SSE token 事件；URL 不变） */
   setWebSeedToken?(url: string, token: string): void
+  /** SSE 又推送了该 WebSeed（重连后的 ready / seed）：停用中的立即重新启用 */
+  webSeedRefreshed?(url: string): void
   /** WebSeed 已宣告的分块数（日志用） */
   /** 该 WebSeed 已有的分块数（正在播放的文件范围内） */
   webSeedPieces?(url: string): { have: number; of: number } | null

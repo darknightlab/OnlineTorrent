@@ -158,6 +158,24 @@ test("subscription: kick reconnects immediately while waiting; stop cancels", ()
   assert.equal(h.sub.state, "stopped")
 })
 
+test("subscription: reconnect (edge token rejected) reopens now — also after done; not after stop", () => {
+  const h = harness()
+  h.sub.start()
+  h.opened[0].emit("ready", { pieces: 4, seeds: [{ url: "E", have: [0, 3], complete: true, token: "t1", exp: 1 }] })
+  h.opened[0].emit("done", {})
+  assert.equal(h.sub.state, "finished")
+  h.sub.reconnect() // tokens are not refreshed on a finished stream: reopen to get a new one
+  assert.equal(h.opened.length, 2)
+  h.opened[1].emit("ready", { pieces: 4, seeds: [{ url: "E", have: [0, 3], complete: true, token: "t2", exp: 2 }] })
+  assert.ok(h.log.at(-1)!.endsWith("t2 2"))
+  h.sub.reconnect() // while open: a fresh connection, the old one closed
+  assert.ok(h.opened[1].closed)
+  assert.equal(h.opened.length, 3)
+  h.sub.stop()
+  h.sub.reconnect()
+  assert.equal(h.opened.length, 3)
+})
+
 test("subscription: unavailable / timeout escalate the backoff (no reset) and call the handler first", async () => {
   const h = harness()
   h.sub.start()

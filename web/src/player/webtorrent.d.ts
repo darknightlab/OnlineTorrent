@@ -52,6 +52,8 @@ declare module "webtorrent/dist/webtorrent.min.js" {
     destroy(opts?: { destroyStore?: boolean }, cb?: (err?: Error) => void): void
     on(ev: "metadata" | "ready" | "done" | "infoHash", cb: () => void): void
     on(ev: "error" | "warning", cb: (err: Error | string) => void): void
+    /** 分块校验通过（_markVerified） */
+    on(ev: "verified", cb: (index: number) => void): void
     on(ev: "wire", cb: (wire: WTWire, addr?: string) => void): void
     on(ev: "evicted", cb: (index: number) => void): void
     removeAllListeners(): void

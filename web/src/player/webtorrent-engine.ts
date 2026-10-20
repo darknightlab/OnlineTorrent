@@ -21,10 +21,12 @@ import {
   type FileLike,
   type PieceCtor,
   type WebSeedHandle,
+  observeWebSeed,
   type TorrentLike,
 } from "./store/internals"
 import { infoHashFromMagnet } from "./store/policy"
 import { applyRanges, bitsFromRanges, countPieces, resetToRanges } from "@/lib/webseed"
+import { classifyResponse, WebSeedHealth } from "@/lib/webseedhealth"
 import { SubtitleSource } from "./subs/source"
 import { readCuePoints } from "./subs/mkv"
 import { mp4Points } from "./timemap/mp4"
@@ -111,7 +113,7 @@ function addTorrent(client: WebTorrentT, id: string | Uint8Array, announce: stri
 }
 
 class WTSession implements Session {
-  private listeners: { [K in keyof SessionEvents]: Set<SessionEvents[K]> } = { metadata: new Set(), log: new Set(), fatal: new Set() }
+  private listeners: { [K in keyof SessionEvents]: Set<SessionEvents[K]> } = { metadata: new Set(), log: new Set(), fatal: new Set(), webseedToken: new Set() }
   private torrent!: WTTorrent
   private client: WebTorrentT
   private streaming: boolean
@@ -224,6 +226,13 @@ class WTSession implements Session {
     this.torrent = torrent
     this.instrument(torrent)
     const live = () => this.torrent === torrent && !this.destroyed
+    torrent.on("warning", (err: unknown) => {
+      const m = live() && /^Piece (\d+) failed verification/.exec(String((err as Error)?.message ?? err))
+      if (m) this.onHashFail(Number(m[1]))
+    })
+    torrent.on("verified", (i: number) => {
+      if (live() && this.webseeds.size) this.onVerified(i)
+    })
     torrent.on("metadata", () => {
       if (!live()) return
       // ut_metadata 需要已连接的节点；没有任何连接就拿到元数据，说明来自 xs=（HTTP）
@@ -498,8 +507,8 @@ class WTSession implements Session {
     return this.blobURL
   }
 
-  /** WebSeed → 服务器可提供的分块（null = 全部，旧协议 / 文件已完整） */
-  private webseeds = new Map<string, { bits: Uint8Array | null; pieces: number; handle: WebSeedHandle | null }>()
+  /** WebSeed → 服务器可提供的分块（null = 全部，旧协议 / 文件已完整）、健康状态 */
+  private webseeds = new Map<string, WebSeedEntry>()
 
   addWebSeed(url: string, avail?: WebSeedAvail) {
     if (this.destroyed || this.webseeds.has(url)) return false
@@ -514,27 +523,65 @@ class WTSession implements Session {
       pieces = avail.pieces
       bits = bitsFromRanges(pieces, avail.have)
     }
-    const e = { bits, pieces, handle: null as WebSeedHandle | null }
+    const e: WebSeedEntry = { bits, pieces, handle: null, health: null as unknown as WebSeedHealth, unobserve: () => {} }
+    // 健康：连续失败停用、退避重试（lib/webseedhealth）；日志只在状态变化时
+    e.health = new WebSeedHealth({
+      onDisable: (n, ms) => {
+        e.handle?.pause()
+        this.log("warn", `WebSeed 暂时不可用，已停用（${n} 次失败），${Math.round(ms / 1000)} 秒后重试`)
+      },
+      onEnable: () => e.handle?.resume(),
+      onRecovered: () => this.log("info", "WebSeed 已恢复"),
+      onTokenRefresh: () => this.listeners.webseedToken.forEach((cb) => cb(url)),
+    })
+    e.unobserve = observeWebSeed(url, (o) => {
+      if (this.destroyed) return
+      if ("error" in o) return e.health.failure("network")
+      const c = classifyResponse(o.status, o.body)
+      if (c === "ok") e.health.success("transport")
+      else if (c !== "expected") e.health.failure(c)
+    })
     this.webseeds.set(url, e)
     if (avail?.token) setEdgeToken(url, avail.token)
     return this.attachWebSeed(this.torrent, url, e)
   }
 
   setWebSeedToken(url: string, token: string) {
-    if (!this.destroyed && this.webseeds.has(url)) setEdgeToken(url, token)
+    const e = this.webseeds.get(url)
+    if (this.destroyed || !e) return
+    setEdgeToken(url, token)
+    e.health.refreshed("token")
   }
 
-  private attachWebSeed(t: WTTorrent, url: string, e: { bits: Uint8Array | null; handle: WebSeedHandle | null }) {
+  webSeedRefreshed(url: string) {
+    this.webseeds.get(url)?.health.refreshed("seed")
+  }
+
+  /** 校验失败的分块：归到最近提供它的 WebSeed */
+  private onHashFail(i: number) {
+    for (const e of this.webseeds.values()) if (e.handle?.delivered(i)) e.health.failure("hash")
+  }
+
+  /** 校验通过的分块：提供它的 WebSeed 数据是好的 */
+  private onVerified(i: number) {
+    for (const e of this.webseeds.values()) if (e.handle?.delivered(i)) e.health.success("verified")
+  }
+
+  private attachWebSeed(t: WTTorrent, url: string, e: WebSeedEntry) {
     try {
       t.addWebSeed(url)
     } catch (err) {
       this.log("warn", `WebSeed 添加失败：${String(err)}`)
       return false
     }
-    if (!e.bits) return true
+    // 元数据还没到：连接要等元数据（换种子后 swap 里重新 attach）
+    const n = t.pieces?.length ?? 0
+    if (!e.bits && !n) return true
     try {
-      // 只宣告服务器已有的分块（qB 还在下载时），之后由 updateWebSeed 增减
-      e.handle = patchWebSeed(t as unknown as TorrentLike, url, e.bits)
+      // 只宣告服务器已有的分块（qB 还在下载时），之后由 updateWebSeed 增减；完整的服务器宣告全部
+      // （同样经过 patch：停用时要能撤回宣告）
+      e.handle = patchWebSeed(t as unknown as TorrentLike, url, e.bits ?? fullBits(n))
+      if (e.health.state === "disabled") e.handle.pause()
     } catch (err) {
       if (err instanceof IncompatibleError) this.setFatal(err.message)
       else this.log("warn", `WebSeed 分块宣告失败：${String(err)}`)
@@ -573,7 +620,11 @@ class WTSession implements Session {
   destroy() {
     if (this.destroyed) return
     this.destroyed = true
-    for (const url of this.webseeds.keys()) setEdgeToken(url, null)
+    for (const [url, e] of this.webseeds) {
+      setEdgeToken(url, null)
+      e.unobserve()
+      e.health.destroy()
+    }
     this.listeners.metadata.clear()
     this.listeners.log.clear()
     this.listeners.fatal.clear()
@@ -658,4 +709,18 @@ function tapIterator<T extends AsyncIterator<Uint8Array>>(inner: T, tap: Cluster
     reader: (inner as unknown as { reader?: unknown }).reader,
   }
   return it
+}
+
+interface WebSeedEntry {
+  bits: Uint8Array | null
+  pieces: number
+  handle: WebSeedHandle | null
+  health: WebSeedHealth
+  unobserve: () => void
+}
+
+function fullBits(n: number) {
+  const b = new Uint8Array(Math.ceil(n / 8)).fill(255)
+  if (n % 8) b[b.length - 1] = (255 << (8 - (n % 8))) & 255
+  return b
 }

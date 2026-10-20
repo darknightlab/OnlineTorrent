@@ -84,6 +84,7 @@ const src = (o: any, k: string) => (fn(o, k) ? normSource(Function.prototype.toS
 /** 标识符或 this（压缩器可能写成 let n=this; n.pieces[...]） */
 const ID = String.raw`(?:this|[\w$]+)`
 const RE = {
+  hashFailWarning: /Piece \$\{[\w$]+\} failed verification|"Piece "\s*\+\s*[\w$]+\s*\+\s*" failed verification"/,
   haveAll: /\.haveAll\(\s*\)/,
   onRequest: /\.on\(\s*"request"\s*,/,
   // 'request' 处理里先看 pieces[i]（缺失就不回应），再 store.get
@@ -180,7 +181,7 @@ export function checkWebSeedConn(t: any, url: string): string[] {
   if (!(t?._peers instanceof Map)) return ["Torrent._peers（Map）"]
   const conn = t._peers.get(url)?.conn
   if (!conn) return ["Torrent._peers.get(url).conn（WebSeed 连接）"]
-  for (const k of ["bitfield", "have", "handshake", "on"]) if (!fn(conn, k)) p.push(`WebConn.${k}()`)
+  for (const k of ["bitfield", "have", "handshake", "on", "httpRequest"]) if (!fn(conn, k)) p.push(`WebConn.${k}()`)
   if (!fn(conn.lt_donthave, "donthave")) p.push("WebConn.lt_donthave.donthave()")
   if (conn.connId !== url) p.push("WebConn.connId")
   const init = src(Object.getPrototypeOf(conn), "_init")
@@ -188,6 +189,7 @@ export function checkWebSeedConn(t: any, url: string): string[] {
   else {
     if (!/\.once\(\s*"handshake"/.test(init) || !/\.bitfield\(/.test(init)) p.push("WebConn 不再在 handshake 后用 bitfield() 宣告分块")
     if (!/\.have\(/.test(init)) p.push("WebConn 请求失败后不再用 have() 重新宣告分块")
+    if (!/\.httpRequest\(/.test(init)) p.push("WebConn 不再通过 this.httpRequest() 取数据（WebSeed 健康统计需要）")
   }
   return p
 }
@@ -201,6 +203,9 @@ export function checkBundleSource(code: string): string[] {
   if (!/lt_donthave/.test(code)) p.push("lt_donthave 扩展")
   // WebSeed 的 fetch 在模块加载时取自 self.fetch（installEdgeFetch 必须在 import 之前）
   if (!/=\s*self\.fetch\s*\|\|/.test(code)) p.push("WebSeed 请求不再使用加载时的 self.fetch（边缘节点令牌注入方式需要调整）")
+  // WebSeed 健康：校验失败的分块要归到提供它的 WebSeed（engine 监听 torrent 的 warning）
+  if (!/\.emit\(\s*["'`]verified["'`]/.test(code)) p.push("Torrent 不再 emit('verified', index)（WebSeed 健康统计需要）")
+  if (!RE.hashFailWarning.test(code) && !RE.hashFailWarning.test(normSource(code))) p.push("校验失败不再以 warning「Piece N failed verification」报告（WebSeed 健康统计需要）")
   return p
 }
 
@@ -244,6 +249,50 @@ export function edgeTokenFor(url: string): string | null {
 
 const WRAPPED = Symbol.for("ot.edgeFetch")
 
+/** WebSeed 请求的结果（给 lib/webseedhealth）：status + 503 的正文，或网络错误 */
+export type WebSeedOutcome = { status: number; body: string } | { error: unknown }
+const observers = new Map<string, (o: WebSeedOutcome) => void>()
+
+/** 观察以 urlPrefix 开头的请求的结果；返回取消函数 */
+export function observeWebSeed(urlPrefix: string, cb: (o: WebSeedOutcome) => void) {
+  observers.set(urlPrefix, cb)
+  return () => {
+    if (observers.get(urlPrefix) === cb) observers.delete(urlPrefix)
+  }
+}
+
+function observerFor(url: string) {
+  let best: ((o: WebSeedOutcome) => void) | null = null
+  let bestLen = -1
+  for (const [prefix, cb] of observers) {
+    if (url.startsWith(prefix) && prefix.length > bestLen) {
+      best = cb
+      bestLen = prefix.length
+    }
+  }
+  return best
+}
+
+function observe(p: Promise<Response>, cb: ((o: WebSeedOutcome) => void) | null): Promise<Response> {
+  if (!cb) return p
+  return p.then(
+    (res) => {
+      // 503 的正文区分「还没下载到」（正常）与真正的故障；正文很短
+      if (res.status === 503)
+        res
+          .clone()
+          .text()
+          .then((body) => cb({ status: 503, body: body.slice(0, 200) }), () => cb({ status: 503, body: "" }))
+      else cb({ status: res.status, body: "" })
+      return res
+    },
+    (err) => {
+      cb({ error: err })
+      throw err
+    },
+  )
+}
+
 /**
  * 给全局 fetch 套一层：请求已登记的边缘节点地址时加 Authorization 头（凭据保持默认：跨源不带 Cookie）。
  * webtorrent 的浏览器包在模块加载时就取走了 self.fetch（cross-fetch-ponyfill），
@@ -256,13 +305,14 @@ export function installEdgeFetch(g: { fetch: typeof fetch } = globalThis as unkn
   const wrapped = ((input: Request | string | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request)?.url
     const tok = url ? edgeTokenFor(url) : null
-    if (!tok) return orig(input, init)
+    const cb = url ? observerFor(url) : null
+    if (!tok) return observe(orig(input, init), cb)
     const headers = new Headers(init?.headers ?? (typeof input === "object" && "headers" in input ? (input as Request).headers : undefined))
     headers.set("Authorization", `Bearer ${tok}`)
     // webtorrent sets cache: "no-store", with which Chromium skips its CORS preflight cache —
     // one extra round trip per piece. The edge answers Cache-Control: no-store anyway, so
     // nothing is stored with the default mode either.
-    return orig(input, { ...init, headers, cache: init?.cache === "no-store" ? "default" : init?.cache })
+    return observe(orig(input, { ...init, headers, cache: init?.cache === "no-store" ? "default" : init?.cache }), cb)
   }) as typeof fetch & { [WRAPPED]?: boolean }
   wrapped[WRAPPED] = true
   g.fetch = wrapped
@@ -275,6 +325,12 @@ export interface WebSeedHandle {
   add(pieces: number[]): void
   /** 服务器不再能提供的分块（例如边缘节点断开） */
   remove(pieces: number[]): void
+  /** 停用（WebSeed 健康）：撤回全部宣告、不再宣告，webtorrent 就不会再向它请求 */
+  pause(): void
+  /** 重新启用：重新宣告服务器已有的分块 */
+  resume(): void
+  /** 该分块最近（60 s 内）是否由此 WebSeed 提供（校验失败的归属） */
+  delivered(i: number): boolean
 }
 
 /**
@@ -291,29 +347,60 @@ export function patchWebSeed(t: TorrentLike, url: string, bits: Uint8Array): Web
   const origHave = conn.have.bind(conn)
   const has = (i: number) => (bits[i >> 3] & (128 >> (i & 7))) !== 0
   let announced = false
-  // handshake 后的初始宣告：换成服务器的 bitfield
+  let paused = false
+  const donthave = (i: number) => {
+    try {
+      conn.lt_donthave.donthave(i)
+    } catch {
+      /* 对方还没完成扩展握手 */
+    }
+  }
+  // handshake 后的初始宣告：换成服务器的 bitfield（停用中则为空）
   conn.bitfield = () => {
     announced = true
-    origBitfield(bits.slice())
+    origBitfield(paused ? new Uint8Array(bits.length) : bits.slice())
   }
   // WebConn 在请求失败 10 s 后 have(i) 重新宣告：只宣告服务器仍有的
   conn.have = (i: number) => {
-    if (has(i)) origHave(i)
+    if (has(i) && !paused) origHave(i)
+  }
+  // 记下由它提供的分块（校验失败时归属到这个 WebSeed）。种子那一侧的 Wire 是另一个对象（与 WebConn
+  // 互相 pipe），WebConn 收到 request 消息后调用 this.httpRequest()，所以在这里包一层
+  const served = new Map<number, number>()
+  const origHttp = conn.httpRequest.bind(conn)
+  conn.httpRequest = (index: number, offset: number, length: number, cb: (err: Error | null, chunk?: Uint8Array) => void) =>
+    origHttp(index, offset, length, (err: Error | null, chunk?: Uint8Array) => {
+      if (!err) {
+        if (served.size > 2000) served.clear()
+        served.set(index, Date.now())
+      }
+      cb(err, chunk)
+    })
+  const each = (f: (i: number) => void) => {
+    for (let i = 0; i < bits.length * 8; i++) if (has(i)) f(i)
   }
   return {
     add(pieces) {
-      if (!announced || conn.destroyed) return // 还没发 bitfield：bits 已更新，发 bitfield 时一并宣告
+      if (!announced || conn.destroyed || paused) return // 还没发 bitfield：bits 已更新，发 bitfield 时一并宣告
       for (const i of pieces) if (has(i)) origHave(i)
     },
     remove(pieces) {
       if (!announced || conn.destroyed) return
-      for (const i of pieces) {
-        try {
-          conn.lt_donthave.donthave(i)
-        } catch {
-          /* 对方还没完成扩展握手 */
-        }
-      }
+      for (const i of pieces) donthave(i)
+    },
+    pause() {
+      if (paused) return
+      paused = true
+      if (announced && !conn.destroyed) each(donthave)
+    },
+    resume() {
+      if (!paused) return
+      paused = false
+      if (announced && !conn.destroyed) each(origHave)
+    },
+    delivered(i) {
+      const t = served.get(i)
+      return t !== undefined && Date.now() - t < 60_000
     },
   }
 }

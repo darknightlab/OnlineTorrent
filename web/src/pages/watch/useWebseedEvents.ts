@@ -45,7 +45,6 @@ export function useWebseedEvents({
     if (!session || !ih || !armed || done || fileIndex === undefined) return
     const st = states.current.get(session) ?? { urls: new Set<string>(), complete: false, last: "", edges: 0 }
     states.current.set(session, st)
-    if (st.complete) return
     const say = (level: LogLevel, msg: string, key: string) => {
       if (st.last === key) return
       st.last = key
@@ -60,8 +59,9 @@ export function useWebseedEvents({
       {
         seed: ({ url, pieces, have, complete, token }) => {
           if (st.urls.has(url)) {
-            // 重连后服务器重发：同步分块、换上新令牌
+            // 重连后服务器重发：同步分块、换上新令牌；停用中的 WebSeed 立即重新启用
             if (token) session.setWebSeedToken?.(url, token)
+            session.webSeedRefreshed?.(url)
             session.updateWebSeed?.(url, complete ? { complete: true } : have ? { reset: have } : {})
             return
           }
@@ -100,7 +100,10 @@ export function useWebseedEvents({
         },
       },
     )
-    sub.start()
+    // 全部完整（done）后不再订阅；但边缘节点拒绝了令牌时（过期）要重新打开取新令牌
+    // （服务器连接时重发 seed 及令牌，随即 done）。频率限制在每个 WebSeed 的健康状态里。
+    if (!st.complete) sub.start()
+    const offToken = session.on("webseedToken", () => (sub.state === "stopped" ? sub.start() : sub.reconnect()))
     const kick = () => {
       if (document.visibilityState === "visible") sub.kick()
     }
@@ -109,6 +112,7 @@ export function useWebseedEvents({
     return () => {
       document.removeEventListener("visibilitychange", kick)
       window.removeEventListener("online", kick)
+      offToken()
       sub.stop()
     }
   }, [session, ih, armed, fileIndex, done, log])

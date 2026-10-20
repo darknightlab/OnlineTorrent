@@ -7,7 +7,7 @@ const PIECE = 1024 * 1024
 const MOCK_VIDEO = new URLSearchParams(location.search).get("mock_video")
 
 class MockSession implements Session {
-  private listeners: { [K in keyof SessionEvents]: Set<SessionEvents[K]> } = { metadata: new Set(), log: new Set(), fatal: new Set() }
+  private listeners: { [K in keyof SessionEvents]: Set<SessionEvents[K]> } = { metadata: new Set(), log: new Set(), fatal: new Set(), webseedToken: new Set() }
   private timer = 0
   private ready = false
   private done: Uint8Array = new Uint8Array(0)
