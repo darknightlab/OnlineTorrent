@@ -134,19 +134,41 @@
   }
 }
 
-/* 文字按钮：资源、倍速（同样的字号与粗细） */
+/* 文字按钮：字幕、资源、倍速（同样的字号与粗细） */
+.art-video-player .art-control-subtitle,
 .art-video-player .art-control-panel,
 .art-video-player .art-control-rate {
   padding: 0 6px;
   font-size: 13px;
   font-weight: 600;
 }
-.art-video-player.art-video-player .art-control-rate .art-selector-list {
+.art-video-player.art-video-player .art-control-rate .art-selector-list,
+.art-video-player.art-video-player .art-control-subtitle .art-selector-list {
   min-width: 72px;
 }
-.art-video-player.art-video-player .art-control-rate .art-selector-item {
+.art-video-player.art-video-player .art-control-rate .art-selector-item,
+.art-video-player.art-video-player .art-control-subtitle .art-selector-item {
   padding: 8px 14px;
   font-size: 13px;
+}
+/* 字幕轨道名可能很长 */
+.art-video-player.art-video-player .art-control-subtitle .art-selector-list {
+  max-width: min(60vw, 320px);
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.art-video-player.art-video-player .art-control-subtitle .art-selector-item {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: block;
+}
+
+/* 内封字幕（JASSUB 画布，插在 <video> 后面）：与 ArtPlayer 自带字幕层同层（视频 10、封面 11 之上，
+   图层 40 / 遮罩 50 / 控制栏 60 之下），不挡点击 */
+.art-video-player canvas.ot-subtitles {
+  z-index: 20;
+  pointer-events: none;
 }
 
 /* 时间文字略小、等宽数字 */

@@ -18,12 +18,15 @@ import {
   installWireFix,
   setEdgeToken,
   patchWebSeed,
+  type FileLike,
   type PieceCtor,
   type WebSeedHandle,
   type TorrentLike,
 } from "./store/internals"
 import { infoHashFromMagnet } from "./store/policy"
 import { applyRanges, bitsFromRanges, countPieces, resetToRanges } from "@/lib/webseed"
+import { SubtitleSource } from "./subs/source"
+import type { ClusterTap } from "./subs/tap"
 import type { WebSeedAvail, WebSeedUpdate } from "./types"
 
 const SW_URL = "/sw.min.js"
@@ -187,7 +190,7 @@ class WTSession implements Session {
         register: (r) => live.readers.add(r),
         unregister: (r) => {
           live.readers.delete(r)
-          live.lastPos = r.file.offset + Math.min(r.pos, r.end)
+          if (!r.aux) live.lastPos = r.file.offset + Math.min(r.pos, r.end)
         },
         reading: (i, on) => {
           if (on) live.reading.set(i, (live.reading.get(i) ?? 0) + 1)
@@ -198,6 +201,7 @@ class WTSession implements Session {
           }
         },
       })
+      this.installSubtitleTaps(torrent)
     })
     t.on("evicted", (i: number) => {
       // 整文件后台下载时淘汰了正在播放的文件的 piece：改为窗口模式，避免下载 → 淘汰 → 再下载
@@ -293,6 +297,64 @@ class WTSession implements Session {
   focusFile(index: number | null) {
     this.focused = index
     this.applyFocus()
+    // 内封字幕：在 <video> 开始读取之前建好，第一个请求（从文件头开始）就能被解析
+    if (index !== null) this.subtitles(index)
+  }
+
+  // ---- 内封字幕（MKV）----
+
+  /** 文件序号 → 字幕源（当前种子） */
+  private subs = new Map<number, SubtitleSource>()
+
+  /** 读取文件 [start, end) 的字节（辅助读取，经窗口化读取器：缺的 piece 会下载） */
+  async readRange(fileIndex: number, start: number, end: number): Promise<Uint8Array> {
+    const f = this.torrent?.files?.[fileIndex] as unknown as FileLike | undefined
+    if (!f || end <= start) return new Uint8Array(0)
+    const it = (f[Symbol.asyncIterator] as (o: { start: number; end: number; aux: boolean }) => AsyncIterator<Uint8Array>)({ start, end: Math.min(end, f.length) - 1, aux: true })
+    const parts: Uint8Array[] = []
+    let n = 0
+    try {
+      for (;;) {
+        const r = await it.next()
+        if (r.done) break
+        parts.push(r.value)
+        n += r.value.length
+      }
+    } finally {
+      await it.return?.()
+    }
+    const out = new Uint8Array(n)
+    let o = 0
+    for (const p of parts) {
+      out.set(p, o)
+      o += p.length
+    }
+    return out
+  }
+
+  subtitles(fileIndex: number): SubtitleSource | null {
+    const f = this.torrent?.files?.[fileIndex]
+    if (!f || this.destroyed || !/\.mk[vs]$/i.test(f.name)) return null
+    let s = this.subs.get(fileIndex)
+    if (!s) {
+      s = new SubtitleSource((a, b) => this.readRange(fileIndex, a, b), f.length)
+      this.subs.set(fileIndex, s)
+    }
+    return s
+  }
+
+  /** 播放器读取文件时（serveFile 的 "iterator" 事件）把同样的字节交给字幕解析器 */
+  private installSubtitleTaps(t: WTTorrent) {
+    t.files.forEach((f, index) => {
+      if (!/\.mk[vs]$/i.test(f.name)) return
+      const em = f as unknown as { on(ev: "iterator", cb: (ev: { iterator: AsyncIterator<Uint8Array> & { reader?: { pos: number } }; req?: { headers?: Record<string, string> } }, replace: (it: unknown) => void) => void): void }
+      em.on("iterator", (ev, replace) => {
+        const src = this.torrent === t ? this.subs.get(index) : undefined
+        if (!src) return
+        const start = ev.iterator.reader?.pos ?? Number(/bytes=(\d+)/.exec(ev.req?.headers?.range ?? "")?.[1] ?? 0)
+        replace(tapIterator(ev.iterator, src.tap(start)))
+      })
+    })
   }
 
   private applyFocus(force = false) {
@@ -532,4 +594,26 @@ export const webtorrentEngine: Engine = {
     await Promise.all(regs.map((r) => r.unregister()))
     location.reload()
   },
+}
+
+/** 透传迭代器，同时把每块数据交给字幕解析器（return / throw 原样转发，读取器照常释放） */
+function tapIterator<T extends AsyncIterator<Uint8Array>>(inner: T, tap: ClusterTap) {
+  const it = {
+    async next() {
+      const r = await inner.next()
+      if (!r.done && r.value) tap.push(r.value)
+      return r
+    },
+    return(v?: unknown) {
+      return inner.return ? inner.return(v) : Promise.resolve({ done: true as const, value: undefined })
+    },
+    throw(e?: unknown) {
+      return inner.throw ? inner.throw(e) : Promise.reject(e)
+    },
+    [Symbol.asyncIterator]() {
+      return it
+    },
+    reader: (inner as unknown as { reader?: unknown }).reader,
+  }
+  return it
 }

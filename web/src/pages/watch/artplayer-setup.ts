@@ -34,9 +34,17 @@ export interface MountOptions {
   onPanel?: () => void
 }
 
+export interface SubtitleMenuItem {
+  label: string
+  /** 轨道序号；-1 = 关闭 */
+  value: number
+}
+
 export interface ArtHandle {
   art: Artplayer
   video: HTMLVideoElement
+  /** 控制栏「字幕」选择（「资源」左边）；items 为 null 时移除按钮 */
+  setSubtitleMenu: (items: SubtitleMenuItem[] | null, current: number, onSelect: (value: number) => void) => void
   setPoster: (poster: string | undefined) => void
   setSegments: (segments: Uint8Array) => void
   setSpeed: (speed: number) => void
@@ -243,6 +251,24 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
     },
     setSegments,
     setSpeed,
+    setSubtitleMenu(items, current, onSelect) {
+      if (art.isDestroy) return
+      if (art.controls["subtitle" as keyof typeof art.controls]) art.controls.remove("subtitle")
+      if (!items?.length) return
+      const all = [...items, { label: "关闭", value: -1 }]
+      art.controls.add({
+        name: "subtitle",
+        position: "right",
+        index: 3, // 「资源」是 4、「倍速」是 5
+        html: "字幕",
+        tooltip: "内封字幕",
+        selector: all.map((i) => ({ html: escapeHtml(i.label), value: i.value, default: i.value === current })),
+        onSelect(item) {
+          onSelect(Number(item.value))
+          return "字幕"
+        },
+      })
+    },
     destroy() {
       el.removeEventListener("focusin", focusIn)
       el.removeEventListener("focusout", focusOut)
@@ -252,4 +278,8 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
       art.destroy(true) // 同时移除 src，释放 Service Worker 流请求
     },
   }
+}
+
+function escapeHtml(s: string) {
+  return s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`)
 }

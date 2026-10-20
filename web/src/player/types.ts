@@ -73,6 +73,10 @@ export interface Session {
   loadTorrentFile?(data: Uint8Array): Promise<boolean>
   /** 只下载这个文件（其余文件不下载；null = 都不下载）。元数据就绪前调用会在就绪后生效。 */
   focusFile?(index: number | null): void
+  /** MKV 文件的内封字幕（其他文件 / mock 引擎为 null）；正在播放的文件由 focusFile 预先建好 */
+  subtitles?(fileIndex: number): import("./subs/source").SubtitleSource | null
+  /** 读取文件 [start, end) 的字节（辅助读取：容器索引等；缺的 piece 会下载） */
+  readRange?(fileIndex: number, start: number, end: number): Promise<Uint8Array>
   /** 播放器拿到的媒体时长（秒），用于按码率估算缓存的读前窗口 */
   setMediaDuration?(seconds: number): void
   /** 致命错误（会话已停止）；没有为 null */

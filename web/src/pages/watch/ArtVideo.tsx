@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react"
 import { Loader2 } from "lucide-react"
 import type { ArtHandle } from "./artplayer-setup"
+import type { SubtitleSource } from "@/player/subs/source"
+import { chooseTrack, loadPref, prefFor, savePref } from "@/player/subs/prefs"
+import { trackLabel } from "@/player/subs/lang"
 
 let setupModule: Promise<typeof import("./artplayer-setup")> | null = null
 /** 加载 ArtPlayer（单独的 chunk，含样式）；Player 挂载时调用以预加载 */
@@ -25,6 +28,9 @@ export interface ArtVideoProps {
   onMediaError?: (err: MediaError) => void
   /** 控制栏「资源」按钮 */
   onPanel?: () => void
+  /** 当前文件的内封字幕（MKV）；有字幕轨道时控制栏出现「字幕」 */
+  subtitles?: SubtitleSource | null
+  onLog?: (level: "info" | "warn", msg: string) => void
 }
 
 /**
@@ -32,14 +38,14 @@ export interface ArtVideoProps {
  * StrictMode 下 effect 会执行两次：第一次的实例在清理时 destroy（移除 DOM 与事件，释放流请求），第二次重新创建；
  * 模块尚未加载完就被清理时不会创建实例。
  */
-export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel }: ArtVideoProps) {
+export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, subtitles, onLog }: ArtVideoProps) {
   const box = useRef<HTMLDivElement>(null)
   const handle = useRef<ArtHandle | null>(null)
   const [ready, setReady] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   // 回调与动态数据用 ref 读取最新值，不触发重建
-  const latest = useRef({ poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel })
-  latest.current = { poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel }
+  const latest = useRef({ poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, onLog })
+  latest.current = { poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, onLog }
   const hasPanel = !!onPanel
 
   useEffect(() => {
@@ -82,6 +88,55 @@ export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetada
   useEffect(() => handle.current?.setPoster(poster), [poster, ready])
   useEffect(() => handle.current?.setSegments(segments), [segments, ready])
   useEffect(() => handle.current?.setSpeed(speed), [speed, ready])
+
+  // 内封字幕：头部解析出字幕轨道后显示「字幕」按钮，按会话偏好 / 浏览器语言选默认轨道；
+  // 渲染器（JASSUB，较大）只在真的要显示字幕时才加载
+  useEffect(() => {
+    const h = handle.current
+    if (!ready || !h || !subtitles || !url) return
+    let cancelled = false
+    let renderer: import("@/player/subs/render").SubtitleRenderer | null = null
+    let rendererP: Promise<import("@/player/subs/render").SubtitleRenderer | null> | null = null
+    const log = (level: "info" | "warn", msg: string) => latest.current.onLog?.(level, msg)
+    const getRenderer = () =>
+      (rendererP ??= import("@/player/subs/render")
+        .then(({ SubtitleRenderer }) => {
+          if (cancelled) return null
+          renderer = new SubtitleRenderer(h.video, subtitles, window.matchMedia?.("(pointer: coarse)").matches ?? false)
+          return renderer
+        })
+        .catch((e) => {
+          log("warn", `字幕渲染器加载失败：${String(e?.message ?? e)}`)
+          return null
+        }))
+    void subtitles.header.then((hd) => {
+      if (cancelled || !hd?.subtitles.length) return
+      const tracks = hd.subtitles
+      let current = chooseTrack(tracks, loadPref(), navigator.languages ?? [navigator.language])
+      const apply = async (i: number) => {
+        current = i
+        if (i < 0 && !renderer) return // 从没显示过：不必加载渲染器
+        const r = await getRenderer()
+        if (!cancelled && current === i) await r?.show(i >= 0 ? tracks[i] : null)
+      }
+      h.setSubtitleMenu(
+        tracks.map((t, i) => ({ label: trackLabel(t, i), value: i })),
+        current,
+        (i) => {
+          savePref(prefFor(tracks, i))
+          void apply(i)
+          log("info", i >= 0 ? `字幕：${trackLabel(tracks[i], i)}` : "已关闭字幕")
+        },
+      )
+      log("info", `内封字幕 ${tracks.length} 条${current >= 0 ? `，已选择「${trackLabel(tracks[current], current)}」` : "，没有与浏览器语言匹配的，默认不显示"}`)
+      if (current >= 0) void apply(current)
+    })
+    return () => {
+      cancelled = true
+      renderer?.destroy()
+      handle.current?.setSubtitleMenu(null, -1, () => {})
+    }
+  }, [ready, subtitles, url])
 
   return (
     <>

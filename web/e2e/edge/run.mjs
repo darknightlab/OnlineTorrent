@@ -45,7 +45,8 @@ const PL = 64 << 10
 const ROOT = "[E2E] Edge Test - 01"
 const media = fs.readFileSync(MEDIA)
 const notes = Buffer.from("边缘节点端到端测试\n".repeat(40))
-const files = [{ path: `${ROOT}.mp4`, data: media }, { path: "notes.txt", data: notes }]
+const EXT = path.extname(MEDIA) || ".mp4"
+const files = [{ path: `${ROOT}${EXT}`, data: media }, { path: "notes.txt", data: notes }]
 const all = Buffer.concat(files.map((f) => f.data))
 const NP = Math.ceil(all.length / PL)
 const hashes = []
@@ -69,7 +70,7 @@ const DATA = `${RUN}/data`
 const QB_SAVE = "/Data/Torrent/qbittorrent/files/默认"
 const localSave = path.join(DATA, "qbittorrent/files/默认")
 fs.mkdirSync(path.join(localSave, ROOT), { recursive: true })
-const videoPath = path.join(localSave, ROOT, `${ROOT}.mp4`)
+const videoPath = path.join(localSave, ROOT, `${ROOT}${EXT}`)
 const notesPath = path.join(localSave, ROOT, "notes.txt")
 const states = new Array(NP).fill(0)
 {
@@ -106,6 +107,7 @@ const progress = () => states.filter((s) => s === 2).length / NP
 // ---------------------------------------------------------------- fake qB WebUI
 const qbLog = new Map() // path → count
 let added = null // {category}
+const prio = files.map(() => 1)
 let downloading = false
 const qb = http.createServer(async (req, res) => {
   const u = new URL(req.url, "http://qb")
@@ -127,7 +129,8 @@ const qb = http.createServer(async (req, res) => {
     case "app/buildInfo": return json({ libtorrent: "2.1.1.0", qt: "6.8", bitness: 64 })
     case "torrents/add": {
       const cat = form.get("category") ?? /name="category"\r\n\r\n([^\r]*)/.exec(body)?.[1] ?? ""
-      if (body.toLowerCase().includes(IH)) {
+      // magnet (urls=…btih:IH) or the .torrent itself (multipart, added stopped by the file-selection flow)
+      if (body.toLowerCase().includes(IH) || body.includes(torrent.subarray(0, 64).toString("latin1"))) {
         if (!added || !cat.endsWith("-meta")) added = { category: cat }
         if (!cat.endsWith("-meta")) downloading = true
       }
@@ -148,7 +151,10 @@ const qb = http.createServer(async (req, res) => {
     }
     case "torrents/files":
       if (!have()) return nf()
-      return json(files.map((f, i) => ({ index: i, name: `${ROOT}/${f.path}`, size: f.data.length, progress: i === 0 ? (videoDone ? 1 : progress()) : 1, priority: 1 })))
+      return json(files.map((f, i) => ({ index: i, name: `${ROOT}/${f.path}`, size: f.data.length, progress: i === 0 ? (videoDone ? 1 : progress()) : 1, priority: prio[i] })))
+    case "torrents/filePrio":
+      for (const id of (q("id") ?? "").split("|")) prio[Number(id)] = Number(q("priority"))
+      return res.end("")
     case "torrents/properties":
       if (!have()) return nf()
       return json({ save_path: QB_SAVE + "/", piece_size: PL })
@@ -222,7 +228,8 @@ if (!st.edge?.connected || !st.online) throw new Error("edge did not connect / q
 // ---------------------------------------------------------------- chromium
 const prof = `${RUN}/chrome`
 procs.push(spawn(CHROMIUM, ["--headless=new", "--no-sandbox", "--disable-gpu", `--remote-debugging-port=${DBG_PORT}`, `--user-data-dir=${prof}`, "--autoplay-policy=no-user-gesture-required",
-  "--no-proxy-server", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp", "--host-resolver-rules=MAP edge.test 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1", "about:blank"], { stdio: "ignore" }))
+  "--no-proxy-server", "--force-webrtc-ip-handling-policy=disable_non_proxied_udp", "--host-resolver-rules=MAP edge.test 127.0.0.1, MAP * ~NOTFOUND, EXCLUDE 127.0.0.1",
+  `--lang=${process.env.BROWSER_LANG || "zh-CN"}`, `--accept-lang=${process.env.BROWSER_LANG || "zh-CN"}`, "--window-size=1280,900", "about:blank"], { stdio: "ignore" }))
 let target
 for (let i = 0; i < 80 && !target; i++) { await sleep(200); try { target = (await (await fetch(`http://127.0.0.1:${DBG_PORT}/json`)).json()).find((x) => x.type === "page") } catch {} }
 const ws = new WebSocket(target.webSocketDebuggerUrl)
@@ -230,6 +237,7 @@ await new Promise((r) => (ws.onopen = r))
 let id = 0
 const pend = new Map()
 const consoleErr = []
+const consoleAll = []
 const send = (method, params = {}) => new Promise((r) => { const i = ++id; pend.set(i, r); ws.send(JSON.stringify({ id: i, method, params })) })
 const ev = async (code) => {
   const r = await Promise.race([send("Runtime.evaluate", { expression: `(async () => { ${code} })()`, awaitPromise: true, returnByValue: true }), sleep(10_000).then(() => null)])
@@ -237,6 +245,7 @@ const ev = async (code) => {
 }
 const stat = { edge: { 206: 0, 200: 0, 503: 0, 401: 0, other: 0, bytes: 0 }, main: { n: 0, bytes: 0 }, preflight: 0, auth: new Set(), noAuth: 0, cookieToEdge: 0 }
 const reqs = new Map()
+const allRequests = []
 ws.onmessage = (m) => {
   const d = JSON.parse(m.data)
   if (d.id && pend.has(d.id)) { pend.get(d.id)(d); pend.delete(d.id); return }
@@ -244,8 +253,10 @@ ws.onmessage = (m) => {
   switch (d.method) {
     case "Runtime.consoleAPICalled":
       if (p.type === "error") consoleErr.push(p.args.map((a) => a.value ?? a.description).join(" ").slice(0, 200))
+      consoleAll.push(p.args.map((a) => a.value ?? a.description).join(" ").slice(0, 300))
       break
     case "Network.requestWillBeSent": {
+      allRequests.push(p.request.url)
       const url = p.request.url
       if (!url.includes("/webseed/hash/")) break
       const edge = url.startsWith(EDGE_URL)
@@ -311,7 +322,7 @@ console.log("\nplayer log:\n  " + (logs ?? []).filter((l) => /WebSeed|边缘|种
 console.log("console errors:", consoleErr.slice(0, 5))
 
 // ---------------------------------------------------------------- direct checks against the edge
-const edgeDirect = `http://127.0.0.1:${EDGE_PORT}/webseed/hash/${IH}/${encodeURIComponent(ROOT)}/${encodeURIComponent(ROOT + ".mp4")}`
+const edgeDirect = `http://127.0.0.1:${EDGE_PORT}/webseed/hash/${IH}/${encodeURIComponent(ROOT)}/${encodeURIComponent(ROOT + EXT)}`
 const noTok = await fetch(edgeDirect, { headers: { Origin: SITE, Range: "bytes=0-9", Cookie: cookie } })
 const foreign = await fetch(edgeDirect, { method: "OPTIONS", headers: { Origin: "https://evil.example", "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "authorization,range" } })
 const pre = await fetch(edgeDirect, { method: "OPTIONS", headers: { Origin: SITE, "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "authorization,range,cache-control,user-agent" } })
@@ -335,6 +346,11 @@ const checks = {
   "CORS preflights cached (not one per request)": stat.preflight <= 10,
   "preflight ok without credentials": pre.status === 204 && pre.headers.get("access-control-allow-origin") === SITE && !pre.headers.get("access-control-allow-credentials"),
   "admin shows bytes served": fin.edge?.connected && fin.edge.bytes_served > 0,
+}
+// extra checks (e.g. e2e/subtitles/checks.mjs): run against the same page
+if (process.env.EXTRA) {
+  const extra = await import(path.resolve(process.env.EXTRA))
+  Object.assign(checks, await extra.default({ ev, send, sleep, consoleErr, consoleAll, RUN, requests: allRequests }))
 }
 console.log(`\nplayback started at +${playAt}s; edge ${JSON.stringify(stat.edge)}; preflights ${stat.preflight}; tokens seen ${stat.auth.size}`)
 for (const [k, v] of Object.entries(checks)) console.log(`${v ? "  ok  " : "  FAIL"} ${k}`)

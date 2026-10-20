@@ -91,6 +91,8 @@ const RE = {
   emitRequest: /\.emit\(\s*"request"\s*,/,
   reject: /\.reject\(/,
   serveIterator: /\[Symbol\.asyncIterator\]\(\s*[\w$]*\s*\)[\s\S]{0,300}?\.emit\(\s*"iterator"\s*,/,
+  // emit("iterator", {iterator: s, …}, e => { r = e }) 之后用 Readable.from(r || s)：监听者可以替换迭代器
+  iteratorReplace: /\.emit\(\s*"iterator"\s*,\s*\{\s*iterator\s*:\s*([\w$]+)[\s\S]{0,80}?\(?\s*([\w$]+)\s*\)?\s*=>\s*\{?\s*([\w$]+)\s*=\s*\2\s*\}?\s*\)[\s\S]{0,80}?\.from\(\s*\3\s*\|\|\s*\1\s*\)/,
 }
 
 /** Torrent 原型（client.add 返回后立即可查）。返回不兼容项的描述，空数组表示兼容。 */
@@ -194,6 +196,8 @@ export function checkWebSeedConn(t: any, url: string): string[] {
 export function checkBundleSource(code: string): string[] {
   const p: string[] = []
   if (!RE.serveIterator.test(normSource(code))) p.push("server.serveFile 不再用 file[Symbol.asyncIterator](range) 读取文件")
+  // 内封字幕：解析视频本身读取的字节（engine.tapIterator）
+  if (!RE.iteratorReplace.test(normSource(code))) p.push("server.serveFile 不再使用 file \"iterator\" 事件替换的迭代器（内封字幕需要）")
   if (!/lt_donthave/.test(code)) p.push("lt_donthave 扩展")
   // WebSeed 的 fetch 在模块加载时取自 self.fetch（installEdgeFetch 必须在 import 之前）
   if (!/=\s*self\.fetch\s*\|\|/.test(code)) p.push("WebSeed 请求不再使用加载时的 self.fetch（边缘节点令牌注入方式需要调整）")
@@ -380,6 +384,8 @@ export interface Reader {
   end: number
   /** 文件内的读位置（下一个要读的字节） */
   pos: number
+  /** 辅助读取（字幕头部、容器索引等）：不代表播放位置 */
+  aux?: boolean
 }
 
 export interface ReaderHooks {
@@ -400,12 +406,12 @@ const MAX_CHUNK = 2 * (1 << 20)
  * 这里维护滑动的 stream selection [当前 piece, 读位置 + 窗口]，缺 piece 就 critical 并等 'verified'，
  * 读失败（piece 被删）就 unverify 后重新等待，不让流断掉。读位置通过 hooks 报给预算管理器。
  */
-export function windowedIterator(file: FileLike, opts: { start?: number; end?: number } | null | undefined, Piece: PieceCtor, hooks: ReaderHooks) {
+export function windowedIterator(file: FileLike, opts: { start?: number; end?: number; aux?: boolean } | null | undefined, Piece: PieceCtor, hooks: ReaderHooks) {
   const t = file._torrent!
   const start = opts?.start ?? 0
   const end = opts?.end !== undefined && opts.end < file.length ? opts.end : file.length - 1
   const pl = t.pieceLength
-  const r: Reader = { file, start, end, pos: start }
+  const r: Reader = { file, start, end, pos: start, aux: opts?.aux }
   let sel: [number, number] | null = null
   let finished = false
   let abort: (() => void) | null = null
@@ -520,6 +526,6 @@ export function windowedIterator(file: FileLike, opts: { start?: number; end?: n
 export function installReaders(t: TorrentLike, Piece: PieceCtor, hooks: ReaderHooks) {
   for (const f of t.files) {
     if (f.length === 0) continue
-    ;(f as { [Symbol.asyncIterator]: unknown })[Symbol.asyncIterator] = (opts?: { start?: number; end?: number }) => windowedIterator(f, opts, Piece, hooks)
+    ;(f as { [Symbol.asyncIterator]: unknown })[Symbol.asyncIterator] = (opts?: { start?: number; end?: number; aux?: boolean }) => windowedIterator(f, opts, Piece, hooks)
   }
 }

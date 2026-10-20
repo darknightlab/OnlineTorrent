@@ -130,7 +130,10 @@ test("source checks survive re-minification (template-literal quotes, renamed lo
     pr._select = new Function("return function(e,t,n,i,r=!1){this._selections.insert({from:e,to:t,isStreamSelection:r})}")()
     assert.deepEqual(checkTorrentPrototype(pr), [], v)
   }
-  assert.deepEqual(checkBundleSource("let i=e[Symbol.asyncIterator](r),a=null;e.emit(`iterator`,{iterator:i,req:t,file:e},e=>{a=e});lt_donthave;let Se=self.fetch||(()=>{})"), [])
+  assert.deepEqual(checkBundleSource("let i=e[Symbol.asyncIterator](r),a=null;e.emit(`iterator`,{iterator:i,req:t,file:e},e=>{a=e});const o=U.Readable.from(a||i);lt_donthave;let Se=self.fetch||(()=>{})"), [])
+  assert.deepEqual(checkBundleSource("let i=e[Symbol.asyncIterator](r),a=null;e.emit('iterator',{iterator:i,req:t,file:e},(n)=>{ a = n });const o=Readable.from(a || i);lt_donthave;let Se=self.fetch||(()=>{})"), [])
+  // replacement ignored (only the original iterator streamed): subtitles would silently get no cues
+  assert.ok(checkBundleSource("let i=e[Symbol.asyncIterator](r),a=null;e.emit(`iterator`,{iterator:i,req:t,file:e},e=>{a=e});const o=U.Readable.from(i);lt_donthave;let Se=self.fetch||(()=>{})").some((x) => /内封字幕/.test(x)))
   assert.equal(normSource("a(`x`,'y',\"z\")"), 'a("x","y","z")')
   const wire = { _onRequest: new Function("return function(e,t,n){if(this.amChoking){this.hasFast&&this.reject(e,t,n);return}this.emit(`request`,e,t,n,()=>{})}")() } as any
   assert.ok(!checkWire(wire).some((x) => /_onRequest/.test(x)))

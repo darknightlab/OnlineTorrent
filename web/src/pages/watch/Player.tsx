@@ -487,6 +487,8 @@ export function Player({
                 onLoadedMetadata={onLoadedMetadata}
                 onMediaError={onMediaError}
                 onPanel={openPanel}
+                subtitles={url && current !== null ? (session?.subtitles?.(current) ?? null) : null}
+                onLog={log}
               />
             ) : file.kind === "audio" ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-gradient-to-br from-primary/40 to-accent/40 p-6">
