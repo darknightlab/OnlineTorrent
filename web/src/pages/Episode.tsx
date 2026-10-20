@@ -42,7 +42,7 @@ export function EmptyEpisode({ data, ep }: { data: EpisodeResponse; ep: EpisodeK
             <p className="text-xs text-white/70">
               {future
                 ? `${item?.airdate ? `预计 ${item.airdate} 播出，` : ""}播出后字幕组发布的资源会自动出现`
-                : "字幕组发布后会自动出现，可先看看其他集"}
+                : "如已有种子可直接在搜索框输入并观看"}
             </p>
           </div>
         </div>
