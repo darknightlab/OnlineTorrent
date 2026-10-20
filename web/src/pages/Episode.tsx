@@ -6,7 +6,7 @@ import { describeScore, type Scored } from "@/lib/rank"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
-import { airedCount, EpisodeGrid, episodeFullLabel, useEpisodeChips, useEpisodeItem } from "@/components/EpisodeGrid"
+import { airedCount, EpisodeGrid, episodeFullLabel, useEpisodeChips, useEpisodeItem, useEpisodePage } from "@/components/EpisodeGrid"
 import { displayTitle } from "@/lib/schedule"
 import { episodeLabel, formatEpisodeKey, type EpisodeKey } from "@/lib/episode"
 import type { EpisodeFile, EpisodeResponse, Subject } from "@/lib/types"
@@ -165,7 +165,7 @@ export function SideSection({
           <Icon className="h-4 w-4 text-primary-text" />
           {title}
         </h2>
-        {extra && <div className="min-w-0 truncate text-xs text-muted-foreground">{extra}</div>}
+        {extra && <div className="flex min-w-0 items-center gap-2 truncate text-xs text-muted-foreground">{extra}</div>}
       </div>
       {children}
     </section>
@@ -176,9 +176,22 @@ export function SideSection({
 export function EpisodeList({ subject: s, ep, hasItems }: { subject: Subject; ep: EpisodeKey; hasItems: boolean }) {
   const total = airedCount(s)
   const { chips } = useEpisodeChips(s, ep, hasItems ? undefined : 0)
+  const { items, pager } = useEpisodePage(chips, formatEpisodeKey(ep))
   return (
-    <SideSection id="episodes-title" icon={ListVideo} title="选集" extra={total > 0 ? `已更新至第 ${total} 话` : undefined}>
-      <EpisodeGrid subject={s} chips={chips} current={formatEpisodeKey(ep)} variant="side" />
+    <SideSection
+      id="episodes-title"
+      icon={ListVideo}
+      title="选集"
+      extra={
+        total > 0 || pager ? (
+          <>
+            {total > 0 && <span className="min-w-0 truncate">已更新至第 {total} 话</span>}
+            {pager}
+          </>
+        ) : undefined
+      }
+    >
+      <EpisodeGrid subject={s} chips={items} current={formatEpisodeKey(ep)} variant="side" />
     </SideSection>
   )
 }

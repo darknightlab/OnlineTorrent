@@ -3,7 +3,7 @@ import { Link, Navigate, useParams } from "react-router-dom"
 import { ChevronDown, CalendarClock, CalendarDays, Clapperboard, ExternalLink, Film, LayoutGrid, List, ListVideo, Play, Star, Tv } from "lucide-react"
 import { Container } from "@/components/layout/Container"
 import { Cover } from "@/components/Cover"
-import { airedCount, EpisodeGrid, EpisodeRows, episodeSummary, useEpisodeChips } from "@/components/EpisodeGrid"
+import { airedCount, EpisodeGrid, EpisodeRows, episodeSummary, useEpisodeChips, useEpisodePage } from "@/components/EpisodeGrid"
 import { TorrentList } from "@/components/TorrentList"
 import { EmptyState, ErrorState, SectionHeader } from "@/components/states"
 import { Badge } from "@/components/ui/badge"
@@ -303,6 +303,7 @@ const VIEW_KEY = "subject.episodeView"
 /** 选集：正片 + 特别篇分组（无任何集时不显示）。有官方标题时默认列表视图，可切换为网格（记住选择） */
 function SubjectEpisodes({ subject, latest }: { subject: Subject; latest: string | null }) {
   const { chips, loading } = useEpisodeChips(subject)
+  const { items, pager } = useEpisodePage(chips, latest)
   const [pref, setPref] = useState<EpisodeView | null>(() => {
     const v = localStorage.getItem(VIEW_KEY)
     return v === "list" || v === "grid" ? v : null
@@ -347,10 +348,11 @@ function SubjectEpisodes({ subject, latest }: { subject: Subject; latest: string
                 </button>
               ))}
             </span>
+            {pager}
           </span>
         }
       />
-      {view === "list" ? <EpisodeRows subject={subject} chips={chips} highlight={latest} /> : <EpisodeGrid subject={subject} chips={chips} highlight={latest} variant="page" />}
+      {view === "list" ? <EpisodeRows subject={subject} chips={items} highlight={latest} /> : <EpisodeGrid subject={subject} chips={items} highlight={latest} variant="page" />}
     </section>
   )
 }

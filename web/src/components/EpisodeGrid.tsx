@@ -104,9 +104,9 @@ export const EPISODE_PAGE = 30
 
 /**
  * 选集分页：默认显示 anchor（当前集 / 最新一集）所在的那一页；anchor 变化时跳到它所在的页。
- * 不超过一页时 pager 为 null。
+ * pager 是左右箭头（放在「选集」标题行最右侧），不超过一页时为 null。items 交给 EpisodeGrid / EpisodeRows。
  */
-function useEpisodePage(chips: EpisodeChip[], anchor?: string | null) {
+export function useEpisodePage(chips: EpisodeChip[], anchor?: string | null) {
   const ordered = useMemo(() => groups(chips).flatMap((g) => g.items), [chips])
   const pages = Math.max(1, Math.ceil(ordered.length / EPISODE_PAGE))
   const at = anchor ? ordered.findIndex((c) => c.key === anchor) : -1
@@ -114,51 +114,33 @@ function useEpisodePage(chips: EpisodeChip[], anchor?: string | null) {
   const [page, setPage] = useState(anchorPage)
   const [lastAnchor, setLastAnchor] = useState(anchorPage)
   if (lastAnchor !== anchorPage) {
-    // 渲染期间同步（React 推荐的「随 props 调整 state」写法），切到新集时跟着翻页
+    // 渲染期间同步（随 props 调整 state），切到新集时跟着翻页
     setLastAnchor(anchorPage)
     setPage(anchorPage)
   }
   const cur = Math.min(page, pages - 1)
   const items = ordered.slice(cur * EPISODE_PAGE, (cur + 1) * EPISODE_PAGE)
-  const label = (i: number) => {
+  const range = (i: number) => {
     const part = ordered.slice(i * EPISODE_PAGE, (i + 1) * EPISODE_PAGE)
     return part.length ? `${episodeShort(part[0])}–${episodeShort(part[part.length - 1])}` : ""
   }
+  const arrow = "inline-flex h-7 w-7 items-center justify-center rounded-md border bg-card text-muted-foreground hover:text-primary-text disabled:pointer-events-none disabled:opacity-40"
   const pager =
     pages > 1 ? (
-      <div className="mb-2 flex items-center gap-1.5 text-[13px]">
-        <button
-          type="button"
-          aria-label="上一页"
-          disabled={cur === 0}
-          onClick={() => setPage(cur - 1)}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md border bg-card text-muted-foreground hover:text-primary-text disabled:opacity-40"
-        >
+      <span role="group" aria-label={`选集翻页（当前 ${range(cur)}）`} className="inline-flex shrink-0 items-center gap-1">
+        <button type="button" aria-label={cur > 0 ? `上一页：${range(cur - 1)}` : "上一页"} disabled={cur === 0} onClick={() => setPage(cur - 1)} className={arrow}>
           <ChevronLeft className="h-4 w-4" />
         </button>
-        <select
-          value={cur}
-          onChange={(e) => setPage(Number(e.target.value))}
-          aria-label="选择集数范围"
-          className="h-8 min-w-0 rounded-md border bg-card px-2 tabular-nums"
-        >
-          {Array.from({ length: pages }, (_, i) => (
-            <option key={i} value={i}>
-              {label(i)}
-            </option>
-          ))}
-        </select>
         <button
           type="button"
-          aria-label="下一页"
+          aria-label={cur < pages - 1 ? `下一页：${range(cur + 1)}` : "下一页"}
           disabled={cur >= pages - 1}
           onClick={() => setPage(cur + 1)}
-          className="inline-flex h-8 w-8 items-center justify-center rounded-md border bg-card text-muted-foreground hover:text-primary-text disabled:opacity-40"
+          className={arrow}
         >
           <ChevronRight className="h-4 w-4" />
         </button>
-        <span className="ml-1 text-xs text-muted-foreground tabular-nums">共 {ordered.length} 个</span>
-      </div>
+      </span>
     ) : null
   return { items, pager }
 }
@@ -195,7 +177,6 @@ export function EpisodeGrid({
   const list = useRef<HTMLDivElement>(null)
   const cur = useRef<HTMLAnchorElement>(null)
   const side = variant === "side"
-  const paged = useEpisodePage(chips, current ?? highlight)
 
   // 当前集滚动到可见区域中间（只滚动列表本身，不滚动页面）
   useEffect(() => {
@@ -241,12 +222,11 @@ export function EpisodeGrid({
     )
   }
 
-  // 正片与特别篇（NCOP1、SP1…）排在同一个列表里，不分组、不加分隔线；特别篇按种类接在正片之后；每页最多 30 个
-  const { items: ordered, pager } = paged
+  // 正片与特别篇（NCOP1、SP1…）排在同一个列表里，不分组、不加分隔线；特别篇按种类接在正片之后（分页见 useEpisodePage）
+  const ordered = groups(chips).flatMap((g) => g.items)
   if (side)
     return (
       <>
-        {pager}
         <div
           ref={list}
           className={cn(
@@ -260,12 +240,7 @@ export function EpisodeGrid({
       </>
     )
 
-  return (
-    <>
-      {pager}
-      <div className="grid grid-cols-5 gap-2 sm:grid-cols-8 lg:grid-cols-12">{ordered.map(chip)}</div>
-    </>
-  )
+  return <div className="grid grid-cols-5 gap-2 sm:grid-cols-8 lg:grid-cols-12">{ordered.map(chip)}</div>
 }
 
 /** 列表视图折叠：显示的集数 / 超过多少集才折叠 / 最新一集之后多显示几集（移动端与 sm 以上分别计算） */
@@ -282,9 +257,8 @@ function foldWindow(len: number, hi: number, f: { size: number; min: number; lea
  * 番剧页的列表视图：每集一行（编号 · 标题 · 放送日期 · 资源数），移动端 1 列、平板 2 列、桌面 3 列。
  * 正片较多时折叠（移动端 6 集、sm 以上 12 集；连载中时窗口包含 highlight）；特别篇分组列在正片之后。
  */
-export function EpisodeRows({ subject, chips: all, highlight }: { subject: Subject; chips: EpisodeChip[]; highlight?: string | null }) {
+export function EpisodeRows({ subject, chips, highlight }: { subject: Subject; chips: EpisodeChip[]; highlight?: string | null }) {
   const [expanded, setExpanded] = useState(false)
-  const { items: chips, pager } = useEpisodePage(all, highlight)
   const gs = groups(chips)
   const main = gs.find((g) => g.kind === "main")?.items ?? []
   const specials = gs.filter((g) => g.kind !== "main").flatMap((g) => g.items)
@@ -306,7 +280,6 @@ export function EpisodeRows({ subject, chips: all, highlight }: { subject: Subje
   )
   return (
     <div className="space-y-3">
-      {pager}
       {/* 正片与特别篇同一个列表，不分组、不加分隔线（折叠只作用于正片） */}
       <div className={grid}>
         {main.map((c, i) => row(c, i))}
