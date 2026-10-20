@@ -68,7 +68,7 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
     volume: 1,
     autoplay: false, // 由下面的 play() 发起，以便处理浏览器拦截
     playsInline: true,
-    pip: true,
+    pip: !mobile, // 手机：系统自带画中画 / 后台播放，不需要小窗按钮
     fullscreen: true,
     fullscreenWeb: !mobile,
     setting: false,

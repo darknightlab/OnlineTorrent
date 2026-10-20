@@ -206,3 +206,8 @@
 .ot-idle .art-video {
   display: none !important;
 }
+
+/* 手机：音量由实体按键控制，不显示音量按钮 */
+.art-video-player.art-mobile .art-controls .art-control.art-control-volume {
+  display: none;
+}
