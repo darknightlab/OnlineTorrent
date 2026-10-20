@@ -181,10 +181,10 @@ export default function SubjectPage() {
         <section aria-labelledby="torrents-title">
           <SectionHeader id="torrents-title" icon={Film} title="种子资源" extra={<span className="text-xs text-muted-foreground">{torrents.length} 个</span>} />
           {(teams.length > 1 || releaseTagCounts.length > 0) && (
-            // 第一部分：字幕组（单选）｜第二部分：标签（多选，同时满足）。手机：两行各自横滑；sm 以上：一行换行，竖线分隔
-            <div className="mb-3 space-y-2 sm:flex sm:flex-wrap sm:items-center sm:gap-1.5 sm:space-y-0">
+            // 第一行：字幕组（单选）；第二行：标签（多选，同时满足）。手机上各自横滑，sm 以上换行
+            <div className="mb-3 space-y-2">
               {teams.length > 1 && (
-                <div className="-mx-3 flex items-center gap-1.5 overflow-x-auto px-3 scrollbar-none sm:contents">
+                <div className="-mx-3 flex items-center gap-1.5 overflow-x-auto px-3 scrollbar-none sm:mx-0 sm:flex-wrap sm:px-0">
                   <FilterChip kind="team" active={!team} onClick={() => setTeam(null)}>
                     全部
                   </FilterChip>
@@ -195,9 +195,8 @@ export default function SubjectPage() {
                   ))}
                 </div>
               )}
-              {teams.length > 1 && releaseTagCounts.length > 0 && <span aria-hidden className="mx-1 hidden h-4 w-px shrink-0 bg-border sm:block" />}
               {releaseTagCounts.length > 0 && (
-                <div className="-mx-3 flex items-center gap-1.5 overflow-x-auto px-3 scrollbar-none sm:contents">
+                <div className="-mx-3 flex items-center gap-1.5 overflow-x-auto px-3 scrollbar-none sm:mx-0 sm:flex-wrap sm:px-0">
                   {releaseTagCounts.map(([g, n]) => (
                     <FilterChip
                       key={g}
