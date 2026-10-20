@@ -14,9 +14,6 @@ import {
   Info,
   ListTree,
   Loader2,
-  RefreshCw,
-  ScrollText,
-  Server,
   Share2,
   Users,
   Captions,
@@ -51,12 +48,6 @@ export interface PlayerParts {
   actions: React.ReactNode
   /** 下载 / 上传 / 节点 / 进度（单行） */
   stats: React.ReactNode
-}
-
-interface LogLine {
-  t: number
-  level: LogLevel
-  msg: string
 }
 
 const kindIcon: Record<FileKind, typeof FileVideo> = {
@@ -122,7 +113,6 @@ export function Player({
   const [streaming, setStreaming] = useState<boolean | null>(null)
   const [current, setCurrent] = useState<number | null>(null)
   const [segments, setSegments] = useState<Uint8Array>(() => new Uint8Array(1))
-  const [logs, setLogs] = useState<LogLine[]>([])
   const [mediaError, setMediaError] = useState<string | null>(null)
   /** 会话无法继续（如播放器内核不兼容） */
   const [fatal, setFatal] = useState<string | null>(null)
@@ -143,7 +133,6 @@ export function Player({
     document.addEventListener("fullscreenchange", on)
     return () => document.removeEventListener("fullscreenchange", on)
   }, [])
-  const [seededBy, setSeededBy] = useState<string[]>([])
   /** 有 WebSeed 权限且已启用：连接 SSE 等待服务器就绪 */
   const [webseedArmed, setWebseedArmed] = useState(false)
   /** ArtPlayer 内部的 <video>（看门狗用） */
@@ -172,8 +161,10 @@ export function Player({
   const poster = (posterProp !== undefined ? posterProp : subject.data?.subject.cover) || undefined
   const wantFile = useRef<number | null>(fileIndex)
 
+  // 播放日志只输出到浏览器控制台（F12），页面上不显示
   const log = useCallback((level: LogLevel, msg: string) => {
-    setLogs((l) => [...l.slice(-199), { t: Date.now(), level, msg }])
+    const out = level === "error" ? console.error : level === "warn" ? console.warn : console.info
+    out(`[player] ${msg}`)
   }, [])
 
   // 预加载 ArtPlayer（单独的 chunk），通常在种子元数据就绪前完成
@@ -189,8 +180,6 @@ export function Player({
     autoPicked.current = false
     setSnap(null)
     setCurrent(null)
-    setLogs([])
-    setSeededBy([])
     setFatal(null)
     log("info", direct ? "服务器不可用，直接通过 P2P 网络连接" : "服务器已接受请求")
     loadEngine()
@@ -244,8 +233,7 @@ export function Player({
         try {
           const r = await api.seed(ih)
           if (cancelled) return
-          setSeededBy(r.seeded_by ?? [])
-          if (r.seeded_by?.length) log("info", `已请求服务器做种：${r.seeded_by.join(", ")}`)
+          if (r.seeded_by?.length) log("info", "已请求服务器做种")
           else log("warn", "服务器暂无可用的做种节点，仅使用 P2P 网络")
         } catch (e) {
           if (!cancelled) log("warn", `服务器做种未启用：${errorMessage(e)}`)
@@ -446,12 +434,6 @@ export function Player({
         {formatSpeed(snap?.uploadSpeed ?? 0)}
       </span>
       {direct && <Badge variant="warning">直连模式</Badge>}
-      {seededBy.length ? (
-        <span className="inline-flex items-center gap-1" title="服务器做种节点">
-          <Server className="h-3 w-3" />
-          {seededBy.join(" / ")}
-        </span>
-      ) : null}
     </div>
   )
 
@@ -584,12 +566,6 @@ export function Player({
                   {snap && <span className="tabular-nums">{formatBytes(snap.length)}</span>}
                   {snap && <span>{snap.files.length} 个文件</span>}
                   {direct && <Badge variant="warning">直连模式</Badge>}
-                  {seededBy.length ? (
-                    <span className="inline-flex items-center gap-1" title="服务器做种节点">
-                      <Server className="h-3 w-3" />
-                      {seededBy.join(" / ")}
-                    </span>
-                  ) : null}
                 </div>
               </div>
               <div className="flex shrink-0 gap-2">
@@ -667,10 +643,6 @@ export function Player({
                 <Info />
                 详情
               </TabsTrigger>
-              <TabsTrigger value="log">
-                <ScrollText />
-                日志
-              </TabsTrigger>
             </TabsList>
             <div className="h-[min(60dvh,32rem)] overflow-y-auto">
               {panelSources && <TabsContent value="sources">{panelSources(() => setPanelOpen(false))}</TabsContent>}
@@ -686,13 +658,10 @@ export function Player({
                 )}
               </TabsContent>
               <TabsContent value="peers">
-                <PeersPanel snap={snap} seededBy={seededBy} />
+                <PeersPanel snap={snap} />
               </TabsContent>
               <TabsContent value="info">
-                <InfoPanel snap={snap} infoHash={infoHash} magnet={magnet} torrentURL={session?.torrentFileURL() ?? null} engine={engine} />
-              </TabsContent>
-              <TabsContent value="log">
-                <LogPanel logs={logs} />
+                <InfoPanel snap={snap} infoHash={infoHash} magnet={magnet} torrentURL={session?.torrentFileURL() ?? null} />
               </TabsContent>
             </div>
           </Tabs>
@@ -854,20 +823,9 @@ function PanelLoading({ text }: { text: string }) {
   )
 }
 
-function PeersPanel({ snap, seededBy }: { snap: TorrentSnap | null; seededBy: string[] }) {
+function PeersPanel({ snap }: { snap: TorrentSnap | null }) {
   return (
     <div>
-      {seededBy.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 border-b px-3 py-2.5 text-xs text-muted-foreground">
-          <Server className="h-3.5 w-3.5" />
-          服务器做种：
-          {seededBy.map((s) => (
-            <Badge key={s} variant="soft">
-              {s}
-            </Badge>
-          ))}
-        </div>
-      )}
       {!snap ? (
         <PanelLoading text="正在寻找节点…" />
       ) : snap.peers.length === 0 ? (
@@ -893,7 +851,7 @@ function PeersPanel({ snap, seededBy }: { snap: TorrentSnap | null; seededBy: st
   )
 }
 
-function InfoPanel({ snap, infoHash, magnet, torrentURL, engine }: { snap: TorrentSnap | null; infoHash: string | null; magnet: string; torrentURL: string | null; engine: Engine | null }) {
+function InfoPanel({ snap, infoHash, magnet, torrentURL }: { snap: TorrentSnap | null; infoHash: string | null; magnet: string; torrentURL: string | null }) {
   const copy = async (text: string, what: string) => {
     if (await copyText(text)) toast.success(`${what}已复制`)
     else toast.error("复制失败")
@@ -941,29 +899,8 @@ function InfoPanel({ snap, infoHash, magnet, torrentURL, engine }: { snap: Torre
             复制 Hash
           </Button>
         )}
-        <Button variant="outline" size="sm" onClick={() => engine?.resetServiceWorker()} title="播放异常时可尝试重新注册 Service Worker（会刷新页面）">
-          <RefreshCw />
-          重置 SW
-        </Button>
       </div>
     </div>
   )
 }
 
-function LogPanel({ logs }: { logs: LogLine[] }) {
-  const box = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const scroller = box.current?.closest(".overflow-y-auto")
-    if (scroller) scroller.scrollTop = scroller.scrollHeight
-  }, [logs.length])
-  return (
-    <div ref={box} className="space-y-1 p-3 font-mono text-[11.5px] leading-relaxed">
-      {logs.map((l, i) => (
-        <p key={i} className={cn(l.level === "error" ? "text-destructive-text" : l.level === "warn" ? "text-warning-text" : "text-foreground/80")}>
-          <span className="mr-2 text-muted-foreground">{new Date(l.t).toLocaleTimeString("zh-CN", { hour12: false })}</span>
-          {l.msg}
-        </p>
-      ))}
-    </div>
-  )
-}
