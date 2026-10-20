@@ -1,6 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react"
 import { Link, Navigate, useParams } from "react-router-dom"
-import { CalendarClock, CalendarDays, Clapperboard, ExternalLink, Film, LayoutGrid, List, ListVideo, Play, Star, Tv } from "lucide-react"
+import { ChevronDown, CalendarClock, CalendarDays, Clapperboard, ExternalLink, Film, LayoutGrid, List, ListVideo, Play, Star, Tv } from "lucide-react"
 import { Container } from "@/components/layout/Container"
 import { Cover } from "@/components/Cover"
 import { airedCount, EpisodeGrid, EpisodeRows, episodeSummary, useEpisodeChips } from "@/components/EpisodeGrid"
@@ -53,6 +53,7 @@ export default function SubjectPage() {
   }, [data])
   // 字幕组单选；标签（1080P、WEB-DL、AVC、MKV…）多选，同时满足（AND）
   const [picked, setPicked] = useState<string[]>([])
+  const [allTorrents, setAllTorrents] = useState(false) // 超过 TORRENT_FOLD 条时默认折叠
   const byTeam = useMemo(() => (data?.torrents ?? []).filter((t) => !team || t.team?.name === team), [data, team])
   const tagsOf = useMemo(() => new Map((data?.torrents ?? []).map((t) => [t.id, releaseTags(t.title)])), [data])
   const releaseTagCounts = useMemo(() => {
@@ -213,7 +214,20 @@ export default function SubjectPage() {
           )}
           <Card className="overflow-hidden">
             {torrents.length ? (
-              <TorrentList items={torrents} now={now} />
+              <>
+                <TorrentList items={allTorrents ? torrents : torrents.slice(0, TORRENT_FOLD)} now={now} />
+                {torrents.length > TORRENT_FOLD && (
+                  <button
+                    type="button"
+                    onClick={() => setAllTorrents((v) => !v)}
+                    aria-expanded={allTorrents}
+                    className="flex h-10 w-full items-center justify-center gap-1 border-t text-[13px] text-muted-foreground hover:bg-muted/60 hover:text-primary-text"
+                  >
+                    {allTorrents ? "收起" : `展开全部 ${torrents.length} 个`}
+                    <ChevronDown className={cn("h-4 w-4 transition-transform", allTorrents && "rotate-180")} />
+                  </button>
+                )}
+              </>
             ) : picked.length > 0 ? (
               <EmptyState icon={Film} title="没有同时符合这些标签的种子" description="取消一些标签试试。" />
             ) : (
@@ -225,6 +239,9 @@ export default function SubjectPage() {
     </div>
   )
 }
+
+/** 种子资源超过这么多条时折叠 */
+const TORRENT_FOLD = 8
 
 /** 公共标签在前、用户标签在后，去重，最多 MAX_TAGS 个 */
 const MAX_TAGS = 10
