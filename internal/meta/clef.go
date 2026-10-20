@@ -263,6 +263,10 @@ func scanClefDecision(sc interface{ Scan(...any) error }) (*ClefDecision, error)
 }
 
 // ListClefDecisions lists decisions (newest first), optionally by status / infohash.
+//
+// Every run of a torrent adds new decisions; an older decision of the same file is
+// superseded. Lists by status show only the latest decision per file (a file mapped on a
+// re-run no longer shows up as 未映射); a list for one torrent (ih) shows the whole history.
 func (s *Store) ListClefDecisions(ctx context.Context, status, ih string, offset, limit int) ([]ClefDecision, int, error) {
 	where, args := "1=1", []any{}
 	if status != "" {
@@ -272,6 +276,8 @@ func (s *Store) ListClefDecisions(ctx context.Context, status, ih string, offset
 	if ih != "" {
 		where += " AND d.infohash = ?"
 		args = append(args, ih)
+	} else {
+		where += " AND " + latestClefDecision
 	}
 	var total int
 	if err := s.R.QueryRowContext(ctx, `SELECT COUNT(*) FROM clef_decisions d WHERE `+where, args...).Scan(&total); err != nil {
@@ -293,9 +299,12 @@ func (s *Store) ListClefDecisions(ctx context.Context, status, ih string, offset
 	return out, total, rows.Err()
 }
 
-// ClefDecisionCounts counts decisions per status.
+// latestClefDecision: d is the newest decision of its file (older ones are superseded).
+const latestClefDecision = `d.id = (SELECT MAX(x.id) FROM clef_decisions x WHERE x.infohash = d.infohash AND x.file_index = d.file_index)`
+
+// ClefDecisionCounts counts the latest decision of each file per status.
 func (s *Store) ClefDecisionCounts(ctx context.Context) (map[string]int, error) {
-	rows, err := s.R.QueryContext(ctx, `SELECT status, COUNT(*) FROM clef_decisions GROUP BY status`)
+	rows, err := s.R.QueryContext(ctx, `SELECT d.status, COUNT(*) FROM clef_decisions d WHERE `+latestClefDecision+` GROUP BY d.status`)
 	if err != nil {
 		return nil, err
 	}

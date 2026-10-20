@@ -224,7 +224,7 @@ function Decisions() {
       ) : (
         <ul className="grid gap-3">
           {items.map((d) => (
-            <DecisionCard key={d.id} d={d} />
+            <DecisionCard key={d.id} d={d} superseded={!!ih && items.some((x) => x.file_index === d.file_index && x.id > d.id)} />
           ))}
         </ul>
       )}
@@ -237,7 +237,8 @@ function subjectLabel(d: { title?: string; title_cn?: string }) {
   return d.title_cn || d.title || ""
 }
 
-function DecisionCard({ d }: { d: ClefDecision }) {
+/** superseded：同一文件有更新的决策（按种子查看历史时），只显示、不可操作 */
+function DecisionCard({ d, superseded }: { d: ClefDecision; superseded?: boolean }) {
   const qc = useQueryClient()
   const m = useMutation({
     mutationFn: (accept: boolean) => (accept ? api.admin.clefAccept(d.id) : api.admin.clefReject(d.id)),
@@ -250,7 +251,7 @@ function DecisionCard({ d }: { d: ClefDecision }) {
   const base = d.path.split("/").pop() ?? d.path
   return (
     <li>
-      <Card className="p-4">
+      <Card className={cn("p-4", superseded && "opacity-60")}>
         <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <a href={watchHref(d.infohash, d.file_index)} target="_blank" rel="noreferrer" className="wrap-anywhere text-sm font-medium hover:text-primary-text hover:underline">
@@ -267,6 +268,7 @@ function DecisionCard({ d }: { d: ClefDecision }) {
             </p>
           </div>
           <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+            {superseded && <Badge variant="outline">已被新的判断取代</Badge>}
             <Badge variant={STATUS_VARIANT[d.status]}>{STATUS_LABEL[d.status]}</Badge>
             <span title={formatDateTime(d.created_at)}>{timeAgo(d.created_at)}</span>
           </span>
@@ -298,14 +300,14 @@ function DecisionCard({ d }: { d: ClefDecision }) {
               {d.decided_by === "clef" ? "自动应用" : `${d.decided_by} 处理`} · {timeAgo(d.decided_at)}
             </span>
           )}
-          <RequeueButton ih={d.infohash} label="重新判断" />
-          {(d.status === "discarded" || d.status === "rejected") && d.work_key && d.episode_key && (
+          {!superseded && <RequeueButton ih={d.infohash} label="重新判断" />}
+          {!superseded && (d.status === "discarded" || d.status === "rejected") && d.work_key && d.episode_key && (
             <Button size="sm" variant="soft" onClick={() => m.mutate(true)} disabled={m.isPending} title="忽略校验，按模型的答案人工确认映射">
               {m.isPending ? <Loader2 className="animate-spin" /> : <Check />}
               仍然接受
             </Button>
           )}
-          {d.status === "pending" && (
+          {!superseded && d.status === "pending" && (
             <>
               <Button variant="outline" size="sm" onClick={() => m.mutate(false)} disabled={m.isPending}>
                 <X />
@@ -317,7 +319,7 @@ function DecisionCard({ d }: { d: ClefDecision }) {
               </Button>
             </>
           )}
-          {d.status === "applied" && (
+          {!superseded && d.status === "applied" && (
             <Button variant="outline" size="sm" onClick={() => m.mutate(false)} disabled={m.isPending}>
               {m.isPending ? <Loader2 className="animate-spin" /> : <Undo2 />}
               撤销映射
