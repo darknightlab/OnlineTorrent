@@ -426,6 +426,114 @@ func (f *family) route(paths []string, title, method string, anchorSure bool) []
 	return out
 }
 
+// otherWorkNamer returns a check: does the file's own name (title fragments of its file
+// name and of each directory, the leading bracket = release group skipped) name a work,
+// exactly by a name in the name index, that is neither the target work, nor one of its
+// family (fam, as loaded), nor an entry sharing a name with it (same franchiseBase), nor a
+// piece of one of its own names? Such a file is not mapped by rule ("[GM-Team][时光代理人
+// 第3季]" holding "[灵境行者][Spirit Realm Walker][08]" files). A file without a work name
+// ("03.mkv") or naming the work by any of its names / aliases passes. Lookups only (no DB
+// queries); results per directory are cached.
+func (s *Store) otherWorkNamer(ctx context.Context, fam *family) func(path string, w *Work) bool {
+	idx, err := s.aliasIndex(ctx)
+	if err != nil || idx == nil {
+		return func(string, *Work) bool { return false }
+	}
+	type target struct {
+		keys  map[string]bool // keys counting as the same work
+		names []string        // normName of its own names
+	}
+	related := map[string]*target{}
+	ours := func(w *Work) *target {
+		if m, ok := related[w.Key]; ok {
+			return m
+		}
+		m := map[string]bool{w.Key: true}
+		var own []string
+		for _, f := range fam.works {
+			m[f.w.Key] = true
+		}
+		for _, n := range append([]string{w.Title, w.TitleCN}, w.Aliases...) {
+			for _, k := range idx.base[franchiseBase(n)] {
+				m[k] = true
+			}
+			own = append(own, normName(n))
+		}
+		tg := &target{keys: m, names: own}
+		related[w.Key] = tg
+		return tg
+	}
+	type partKey struct{ part, work string }
+	cache := map[partKey]bool{}
+	names := func(part string, tg *target) bool {
+		// the leading bracket is the release group ("[Tsukigakirei]" is also an alias of 月がきれい)
+		if t := strings.TrimSpace(part); strings.HasPrefix(t, "[") || strings.HasPrefix(t, "【") {
+			if i := strings.IndexAny(t, "]】"); i > 0 {
+				_, sz := utf8.DecodeRuneInString(t[i:])
+				part = t[i+sz:]
+			}
+		}
+		for _, nf := range nameFragments(part) {
+			ks := idx.norm[nf]
+			if len(ks) == 0 {
+				continue
+			}
+			mine := false
+			for _, k := range ks {
+				mine = mine || tg.keys[k]
+			}
+			for _, n := range tg.names {
+				// a piece of the work's own name ("Dragon Ball Super" of "Dragon Ball
+				// Super: Beerus", split at the colon)
+				mine = mine || strings.Contains(n, nf)
+			}
+			if !mine {
+				return true
+			}
+		}
+		return false
+	}
+	return func(p string, w *Work) bool {
+		tg := ours(w)
+		parts := strings.Split(strings.ReplaceAll(p, "\\", "/"), "/")
+		parts[len(parts)-1] = stem(parts[len(parts)-1])
+		for _, part := range parts {
+			if strings.TrimSpace(part) == "" {
+				continue
+			}
+			ck := partKey{part, w.Key}
+			v, ok := cache[ck]
+			if !ok {
+				v = names(part, tg)
+				cache[ck] = v
+			}
+			if v {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// nameFragments: the normName of the parts of a name that may be a whole work name —
+// titleFragments' split (brackets, separators, " - ") without its word-token check (the
+// tokenizer is most of the cost; a part that isn't a name just finds nothing in the index).
+func nameFragments(name string) []string {
+	const seps = "[]【】()「」『』{}〔〕〖〗/|:+;,、"
+	var out []string
+	for _, part := range strings.FieldsFunc(normWidth(name), func(r rune) bool { return strings.ContainsRune(seps, r) }) {
+		for _, f := range strings.Split(part, " - ") {
+			n := normName(strings.Trim(f, " \t._-~!?★☆\u200b"))
+			c := utf8.RuneCountInString(n)
+			if c > 80 || c < 3 || (!hasNonASCII(n) && c < 5) {
+				continue
+			}
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 // fileResult is the mapping of one file. queue: a video the rules could not map with
 // certainty (left unmapped for the decision model); hint: the rules' guess (work key).
 type fileResult struct {
@@ -481,6 +589,7 @@ func (s *Store) mapFiles(ctx context.Context, paths []string, title string, anch
 	ps := classifyFilesIn(paths, title, groups)
 	refineRouted(fam, paths, routes, ps)
 	valid := s.keyValidator()
+	other := s.otherWorkNamer(ctx, fam)
 	for i, p := range ps {
 		r := routes[i]
 		video := IsVideo(paths[i])
@@ -488,6 +597,9 @@ func (s *Store) mapFiles(ctx context.Context, paths []string, title string, anch
 		if sure && video && MappableKind(p.Kind) {
 			k, ok := KeyOfFile(p.Kind, p.Episode)
 			sure = p.Sure && ok && valid(ctx, r.w.w, k)
+		}
+		if sure && video && other(paths[i], r.w.w) {
+			sure = false // the file's own name names another work (a mislabelled pack)
 		}
 		if !sure {
 			res := fileResult{kind: p.Kind, queue: video && p.Kind != "extra"}

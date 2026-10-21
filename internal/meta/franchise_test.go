@@ -142,3 +142,36 @@ func TestFranchiseNegatives(t *testing.T) {
 		}
 	}
 }
+
+// A file whose own name names another work is not mapped by rule; files naming the work
+// by any of its names, or no work at all, are.
+func TestFileNamesOtherWork(t *testing.T) {
+	s := openTest(t)
+	seedWork(t, s, 555710, "时光代理人Ⅲ Part One", "时光代理人 第三季 Part 1", `["时光代理人 第三季 Part 1", "Link Click Season 3"]`, "web", "2026-08-13", "", seq(1, 12), nil)
+	seedWork(t, s, 324295, "时光代理人", "时光代理人", `["Link Click"]`, "web", "2021-04-30", "2021-07-09", seq(1, 11), nil)
+	seedWork(t, s, 361196, "时光代理人 第二季", "时光代理人 第二季", `["Link Click Season 2"]`, "web", "2023-07-14", "2023-09-22", seq(1, 12), nil)
+	seedWork(t, s, 507530, "灵境行者", "灵境行者", `["Spirit Realm Walker"]`, "web", "2026-03-01", "", seq(1, 16), nil)
+	const dir = "[GM-Team][时光代理人 第3季][Link Click S03][08-11][AVC][4K SDR+][NoLogo]/"
+	got := matchOne(t, s, "lc", "[GM-Team][时光代理人 第3季][Link Click S03][08-11][AVC][4K SDR+][NoLogo]", "2026-10-20T00:00:00Z",
+		dir+"[GM-Team][国漫][灵境行者][Spirit Realm Walker][2026][08][HEVC][GB][4K].mp4",
+		dir+"[GM-Team][国漫][灵境行者][Spirit Realm Walker][2026][09][HEVC][GB][4K].mp4",
+		dir+"[GM-Team][国漫][时光代理人 第3季][Link Click S03][2026][10][AVC][4K].mp4",
+		dir+"[GM-Team][11][AVC][4K].mp4")
+	if got[0] != "" || got[1] != "" {
+		t.Errorf("files naming 灵境行者 mapped: %v", got)
+	}
+	if got[2] != "bgm:555710 10" || got[3] != "bgm:555710 11" {
+		t.Errorf("real files: %v", got)
+	}
+	// a pack whose file names use another alias / romaji of the same work
+	seedWork(t, s, 10440, "あの日見た花の名前を僕達はまだ知らない。", "我们仍未知道那天所看见的花的名字。", `["Ano Hi Mita Hana no Namae o Bokutachi wa Mada Shiranai", "AnoHana"]`, "tv", "2011-04-14", "2011-06-23", seq(1, 11), nil)
+	s.aliasMu.Lock()
+	s.aliases = nil
+	s.aliasMu.Unlock()
+	got = matchOne(t, s, "ah", "[G] 我们仍未知道那天所看见的花的名字。 [BD 1080p]", "2026-10-20T00:00:00Z",
+		"我们仍未知道那天所看见的花的名字/[G] AnoHana - 01 [BD 1080p].mkv",
+		"我们仍未知道那天所看见的花的名字/[G] Ano Hi Mita Hana no Namae o Bokutachi wa Mada Shiranai - 02 [BD 1080p].mkv")
+	if got[0] != "bgm:10440 1" || got[1] != "bgm:10440 2" {
+		t.Errorf("same work under other names: %v", got)
+	}
+}

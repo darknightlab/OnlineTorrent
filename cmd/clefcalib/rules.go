@@ -3,7 +3,7 @@ package main
 // Offline check of the rule path (no API calls): the certain rule mappings (RuleMapping:
 // resolveWork + mapFiles, nothing written) of the calibration torrents against their labels.
 //
-//	clefcalib rules -meta-db /tmp/calib/meta.db v2-all.jsonl
+//	clefcalib rules [-list] -meta-db /tmp/calib/meta.db v2-all.jsonl
 
 import (
 	"context"
@@ -18,6 +18,7 @@ import (
 func rules(args []string) error {
 	fs := flag.NewFlagSet("rules", flag.ExitOnError)
 	dbPath := fs.String("meta-db", "", "copy of meta.db")
+	list := fs.Bool("list", false, "list every applied file (stderr, RIGHT / WRONG)")
 	_ = fs.Parse(args)
 	ctx := context.Background()
 	ms, err := meta.Open(*dbPath)
@@ -69,6 +70,9 @@ func rules(args []string) error {
 				}
 				if removed || (f.WorkKey == t.Subject && f.Kind == t.Kind && key == t.Key) {
 					right++
+					if *list {
+						fmt.Fprintf(os.Stderr, "RIGHT %s #%d %s: %s %s %s\n", r.Task.Infohash[:8], f.Index, f.Path, f.WorkKey, f.Kind, key)
+					}
 				} else {
 					wrong++
 					fmt.Fprintf(os.Stderr, "WRONG %s #%d %s: rules %s %s %s, label %s %s %s\n", r.Task.Infohash[:8], f.Index, f.Path, f.WorkKey, f.Kind, key, t.Subject, t.Kind, t.Key)
