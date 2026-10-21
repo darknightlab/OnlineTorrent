@@ -254,11 +254,18 @@ func (s *Server) adminClefRequeue(w http.ResponseWriter, r *http.Request) error 
 	if _, known := s.Meta.KnownTorrent(r.Context(), ih); !known {
 		return httpx.E(404, "not_found", "本地库中没有这个种子")
 	}
-	if err := s.Meta.RequeueClef(r.Context(), ih); err != nil {
+	// ?scope=uncertain: only the files without a conclusion (pending / undecided); default:
+	// forced, every file
+	uncertain := r.URL.Query().Get("scope") == "uncertain"
+	queue := s.Meta.RequeueClef
+	if uncertain {
+		queue = s.Meta.QueueUncertainClef
+	}
+	if err := queue(r.Context(), ih); err != nil {
 		return err
 	}
 	c.Wake()
-	s.audit(r, "clef.requeue", ih, "")
+	s.audit(r, "clef.requeue", ih, map[bool]string{true: "uncertain", false: "force"}[uncertain])
 	v, err := c.Status(r.Context())
 	if err != nil {
 		return err

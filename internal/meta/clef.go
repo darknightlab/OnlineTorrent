@@ -57,6 +57,12 @@ func (s *Store) enqueueClef(ctx context.Context, ih string) error {
 	return err
 }
 
+// QueueUncertainClef queues a non-forced job now (only the torrent's uncertain files are
+// decided, as when the torrent re-appears); no-op if already pending.
+func (s *Store) QueueUncertainClef(ctx context.Context, ih string) error {
+	return s.enqueueClef(ctx, ih)
+}
+
 // RequeueClef (re)queues a torrent now as a forced job (admin 重新判断: every file is decided
 // again, concluded ones included).
 func (s *Store) RequeueClef(ctx context.Context, ih string) error {
