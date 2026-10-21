@@ -90,7 +90,6 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
               position: "right" as const,
               index: 4,
               html: "资源",
-              tooltip: "资源与播放详情",
               click: () => o.onPanel?.(),
             },
           ]
