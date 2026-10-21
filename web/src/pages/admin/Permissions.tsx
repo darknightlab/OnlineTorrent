@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { toast } from "@/components/ui/toast"
 import { ErrorState, Spinner, errorMessage } from "@/components/states"
-import { api } from "@/lib/api"
+import { adminApi } from "./api"
 import { qk } from "@/lib/queries"
-import type { GrantRole, PermissionItem, PermissionsResponse } from "@/lib/types"
+import type { GrantRole, PermissionItem, PermissionsResponse } from "./types"
 import { cn } from "@/lib/utils"
 import { AdminHeader } from "./components"
 
@@ -68,7 +68,7 @@ function summary(i: PermissionItem, min: Min) {
 
 export default function PermissionsPage() {
   const qc = useQueryClient()
-  const q = useQuery({ queryKey: KEY, queryFn: api.admin.permissions })
+  const q = useQuery({ queryKey: KEY, queryFn: adminApi.permissions })
   const items = useMemo(() => q.data?.items ?? [], [q.data])
   const base = useMemo(() => Object.fromEntries(items.filter(editable).map((i) => [i.key, baseMin(i)])) as Record<string, Min>, [items])
   const [draft, setDraft] = useState<Record<string, Min>>({})
@@ -97,7 +97,7 @@ export default function PermissionsPage() {
   const configurable = items.filter(editable).length
 
   const save = useMutation({
-    mutationFn: () => api.admin.savePermissions({ grants: Object.fromEntries(dirty.map((k) => [k, draft[k] ? [draft[k]!] : []])) }),
+    mutationFn: () => adminApi.savePermissions({ grants: Object.fromEntries(dirty.map((k) => [k, draft[k] ? [draft[k]!] : []])) }),
     onSuccess: (data: PermissionsResponse) => {
       qc.setQueryData(KEY, data)
       void qc.invalidateQueries({ queryKey: qk.me })

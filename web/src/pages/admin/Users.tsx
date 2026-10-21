@@ -9,8 +9,10 @@ import { Badge } from "@/components/ui/badge"
 import { toast } from "@/components/ui/toast"
 import { RoleBadge } from "@/components/badges"
 import { Pager, errorMessage } from "@/components/states"
-import { api, toList } from "@/lib/api"
-import type { AdminUser, User } from "@/lib/types"
+import { toList } from "@/lib/api"
+import { adminApi } from "./api"
+import type { User } from "@/lib/types"
+import type { AdminUser } from "./types"
 import { formatDate, timeAgo } from "@/lib/format"
 import { AdminHeader, DataView, type Column } from "./components"
 
@@ -20,7 +22,7 @@ export default function UsersPage() {
   const [kw, setKw] = useState("")
   const [page, setPage] = useState(1)
   const [editing, setEditing] = useState<AdminUser | null>(null)
-  const query = useQuery({ queryKey: ["admin", "users", kw, page], queryFn: () => api.admin.users(kw, page), placeholderData: keepPreviousData })
+  const query = useQuery({ queryKey: ["admin", "users", kw, page], queryFn: () => adminApi.users(kw, page), placeholderData: keepPreviousData })
   const list = toList(query.data)
 
   const columns: Column<AdminUser>[] = [
@@ -92,7 +94,7 @@ function UserDialog({ user, onClose, onSaved }: { user: AdminUser; onClose: () =
   const [vip, setVip] = useState(user.vip_until ? user.vip_until.slice(0, 10) : "")
   const [disabled, setDisabled] = useState(user.disabled)
   const m = useMutation({
-    mutationFn: () => api.admin.updateUser(user.id, { role, vip_until: vip ? new Date(`${vip}T23:59:59+08:00`).toISOString() : null, disabled }),
+    mutationFn: () => adminApi.updateUser(user.id, { role, vip_until: vip ? new Date(`${vip}T23:59:59+08:00`).toISOString() : null, disabled }),
     onSuccess: () => {
       toast.success("已保存")
       onSaved()

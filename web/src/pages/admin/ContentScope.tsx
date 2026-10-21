@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { toast } from "@/components/ui/toast"
 import { ErrorState, Spinner, errorMessage } from "@/components/states"
-import { api } from "@/lib/api"
-import type { ContentScope, ContentScopeInput, ContentScopesResponse, GrantRole, TagMode, TagOperator } from "@/lib/types"
-import { MAX_SCOPE_TAGS, MAX_SCOPE_TAG_CHARS, expressionString, validateScope } from "@/lib/scope"
+import { adminApi } from "./api"
+import type { ContentScope, ContentScopeInput, ContentScopesResponse, GrantRole, TagMode, TagOperator } from "./types"
+import { MAX_SCOPE_TAGS, MAX_SCOPE_TAG_CHARS, expressionString, validateScope } from "./scope"
 import { cn } from "@/lib/utils"
 import { AdminHeader } from "./components"
 
@@ -21,7 +21,7 @@ const same = (a: ContentScopeInput, b: ContentScopeInput) => JSON.stringify(a) =
 const restricted = (s: ContentScopeInput) => s.tag_mode === "selected" || s.exclude_tags.length > 0
 
 export default function ContentScopePage() {
-  const q = useQuery({ queryKey: KEY, queryFn: api.admin.contentScopes })
+  const q = useQuery({ queryKey: KEY, queryFn: adminApi.contentScopes })
 
   if (q.error) return <ErrorState error={q.error} onRetry={() => q.refetch()} />
   if (!q.data)
@@ -82,7 +82,7 @@ function ScopeCard({ scope }: { scope: ContentScope }) {
   const preview = expressionString(draft.tags, draft.tag_operators)
 
   const save = useMutation({
-    mutationFn: () => api.admin.saveContentScope(role, draft),
+    mutationFn: () => adminApi.saveContentScope(role, draft),
     onSuccess: (data) => {
       qc.setQueryData<ContentScopesResponse>(KEY, (old) => (old ? { ...old, items: old.items.map((i) => (i.role === role ? data : i)) } : old))
       toast.success(`已保存「${ROLE_LABEL[role]}」的内容范围`)
@@ -256,7 +256,7 @@ function TagInput({ placeholder, onAdd, disabled }: { placeholder: string; onAdd
   const listId = useId()
   const inputRef = useRef<HTMLInputElement>(null)
   const term = useDebounced(text.trim(), 200)
-  const q = useQuery({ queryKey: ["admin", "subject-tags", term], queryFn: () => api.admin.subjectTags(term), enabled: open, staleTime: 60_000 })
+  const q = useQuery({ queryKey: ["admin", "subject-tags", term], queryFn: () => adminApi.subjectTags(term), enabled: open, staleTime: 60_000 })
   const items = q.data?.items ?? []
   const tooLong = [...text.trim()].length > MAX_SCOPE_TAG_CHARS
 

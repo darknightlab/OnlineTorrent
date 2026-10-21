@@ -9,15 +9,16 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
 import { ActionBadge } from "@/components/badges"
 import { EmptyState, ErrorState, Spinner, errorMessage } from "@/components/states"
-import { api, toList } from "@/lib/api"
-import type { Review, ReviewAction, RuleLabel } from "@/lib/types"
+import { toList } from "@/lib/api"
+import { adminApi } from "./api"
+import type { Review, ReviewAction, RuleLabel } from "./types"
 import { timeAgo } from "@/lib/format"
 import { watchHref } from "@/lib/utils"
 import { AdminHeader, Mono } from "./components"
 
 export default function Reviews() {
   const [status, setStatus] = useState("pending")
-  const q = useQuery({ queryKey: ["admin", "reviews", status], queryFn: () => api.admin.reviews(status) })
+  const q = useQuery({ queryKey: ["admin", "reviews", status], queryFn: () => adminApi.reviews(status) })
   const items = toList(q.data).items
   return (
     <div>
@@ -57,7 +58,7 @@ function ReviewCard({ r }: { r: Review }) {
   const [label, setLabel] = useState<RuleLabel>(r.label ?? "")
   const [note, setNote] = useState(r.note ?? "")
   const m = useMutation({
-    mutationFn: () => api.admin.decideReview(r.id, { action, label, note }),
+    mutationFn: () => adminApi.decideReview(r.id, { action, label, note }),
     onSuccess: () => {
       toast.success("已裁决")
       void qc.invalidateQueries({ queryKey: ["admin", "reviews"] })

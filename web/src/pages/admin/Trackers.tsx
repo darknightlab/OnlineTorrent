@@ -10,8 +10,8 @@ import { Card } from "@/components/ui/card"
 import { Textarea } from "@/components/ui/input"
 import { toast } from "@/components/ui/toast"
 import { ErrorState, Spinner, errorMessage } from "@/components/states"
-import { api } from "@/lib/api"
-import type { TrackerHealth, TrackersResponse } from "@/lib/types"
+import { adminApi } from "./api"
+import type { TrackerHealth, TrackersResponse } from "./types"
 import { formatDateTime, timeAgo } from "@/lib/format"
 import { useNow } from "@/lib/hooks"
 import { AdminHeader, DataView, Mono, StatusDot, type Column } from "./components"
@@ -46,7 +46,7 @@ const LISTS = [
 
 export default function TrackersPage() {
   const now = useNow(15_000)
-  const q = useQuery({ queryKey: KEY, queryFn: api.admin.trackers, refetchInterval: 30_000 })
+  const q = useQuery({ queryKey: KEY, queryFn: adminApi.trackers, refetchInterval: 30_000 })
   if (q.error) return <ErrorState error={q.error} onRetry={() => q.refetch()} />
   if (!q.data)
     return (
@@ -137,7 +137,7 @@ function ListCard({ spec, urls, health, now }: { spec: (typeof LISTS)[number]; u
     if (!editing) setText(urls.join("\n"))
   }, [urls, editing])
   const save = useMutation({
-    mutationFn: () => api.admin.saveSettings({ values: { [spec.key]: text.split("\n").map((s) => s.trim()).filter(Boolean) } }),
+    mutationFn: () => adminApi.saveSettings({ values: { [spec.key]: text.split("\n").map((s) => s.trim()).filter(Boolean) } }),
     onSuccess: () => {
       setEditing(false)
       void qc.invalidateQueries({ queryKey: KEY })

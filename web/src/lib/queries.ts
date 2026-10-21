@@ -51,6 +51,14 @@ export function useUser() {
   return { user: q.data?.user ?? null, loading: q.isPending, error: q.error }
 }
 
+/** 当前用户是否管理员（/me 未加载完成时为 false）；管理区（/admin 及其代码）只对管理员存在 */
+export function useIsAdmin(): boolean {
+  return useMe().data?.user?.role === "admin"
+}
+
+/** 是否位于管理区路由（/admin、/admin/…） */
+export const isAdminPath = (pathname: string) => /^\/admin(\/|$)/.test(pathname)
+
 /** 常用接口权限键（与后端路由注册的 "METHOD /pattern" 一致） */
 export const PERM = {
   schedule: "GET /api/v1/schedule",

@@ -8,8 +8,9 @@ import { Card } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "@/components/ui/toast"
 import { ErrorState, errorMessage } from "@/components/states"
-import { api, isApiError } from "@/lib/api"
-import type { BgmArchiveStatus } from "@/lib/types"
+import { isApiError } from "@/lib/api"
+import { adminApi } from "./api"
+import type { BgmArchiveStatus } from "./types"
 import { formatDateTime, formatDuration, timeAgo } from "@/lib/format"
 import { useNow } from "@/lib/hooks"
 import { cn } from "@/lib/utils"
@@ -30,12 +31,12 @@ export function BgmArchiveCard() {
   const now = useNow(15_000)
   const q = useQuery({
     queryKey: KEY,
-    queryFn: api.admin.bgmArchive,
+    queryFn: adminApi.bgmArchive,
     // 同步中每 3 秒刷新
     refetchInterval: (query) => (query.state.data?.running ? 3_000 : 60_000),
   })
   const run = useMutation({
-    mutationFn: api.admin.runBgmArchive,
+    mutationFn: adminApi.runBgmArchive,
     onSuccess: (st) => {
       if (st && typeof st === "object" && "running" in st) qc.setQueryData(KEY, st)
       else void qc.invalidateQueries({ queryKey: KEY })

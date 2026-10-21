@@ -3,9 +3,10 @@
 import * as fx from "./fixtures"
 import { DEFAULT_RANK_RULES } from "@/lib/rank"
 import { canonicalEpisodeKey, compareEpisodeKeys, episodeLabel, parseEpisodeKey, type EpisodeKey } from "@/lib/episode"
-import { scopeVisible, validateScope } from "@/lib/scope"
+import { scopeVisible, validateScope } from "@/pages/admin/scope"
 import { patternOK } from "./rankcheck"
-import type { RankRules, TrackerHealth, AdminUser, BgmArchiveStatus, ContentScope, ContentScopeInput, EpisodeFile, EpisodeListItem, GrantRole, MeResponse, PermissionItem, PlayResponse, QBServer, Rule, Source, Subject, Torrent, TorrentStatus, User } from "@/lib/types"
+import type { RankRules, EpisodeFile, EpisodeListItem, MeResponse, PlayResponse, Subject, Torrent, TorrentStatus, User } from "@/lib/types"
+import type { TrackerHealth, AdminUser, BgmArchiveStatus, ContentScope, ContentScopeInput, GrantRole, PermissionItem, QBServer, Rule, Source } from "@/pages/admin/types"
 
 type Handler = (ctx: { params: Record<string, string>; query: URLSearchParams; body: any }) => unknown
 

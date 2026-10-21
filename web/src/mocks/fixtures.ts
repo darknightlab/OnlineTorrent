@@ -2,28 +2,8 @@
 // 放送时间相对“现在”动态计算，保证“已更新/即将播出”徽标在任何时候都有样例。
 import seed from "./seed.json"
 import { DEFAULT_RANK_RULES } from "@/lib/rank"
-import type {
-  SwarmStats,
-  AccessAction,
-  AdminStats,
-  AdminUser,
-  AuditEntry,
-  InviteCode,
-  PermissionItem,
-  PlayRecord,
-  MetadataJob,
-  QBServer,
-  RedeemCode,
-  Source,
-  SourceSchema,
-  Review,
-  Rule,
-  ScheduleItem,
-  SettingItem,
-  Site,
-  Subject,
-  Torrent,
-} from "@/lib/types"
+import type { SwarmStats, AccessAction, ScheduleItem, Site, Subject, Torrent } from "@/lib/types"
+import type { AdminStats, AdminUser, AuditEntry, InviteCode, PermissionItem, PlayRecord, MetadataJob, QBServer, RedeemCode, Source, SourceSchema, Review, Rule, SettingItem } from "@/pages/admin/types"
 
 const HOUR = 3600_000
 const DAY = 24 * HOUR

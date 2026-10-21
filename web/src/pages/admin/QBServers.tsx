@@ -7,8 +7,9 @@ import { Field, Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { toast } from "@/components/ui/toast"
 import { errorMessage } from "@/components/states"
-import { api, toList } from "@/lib/api"
-import type { QBServer, QBServerInput } from "@/lib/types"
+import { toList } from "@/lib/api"
+import { adminApi } from "./api"
+import type { QBServer, QBServerInput } from "./types"
 import { formatBytes, timeAgo } from "@/lib/format"
 import { AdminHeader, DataView, Mono, StatusDot, type Column } from "./components"
 
@@ -17,19 +18,19 @@ const KEY = ["admin", "qb"]
 
 export default function QBServers() {
   const qc = useQueryClient()
-  const q = useQuery({ queryKey: KEY, queryFn: api.admin.qbServers })
+  const q = useQuery({ queryKey: KEY, queryFn: adminApi.qbServers })
   const [editing, setEditing] = useState<QBServer | "new" | null>(null)
   const [testing, setTesting] = useState<number | null>(null)
   const [edgeOf, setEdgeOf] = useState<QBServer | null>(null)
   const invalidate = () => qc.invalidateQueries({ queryKey: KEY })
 
   const toggle = useMutation({
-    mutationFn: (s: QBServer) => api.admin.updateQB(s.id, { enabled: !s.enabled }),
+    mutationFn: (s: QBServer) => adminApi.updateQB(s.id, { enabled: !s.enabled }),
     onSuccess: invalidate,
     onError: (e) => toast.error(errorMessage(e)),
   })
   const del = useMutation({
-    mutationFn: (id: number) => api.admin.deleteQB(id),
+    mutationFn: (id: number) => adminApi.deleteQB(id),
     onSuccess: () => {
       toast.success("已删除")
       void invalidate()
@@ -40,7 +41,7 @@ export default function QBServers() {
   async function test(s: QBServer) {
     setTesting(s.id)
     try {
-      const r = await api.admin.testQB(s.id)
+      const r = await adminApi.testQB(s.id)
       toast.success(`${s.name} 连接正常${r.version ? `（${r.version}）` : ""}`)
     } catch (e) {
       toast.error(`${s.name}：${errorMessage(e)}`)
@@ -159,7 +160,7 @@ function EdgeCell({ s }: { s: QBServer }) {
 function EdgeDialog({ server, onClose, onChanged }: { server: QBServer; onClose: () => void; onChanged: () => void }) {
   const [issued, setIssued] = useState<{ token: string; connect_url: string } | null>(null)
   const gen = useMutation({
-    mutationFn: () => api.admin.edgeToken(server.id),
+    mutationFn: () => adminApi.edgeToken(server.id),
     onSuccess: (r) => {
       setIssued(r)
       onChanged()
@@ -167,7 +168,7 @@ function EdgeDialog({ server, onClose, onChanged }: { server: QBServer; onClose:
     onError: (e) => toast.error(errorMessage(e)),
   })
   const unbind = useMutation({
-    mutationFn: () => api.admin.edgeUnbind(server.id),
+    mutationFn: () => adminApi.edgeUnbind(server.id),
     onSuccess: () => {
       toast.success("已解除绑定，边缘节点已断开")
       onChanged()
@@ -176,7 +177,7 @@ function EdgeDialog({ server, onClose, onChanged }: { server: QBServer; onClose:
     onError: (e) => toast.error(errorMessage(e)),
   })
   const rotate = useMutation({
-    mutationFn: () => api.admin.rotateEdgeKey(),
+    mutationFn: () => adminApi.rotateEdgeKey(),
     onSuccess: () => toast.success("已更换签名密钥（旧密钥签发的访问令牌在过期前仍有效）"),
     onError: (e) => toast.error(errorMessage(e)),
   })
@@ -251,7 +252,7 @@ function QBDialog({ server, onClose, onSaved }: { server: QBServer | null; onClo
       const body: Partial<QBServerInput> = { ...f }
       if (!body.password) delete body.password
       if (!body.api_key) delete body.api_key
-      return server ? api.admin.updateQB(server.id, body) : api.admin.createQB(body as QBServerInput)
+      return server ? adminApi.updateQB(server.id, body) : adminApi.createQB(body as QBServerInput)
     },
     onSuccess: () => {
       toast.success(server ? "已保存" : "已添加")

@@ -53,6 +53,15 @@ function jassubSynchronizedCanvas(): Plugin {
   }
 }
 
+/**
+ * 管理区的代码（src/pages/admin/**）只发给管理员：含这些模块的 chunk（及只由它们引入的资源）输出到
+ * assets/admin/。服务器只把 assets/admin/* 发给已登录的管理员（其他人 404，
+ * Cache-Control: private, no-store，见 internal/api/server.go），Service Worker 不预缓存它们（globIgnores）。
+ * scripts/check-built-webtorrent.ts 检查其余产物里没有后台的接口路径 / 文案，预缓存清单里没有 assets/admin/。
+ */
+const ADMIN_SRC = path.join(root, "src/pages/admin") + path.sep
+const isAdminModule = (id: string) => path.normalize(id.split("?")[0]).startsWith(ADMIN_SRC)
+
 export default defineConfig({
   worker: { plugins: () => [jassubSynchronizedCanvas()] },
   plugins: [
@@ -88,7 +97,7 @@ export default defineConfig({
         rollupFormat: "iife", // 经典脚本：引擎与 useRegisterSW 注册的是同一个 /sw.js（type 一致）
         // 应用壳：页面代码、样式、图标。字幕渲染（JASSUB wasm / worker、CJK 字体）只在用到时下载，不预缓存
         globPatterns: ["**/*.{js,css,html,svg,png}"],
-        globIgnores: ["**/jassub-worker*", "**/worker-*.js", "sw.js"],
+        globIgnores: ["**/jassub-worker*", "**/worker-*.js", "sw.js", "assets/admin/**"],
         maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
       },
       devOptions: { enabled: false },
@@ -105,5 +114,14 @@ export default defineConfig({
     outDir: "dist",
     emptyOutDir: true,
     chunkSizeWarningLimit: 600,
+    rolldownOptions: {
+      output: {
+        chunkFileNames: (c) => (c.moduleIds.some(isAdminModule) ? "assets/admin/[name]-[hash].js" : "assets/[name]-[hash].js"),
+        assetFileNames: (a) =>
+          a.originalFileNames.length > 0 && a.originalFileNames.every((f) => isAdminModule(path.resolve(root, f)))
+            ? "assets/admin/[name]-[hash][extname]"
+            : "assets/[name]-[hash][extname]",
+      },
+    },
   },
 })

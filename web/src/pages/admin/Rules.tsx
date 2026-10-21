@@ -10,8 +10,10 @@ import { Badge } from "@/components/ui/badge"
 import { toast } from "@/components/ui/toast"
 import { ActionBadge } from "@/components/badges"
 import { errorMessage } from "@/components/states"
-import { api, toList } from "@/lib/api"
-import type { AccessAction, PolicyTestResponse, Rule, RuleField, RuleInput, RuleLabel, RuleOp } from "@/lib/types"
+import { toList } from "@/lib/api"
+import { adminApi } from "./api"
+import type { AccessAction } from "@/lib/types"
+import type { PolicyTestResponse, Rule, RuleField, RuleInput, RuleLabel, RuleOp } from "./types"
 import { AdminHeader, DataView, Mono, type Column } from "./components"
 
 const FIELDS: { v: RuleField; l: string }[] = [
@@ -49,11 +51,11 @@ const KEY = ["admin", "rules"]
 
 export default function Rules() {
   const qc = useQueryClient()
-  const q = useQuery({ queryKey: KEY, queryFn: api.admin.rules })
+  const q = useQuery({ queryKey: KEY, queryFn: adminApi.rules })
   const [editing, setEditing] = useState<Rule | "new" | null>(null)
   const invalidate = () => qc.invalidateQueries({ queryKey: KEY })
-  const toggle = useMutation({ mutationFn: (r: Rule) => api.admin.updateRule(r.id, { enabled: !r.enabled }), onSuccess: invalidate, onError: (e) => toast.error(errorMessage(e)) })
-  const del = useMutation({ mutationFn: (id: number) => api.admin.deleteRule(id), onSuccess: invalidate, onError: (e) => toast.error(errorMessage(e)) })
+  const toggle = useMutation({ mutationFn: (r: Rule) => adminApi.updateRule(r.id, { enabled: !r.enabled }), onSuccess: invalidate, onError: (e) => toast.error(errorMessage(e)) })
+  const del = useMutation({ mutationFn: (id: number) => adminApi.deleteRule(id), onSuccess: invalidate, onError: (e) => toast.error(errorMessage(e)) })
 
   const columns: Column<Rule>[] = [
     {
@@ -137,7 +139,7 @@ function RuleDialog({ rule, onClose, onSaved }: { rule: Rule | null; onClose: ()
   const [f, setF] = useState<RuleInput>(() => (rule ? { ...rule } : EMPTY))
   const [regexError, setRegexError] = useState("")
   const m = useMutation({
-    mutationFn: () => (rule ? api.admin.updateRule(rule.id, f) : api.admin.createRule(f)),
+    mutationFn: () => (rule ? adminApi.updateRule(rule.id, f) : adminApi.createRule(f)),
     onSuccess: () => {
       toast.success("规则已保存")
       onSaved()
@@ -248,7 +250,7 @@ function PolicyTester() {
   const [res, setRes] = useState<PolicyTestResponse | null>(null)
   const m = useMutation({
     mutationFn: () =>
-      api.admin.testPolicy({
+      adminApi.testPolicy({
         title: f.title,
         infohash: f.infohash || undefined,
         team: f.team || undefined,

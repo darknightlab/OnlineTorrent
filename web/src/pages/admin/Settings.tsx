@@ -9,8 +9,8 @@ import { Badge } from "@/components/ui/badge"
 import { toast } from "@/components/ui/toast"
 import { ErrorState, Spinner, errorMessage } from "@/components/states"
 import { Markdown } from "@/components/Markdown"
-import { api } from "@/lib/api"
-import type { SettingItem, SettingValue, SettingsResponse } from "@/lib/types"
+import { adminApi } from "./api"
+import type { SettingItem, SettingValue, SettingsResponse } from "./types"
 import { formatBytes } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { AdminHeader } from "./components"
@@ -35,7 +35,7 @@ function initial(items: SettingItem[]) {
 
 export default function SettingsPage() {
   const qc = useQueryClient()
-  const q = useQuery({ queryKey: KEY, queryFn: api.admin.settings })
+  const q = useQuery({ queryKey: KEY, queryFn: adminApi.settings })
   const items = useMemo(() => q.data?.items ?? [], [q.data])
   const base = useMemo(() => initial(items), [items])
   const [draft, setDraft] = useState<Record<string, SettingValue>>({})
@@ -49,7 +49,7 @@ export default function SettingsPage() {
   }, [items])
 
   const save = useMutation({
-    mutationFn: () => api.admin.saveSettings({ values: Object.fromEntries(dirty.map((k) => [k, draft[k]])) }),
+    mutationFn: () => adminApi.saveSettings({ values: Object.fromEntries(dirty.map((k) => [k, draft[k]])) }),
     onSuccess: (data: SettingsResponse) => {
       qc.setQueryData(KEY, data)
       void qc.invalidateQueries({ queryKey: ["site"] })

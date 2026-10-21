@@ -1,4 +1,4 @@
-// node --test src/lib/scope.test.ts（npm test）
+// node --test src/pages/admin/scope.test.ts（npm test）
 import { test } from "node:test"
 import assert from "node:assert/strict"
 import { expressionString, scopeVisible, tagGroups, validateScope, type ScopeLike } from "./scope.ts"

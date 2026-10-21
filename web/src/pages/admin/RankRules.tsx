@@ -8,9 +8,10 @@ import { Card } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { toast } from "@/components/ui/toast"
 import { ErrorState, Spinner, errorMessage } from "@/components/states"
-import { api } from "@/lib/api"
+import { adminApi } from "./api"
 import { scoreFile, type Viewer } from "@/lib/rank"
-import type { RankRules, RankRulesResponse, SwarmStats } from "@/lib/types"
+import type { RankRules, SwarmStats } from "@/lib/types"
+import type { RankRulesResponse } from "./types"
 import { cn } from "@/lib/utils"
 import { AdminHeader } from "./components"
 
@@ -45,7 +46,7 @@ const AVAIL: { key: NumKey; label: string; hint: string }[] = [
 
 export default function RankRulesPage() {
   const qc = useQueryClient()
-  const q = useQuery({ queryKey: KEY, queryFn: api.admin.rankRules })
+  const q = useQuery({ queryKey: KEY, queryFn: adminApi.rankRules })
   const [draft, setDraft] = useState<RankRules | null>(null)
   useEffect(() => {
     if (q.data) setDraft(structuredClone(q.data.rules))
@@ -53,7 +54,7 @@ export default function RankRulesPage() {
   const dirty = !!q.data && !!draft && JSON.stringify(draft) !== JSON.stringify(q.data.rules)
   const errors = useMemo(() => (draft ? draft.keywords.map((k) => patternError(k.pattern)) : []), [draft])
   const save = useMutation({
-    mutationFn: () => api.admin.saveRankRules(draft!),
+    mutationFn: () => adminApi.saveRankRules(draft!),
     onSuccess: (d: RankRulesResponse) => {
       qc.setQueryData(KEY, d)
       void qc.invalidateQueries({ queryKey: ["site"] })

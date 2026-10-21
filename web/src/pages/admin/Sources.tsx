@@ -10,8 +10,9 @@ import { Field, Input, Select } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
 import { toast } from "@/components/ui/toast"
 import { EmptyState, ErrorState, Spinner, errorMessage } from "@/components/states"
-import { api, isApiError } from "@/lib/api"
-import type { MetadataJob, Source, SourceInput, SourceProbeResult, SourceSchema } from "@/lib/types"
+import { isApiError } from "@/lib/api"
+import { adminApi } from "./api"
+import type { MetadataJob, Source, SourceInput, SourceProbeResult, SourceSchema } from "./types"
 import { formatDateTime, timeAgo } from "@/lib/format"
 import { useNow } from "@/lib/hooks"
 import { cn, watchHref } from "@/lib/utils"
@@ -38,11 +39,11 @@ export default function SourcesPage() {
   const now = useNow(15_000)
   const q = useQuery({
     queryKey: KEY,
-    queryFn: api.admin.sources,
+    queryFn: adminApi.sources,
     // 有正在抓取的源时加快刷新
     refetchInterval: (query) => (query.state.data?.items.some((s) => s.running) ? 3_000 : 30_000),
   })
-  const schemaQ = useQuery({ queryKey: SCHEMA_KEY, queryFn: api.admin.sourceSchema, staleTime: Infinity })
+  const schemaQ = useQuery({ queryKey: SCHEMA_KEY, queryFn: adminApi.sourceSchema, staleTime: Infinity })
   const schema = schemaQ.data ?? FALLBACK_SCHEMA
   const kindLabel = (k: string) => schema.kinds.find((x) => x.value === k)?.label ?? k
   const [editing, setEditing] = useState<Source | "new" | null>(null)
@@ -51,12 +52,12 @@ export default function SourcesPage() {
     qc.setQueryData<{ items: Source[] }>(KEY, (d) => (d ? { items: d.items.map((x) => (x.id === s.id ? s : x)) } : d))
 
   const toggle = useMutation({
-    mutationFn: (s: Source) => api.admin.updateSource(s.id, { enabled: !s.enabled }),
+    mutationFn: (s: Source) => adminApi.updateSource(s.id, { enabled: !s.enabled }),
     onSuccess: patch,
     onError: (e) => toast.error(errorMessage(e)),
   })
   const run = useMutation({
-    mutationFn: (s: Source) => api.admin.runSource(s.id),
+    mutationFn: (s: Source) => adminApi.runSource(s.id),
     onSuccess: (s) => {
       patch(s)
       toast.success(`已开始抓取「${s.name}」，结果稍后显示`)
@@ -69,7 +70,7 @@ export default function SourcesPage() {
     },
   })
   const del = useMutation({
-    mutationFn: (id: number) => api.admin.deleteSource(id),
+    mutationFn: (id: number) => adminApi.deleteSource(id),
     onSuccess: (d) => {
       qc.setQueryData(KEY, d)
       toast.success("已删除（已收录的种子会保留）")
@@ -242,7 +243,7 @@ function SourceDialog({ source, schema, onClose, onSaved }: { source: Source | n
   const probeShown = probe && probe.key === probeKey ? probe : null
 
   const test = useMutation({
-    mutationFn: () => api.admin.probeSource({ kind: f.kind, url: f.url.trim(), proxy_disabled: f.proxy_disabled }),
+    mutationFn: () => adminApi.probeSource({ kind: f.kind, url: f.url.trim(), proxy_disabled: f.proxy_disabled }),
     onMutate: () => setProbe(null),
     onSuccess: (result) => setProbe({ key: probeKey, result }),
     onError: (e) => setProbe({ key: probeKey, error: errorMessage(e) }),
@@ -250,13 +251,13 @@ function SourceDialog({ source, schema, onClose, onSaved }: { source: Source | n
   const save = useMutation({
     mutationFn: () => {
       const body: SourceInput = { ...f, url: f.url.trim(), name: f.name.trim() || undefined }
-      if (!source) return api.admin.createSource(body)
+      if (!source) return adminApi.createSource(body)
       // 部分更新：只提交改过的字段（改 url/kind 时后端会先测试）
       const diff: Partial<SourceInput> = {}
       for (const k of Object.keys(body) as (keyof SourceInput)[]) {
         if (body[k] !== undefined && body[k] !== source[k]) (diff as Record<string, unknown>)[k] = body[k]
       }
-      return api.admin.updateSource(source.id, diff)
+      return adminApi.updateSource(source.id, diff)
     },
     onSuccess: (s) => {
       toast.success(source ? "已保存" : `已添加「${s.name}」`)
@@ -428,7 +429,7 @@ const JOBS_COLLAPSED = 10
 function MetadataJobs({ sources, now }: { sources: Source[]; now: number }) {
   const q = useQuery({
     queryKey: JOBS_KEY,
-    queryFn: api.admin.metadataJobs,
+    queryFn: adminApi.metadataJobs,
     refetchInterval: (query) => (query.state.data?.items.some((j) => j.status === "pending" || j.status === "running") ? 5_000 : 30_000),
   })
   const [expanded, setExpanded] = useState(false)

@@ -3,8 +3,9 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query"
 import { ActionBadge } from "@/components/badges"
 import { Badge } from "@/components/ui/badge"
 import { Pager } from "@/components/states"
-import { api, toList } from "@/lib/api"
-import type { AuditEntry, PlayRecord } from "@/lib/types"
+import { toList } from "@/lib/api"
+import { adminApi } from "./api"
+import type { AuditEntry, PlayRecord } from "./types"
 import { formatDateTime } from "@/lib/format"
 import { AdminHeader, DataView, Mono, type Column } from "./components"
 
@@ -29,7 +30,7 @@ const AUDIT_LABEL: Record<string, string> = {
 
 export function Plays() {
   const [page, setPage] = useState(1)
-  const q = useQuery({ queryKey: ["admin", "plays", page], queryFn: () => api.admin.plays(page), placeholderData: keepPreviousData })
+  const q = useQuery({ queryKey: ["admin", "plays", page], queryFn: () => adminApi.plays(page), placeholderData: keepPreviousData })
   const list = toList(q.data)
   const columns: Column<PlayRecord>[] = [
     {
@@ -60,7 +61,7 @@ export function Plays() {
 
 export function Audit() {
   const [page, setPage] = useState(1)
-  const q = useQuery({ queryKey: ["admin", "audit", page], queryFn: () => api.admin.audit(page), placeholderData: keepPreviousData })
+  const q = useQuery({ queryKey: ["admin", "audit", page], queryFn: () => adminApi.audit(page), placeholderData: keepPreviousData })
   const list = toList(q.data)
   const columns: Column<AuditEntry>[] = [
     { key: "action", header: "操作", mobile: "title", cell: (a) =>

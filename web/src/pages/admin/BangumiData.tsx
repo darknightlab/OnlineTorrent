@@ -6,7 +6,8 @@ import { Card } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "@/components/ui/toast"
 import { ErrorState, errorMessage } from "@/components/states"
-import { api, isApiError } from "@/lib/api"
+import { isApiError } from "@/lib/api"
+import { adminApi } from "./api"
 import { formatDateTime, formatDuration, timeAgo } from "@/lib/format"
 import { useNow } from "@/lib/hooks"
 import { cn } from "@/lib/utils"
@@ -19,11 +20,11 @@ export function BangumiDataCard() {
   const now = useNow(15_000)
   const q = useQuery({
     queryKey: KEY,
-    queryFn: api.admin.bangumiData,
+    queryFn: adminApi.bangumiData,
     refetchInterval: (query) => (query.state.data?.running ? 3_000 : 60_000),
   })
   const run = useMutation({
-    mutationFn: api.admin.runBangumiData,
+    mutationFn: adminApi.runBangumiData,
     onSuccess: (st) => {
       qc.setQueryData(KEY, st)
       toast.success("已开始同步 bangumi-data")

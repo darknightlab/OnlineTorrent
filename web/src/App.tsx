@@ -3,6 +3,7 @@ import { BrowserRouter, Route, Routes, useParams } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { ThemeProvider } from "@/lib/theme"
 import { isApiError } from "@/lib/api"
+import { useUser } from "@/lib/queries"
 import { Shell } from "@/components/layout/Shell"
 import { PWAUpdatePrompt } from "@/components/PWAUpdatePrompt"
 import { Toaster } from "@/components/ui/toast"
@@ -47,6 +48,21 @@ const PLAYBACK_PATHS = [
 ]
 const AdminApp = lazy(() => import("@/pages/admin/AdminApp"))
 
+/**
+ * 管理区只对管理员存在：其他人（含未登录）看到普通的 404，也不会请求其代码（assets/admin/，
+ * 服务器只发给管理员，见 internal/api/server.go spa）。
+ */
+function AdminRoute() {
+  const { user, loading } = useUser()
+  if (loading) return <PageLoading />
+  if (user?.role !== "admin") return <NotFound />
+  return (
+    <Suspense fallback={<PageLoading />}>
+      <AdminApp />
+    </Suspense>
+  )
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -84,14 +100,7 @@ export default function App() {
               <Route path="register" element={<RegisterRoute />} />
               <Route path="register/invite/:code" element={<RegisterPage />} />
               <Route path="me" element={<MePage />} />
-              <Route
-                path="admin/*"
-                element={
-                  <Suspense fallback={<PageLoading label="正在加载后台…" />}>
-                    <AdminApp />
-                  </Suspense>
-                }
-              />
+              <Route path="admin/*" element={<AdminRoute />} />
               <Route path="*" element={<NotFound />} />
             </Route>
           </Routes>

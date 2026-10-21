@@ -12,7 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { useLogout, useUser } from "@/lib/queries"
+import { isAdminPath, useIsAdmin, useLogout, useUser } from "@/lib/queries"
 import { RoleBadge } from "@/components/badges"
 import { cn } from "@/lib/utils"
 
@@ -22,7 +22,8 @@ export function Header() {
   // 搜索页自带大搜索框，顶栏不再重复显示
   const onSearch = /^\/search(\/|$)/.test(pathname)
   // 移动端不显示顶栏（用底部导航）；后台页面除外（后台的移动端菜单依赖顶栏）
-  const isAdmin = pathname.startsWith("/admin")
+  // 管理区布局只对管理员生效（其他人在 /admin 看到的是普通 404 页）
+  const isAdmin = useIsAdmin() && isAdminPath(pathname)
   return (
     <header
       className={cn(

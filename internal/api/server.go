@@ -215,10 +215,31 @@ func (s *Server) spa() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
+		if p == "assets" || strings.HasPrefix(p, "assets/") {
+			// the admin area's code (assets/admin/, see web/vite.config.ts) exists only for admins
+			// (the same check as the admin API: AccessAdmin routes pass role admin only). Everyone
+			// else gets exactly the 404 of a missing asset, so its existence isn't revealed.
+			admin := p == "assets/admin" || strings.HasPrefix(p, "assets/admin/")
+			if admin && roleOf(userOf(r)) != store.RoleAdmin {
+				assetNotFound(w, r)
+				return
+			}
+			if st, err := fs.Stat(s.WebFS, p); err != nil || st.IsDir() {
+				assetNotFound(w, r) // never the SPA shell for a missing script / style
+				return
+			}
+			if admin {
+				// never stored by a shared cache (Cloudflare caches .js by extension) or the browser
+				w.Header().Set("Cache-Control", "private, no-store")
+				w.Header().Set("Vary", "Cookie")
+			} else {
+				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			}
+			files.ServeHTTP(w, r)
+			return
+		}
 		if st, err := fs.Stat(s.WebFS, p); err == nil && !st.IsDir() {
 			switch {
-			case strings.HasPrefix(p, "assets/"):
-				w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			case p == "sw.js" || p == "index.html" || p == "manifest.webmanifest":
 				// the app shell and its service worker: always revalidated (update detection)
 				w.Header().Set("Cache-Control", "no-cache")
@@ -236,6 +257,13 @@ func (s *Server) spa() http.Handler {
 		r2.URL.Path = "/"
 		files.ServeHTTP(w, r2)
 	})
+}
+
+// assetNotFound is the 404 for /assets/… (missing, or admin-only and the caller isn't an
+// admin): not cacheable, so a shared cache can't replay it to an admin (or vice versa).
+func assetNotFound(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	http.NotFound(w, r)
 }
 
 // ---- tiny token-bucket rate limiter (per IP / per key) ----

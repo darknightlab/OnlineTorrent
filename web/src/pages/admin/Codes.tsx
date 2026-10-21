@@ -10,8 +10,9 @@ import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
 import { errorMessage } from "@/components/states"
-import { api, toList } from "@/lib/api"
-import type { InviteCode, InviteCreate, InvitePatch, RedeemCode } from "@/lib/types"
+import { toList } from "@/lib/api"
+import { adminApi } from "./api"
+import type { InviteCode, InviteCreate, InvitePatch, RedeemCode } from "./types"
 import { formatDate } from "@/lib/format"
 import { copyText } from "@/lib/utils"
 import { AdminHeader, DataView, Mono, type Column } from "./components"
@@ -72,11 +73,11 @@ const INVITE_DEFAULT: InviteCreate = { max_uses: 1, role: "member", vip_days: 0,
 function Invites() {
   const qc = useQueryClient()
   const KEY = ["admin", "invites"]
-  const q = useQuery({ queryKey: KEY, queryFn: api.admin.invites })
+  const q = useQuery({ queryKey: KEY, queryFn: adminApi.invites })
   const [f, setF] = useState<InviteCreate>(INVITE_DEFAULT)
   const [editing, setEditing] = useState<InviteCode | null>(null)
   const create = useMutation({
-    mutationFn: () => api.admin.createInvite(f),
+    mutationFn: () => adminApi.createInvite(f),
     onSuccess: async (inv) => {
       void qc.invalidateQueries({ queryKey: KEY })
       if (inv?.code && (await copyText(inviteURL(inv)))) toast.success("邀请码已生成，链接已复制")
@@ -85,7 +86,7 @@ function Invites() {
     onError: (e) => toast.error(errorMessage(e)),
   })
   const toggle = useMutation({
-    mutationFn: (c: InviteCode) => api.admin.updateInvite(c.id, { disabled: !c.disabled }),
+    mutationFn: (c: InviteCode) => adminApi.updateInvite(c.id, { disabled: !c.disabled }),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
     onError: (e) => toast.error(errorMessage(e)),
   })
@@ -199,7 +200,7 @@ function InviteEditDialog({ invite, onClose, onSaved }: { invite: InviteCode; on
       const b: InvitePatch = { max_uses: f.max_uses, role: f.role, vip_days: f.vip_days, note: f.note, disabled: !f.enabled }
       // 日期未改动时不提交，避免把精确到秒的过期时间改成当天结束
       if (f.expires !== toDateInput(invite.expires_at)) b.expires_at = f.expires
-      return api.admin.updateInvite(invite.id, b)
+      return adminApi.updateInvite(invite.id, b)
     },
     onSuccess: () => {
       toast.success("已保存")
@@ -279,13 +280,13 @@ function InviteEditDialog({ invite, onClose, onSaved }: { invite: InviteCode; on
 function Redeem() {
   const qc = useQueryClient()
   const KEY = ["admin", "redeem"]
-  const q = useQuery({ queryKey: KEY, queryFn: api.admin.redeemCodes })
+  const q = useQuery({ queryKey: KEY, queryFn: adminApi.redeemCodes })
   const [count, setCount] = useState(5)
   const [days, setDays] = useState(30)
   const [note, setNote] = useState("")
   const [created, setCreated] = useState<RedeemCode[]>([])
   const m = useMutation({
-    mutationFn: () => api.admin.createRedeemCodes({ count, vip_days: days, note }),
+    mutationFn: () => adminApi.createRedeemCodes({ count, vip_days: days, note }),
     onSuccess: (r) => {
       const items = toList(r).items
       setCreated(items)

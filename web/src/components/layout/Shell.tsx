@@ -5,11 +5,13 @@ import { MobileTabBar } from "./MobileTabBar"
 import { MobileTopBar, mobileTopBarVisible } from "./MobileTopBar"
 import { Footer } from "./Footer"
 import { cn, infohashOfPath } from "@/lib/utils"
+import { isAdminPath, useIsAdmin } from "@/lib/queries"
 export { Container } from "./Container"
 
 export function Shell() {
   const { pathname } = useLocation()
-  const isAdmin = pathname.startsWith("/admin")
+  // 管理区布局只对管理员生效（其他人在 /admin 看到的是普通 404 页）
+  const isAdmin = useIsAdmin() && isAdminPath(pathname)
   // 播放页 / 单集页不显示页脚
   const isWatch = pathname.startsWith("/watch") || /^\/subject\/[^/]+\/[^/]+\/episode\//.test(pathname)
   const prev = useRef(pathname)

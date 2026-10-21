@@ -1,62 +1,20 @@
 // 类型化 API 客户端（契约见 docs/api.md）。同源 Cookie 会话；写操作带 X-Requested-With 头。
 import type {
-  AdminStats,
-  AdminUser,
-  AdminUserUpdate,
-  AuditEntry,
-  BangumiDataStatus,
-  BgmArchiveStatus,
-  InviteCode,
-  InviteCreate,
   ListLike,
   LoginRequest,
   MeResponse,
-  MetadataJob,
   SearchResponse,
   Subject,
-  Source,
-  SourceInput,
-  SourceProbeRequest,
-  SourceProbeResult,
-  SourceSchema,
   TorrentStatus,
-  PermissionsResponse,
-  PermissionsUpdate,
-  ContentScope,
-  ContentScopeInput,
-  ContentScopesResponse,
-  SubjectTag,
   SeedResponse,
-  PlayRecord,
   PlayResponse,
-  PolicyTestRequest,
-  PolicyTestResponse,
-  QBServer,
-  QBServerInput,
-  RedeemCode,
-  RedeemCreate,
   RegisterRequest,
   ReportRequest,
-  Review,
-  ReviewDecision,
-  Rule,
-  RuleInput,
   ScheduleResponse,
-  SettingsResponse,
-  SettingsUpdate,
   Site,
   SubjectResponse,
   EpisodeResponse,
   EpisodesResponse,
-  RankRules,
-  RankRulesResponse,
-  TrackersResponse,
-  ClefStatus,
-  ClefDecision,
-  ClefTestResponse,
-  ClefAnomalies,
-  Paged,
-  InvitePatch,
 } from "./types"
 
 export const API_BASE = "/api/v1"
@@ -82,7 +40,7 @@ export function isApiError(e: unknown): e is ApiError {
 
 type Method = "GET" | "POST" | "PUT" | "DELETE"
 
-function qs(params?: Record<string, string | number | undefined | null>) {
+export function qs(params?: Record<string, string | number | undefined | null>) {
   if (!params) return ""
   const s = new URLSearchParams()
   for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== null && v !== "") s.set(k, String(v))
@@ -145,8 +103,6 @@ const seg = encodeURIComponent
 
 const get = <T>(p: string, signal?: AbortSignal) => request<T>("GET", p, undefined, signal)
 const post = <T>(p: string, b?: unknown) => request<T>("POST", p, b ?? {})
-const put = <T>(p: string, b?: unknown) => request<T>("PUT", p, b ?? {})
-const del = <T>(p: string) => request<T>("DELETE", p)
 
 export const api = {
   // 公共
@@ -200,75 +156,4 @@ export const api = {
   /** WebSeed 可用性推送（SSE）地址；fileIndex 为正在播放的文件，省略表示任意 / 单文件 */
   webseedEventsURL: (ih: string, fileIndex?: number | null) =>
     `${API_BASE}/torrents/hash/${seg(ih)}/webseed/events${fileIndex != null ? `/file/${fileIndex}` : ""}`,
-
-  // 后台
-  admin: {
-    stats: () => get<AdminStats>("/admin/stats"),
-    settings: () => get<SettingsResponse>("/admin/settings"),
-    saveSettings: (b: SettingsUpdate) => put<SettingsResponse>("/admin/settings", b),
-    permissions: () => get<PermissionsResponse>("/admin/permissions"),
-    savePermissions: (b: PermissionsUpdate) => put<PermissionsResponse>("/admin/permissions", b),
-    contentScopes: () => get<ContentScopesResponse>("/admin/content-scopes"),
-    saveContentScope: (role: string, b: ContentScopeInput) => put<ContentScope>(`/admin/content-scopes/role/${role}`, b),
-    subjectTags: (q: string) => get<{ items: SubjectTag[] }>(`/admin/subject-tags${qs({ q })}`),
-
-    qbServers: () => get<ListLike<QBServer>>("/admin/qb-servers"),
-    createQB: (b: QBServerInput) => post<QBServer>("/admin/qb-servers", b),
-    updateQB: (id: number, b: Partial<QBServerInput>) => put<QBServer>(`/admin/qb-servers/id/${id}`, b),
-    deleteQB: (id: number) => del<Record<string, never>>(`/admin/qb-servers/id/${id}`),
-    testQB: (id: number) => post<QBServer>(`/admin/qb-servers/id/${id}/test`),
-    edgeToken: (id: number) => post<{ token: string; connect_url: string }>(`/admin/qb-servers/id/${id}/edge-token`),
-    edgeUnbind: (id: number) => del<ListLike<QBServer>>(`/admin/qb-servers/id/${id}/edge-token`),
-    rotateEdgeKey: () => post<{ keys: number }>("/admin/edge/rotate-key"),
-
-    users: (q: string, page: number) => get<ListLike<AdminUser>>(`/admin/users${qs({ q, page })}`),
-    updateUser: (id: number, b: AdminUserUpdate) => put<AdminUser>(`/admin/users/id/${id}`, b),
-
-    invites: () => get<ListLike<InviteCode>>("/admin/invites"),
-    createInvite: (b: InviteCreate) => post<InviteCode>("/admin/invites", b),
-    updateInvite: (id: number, b: InvitePatch) => put<InviteCode>(`/admin/invites/id/${id}`, b),
-    redeemCodes: () => get<ListLike<RedeemCode>>("/admin/redeem-codes"),
-    createRedeemCodes: (b: RedeemCreate) => post<ListLike<RedeemCode>>("/admin/redeem-codes", b),
-
-    rules: () => get<ListLike<Rule>>("/admin/rules"),
-    createRule: (b: RuleInput) => post<Rule>("/admin/rules", b),
-    updateRule: (id: number, b: Partial<RuleInput>) => put<Rule>(`/admin/rules/id/${id}`, b),
-    deleteRule: (id: number) => del<Record<string, never>>(`/admin/rules/id/${id}`),
-    testPolicy: (b: PolicyTestRequest) => post<PolicyTestResponse>("/admin/policy/test", b),
-
-    reviews: (status = "pending") => get<ListLike<Review>>(`/admin/reviews${qs({ status })}`),
-    decideReview: (id: number, b: ReviewDecision) => put<Review>(`/admin/reviews/id/${id}`, b),
-
-    sources: () => get<{ items: Source[] }>("/admin/sources"),
-    sourceSchema: () => get<SourceSchema>("/admin/sources/schema"),
-    probeSource: (b: SourceProbeRequest) => post<SourceProbeResult>("/admin/sources/probe", b),
-    createSource: (b: SourceInput) => post<Source>("/admin/sources", b),
-    updateSource: (id: number, b: Partial<SourceInput>) => put<Source>(`/admin/sources/id/${id}`, b),
-    deleteSource: (id: number) => del<{ items: Source[] }>(`/admin/sources/id/${id}`),
-    runSource: (id: number) => post<Source>(`/admin/sources/id/${id}/run`),
-    metadataJobs: () => get<{ items: MetadataJob[] }>("/admin/metadata-jobs"),
-    bgmArchive: () => get<BgmArchiveStatus>("/admin/bgm-archive"),
-    runBgmArchive: () => post<BgmArchiveStatus>("/admin/bgm-archive/run"),
-    bangumiData: () => get<BangumiDataStatus>("/admin/bangumi-data"),
-    runBangumiData: () => post<BangumiDataStatus>("/admin/bangumi-data/run"),
-
-    trackers: () => get<TrackersResponse>("/admin/trackers"),
-    rankRules: () => get<RankRulesResponse>("/admin/rank-rules"),
-    saveRankRules: (b: RankRules) => put<RankRulesResponse>("/admin/rank-rules", b),
-
-    clef: () => get<ClefStatus>("/admin/clef"),
-    /** 试运行：不写库，计入每日请求上限 */
-    clefTest: (infohash: string) => post<ClefTestResponse>("/admin/clef/test", { infohash }),
-    clefDecisions: (status: string, page: number, ih?: string) => get<Paged<ClefDecision> & { total: number }>(`/admin/clef/decisions${qs({ status, page, ih })}`),
-    clefAccept: (id: number) => post<ClefDecision>(`/admin/clef/decisions/id/${id}/accept`),
-    /** pending → rejected；applied → 撤销映射（文件改为未映射、已人工确认） */
-    clefReject: (id: number) => post<ClefDecision>(`/admin/clef/decisions/id/${id}/reject`),
-    clefRequeue: (ih: string) => post<ClefStatus>(`/admin/clef/jobs/hash/${seg(ih)}/run`),
-    clefAnomalies: () => get<ClefAnomalies>("/admin/clef/anomalies"),
-    /** 重新判断异常映射：把这些种子（默认全部）的异常文件交给决策模型 */
-    clefAnomaliesRun: (infohashes?: string[]) => post<{ queued: number }>("/admin/clef/anomalies/run", { infohashes }),
-
-    plays: (page: number) => get<ListLike<PlayRecord>>(`/admin/plays${qs({ page })}`),
-    audit: (page: number) => get<ListLike<AuditEntry>>(`/admin/audit${qs({ page })}`),
-  },
 }

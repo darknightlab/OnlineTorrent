@@ -5,7 +5,8 @@ import { Card } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ErrorState } from "@/components/states"
 import { ActionBadge } from "@/components/badges"
-import { api, toList } from "@/lib/api"
+import { toList } from "@/lib/api"
+import { adminApi } from "./api"
 import { timeAgo } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { AdminHeader, StatusDot } from "./components"
@@ -13,9 +14,9 @@ import { BangumiDataCard } from "./BangumiData"
 import { BgmArchiveCard } from "./BgmArchive"
 
 export default function Overview() {
-  const stats = useQuery({ queryKey: ["admin", "stats"], queryFn: api.admin.stats, refetchInterval: 30_000 })
-  const qb = useQuery({ queryKey: ["admin", "qb"], queryFn: api.admin.qbServers })
-  const plays = useQuery({ queryKey: ["admin", "plays", 1], queryFn: () => api.admin.plays(1) })
+  const stats = useQuery({ queryKey: ["admin", "stats"], queryFn: adminApi.stats, refetchInterval: 30_000 })
+  const qb = useQuery({ queryKey: ["admin", "qb"], queryFn: adminApi.qbServers })
+  const plays = useQuery({ queryKey: ["admin", "plays", 1], queryFn: () => adminApi.plays(1) })
   const s = stats.data
   const tiles = [
     { label: "注册用户", value: s?.users, icon: Users, to: "/admin/users", tone: "text-primary-text bg-primary-soft" },

@@ -11,8 +11,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "@/components/ui/toast"
 import { EmptyState, ErrorState, Pager, Spinner, errorMessage } from "@/components/states"
-import { api } from "@/lib/api"
-import type { ClefAnomalies, ClefAnswerSummary, ClefDecision, ClefFileDecision, ClefStatus, ClefStatusName, ClefTestResponse, SettingItem, SettingValue } from "@/lib/types"
+import { adminApi } from "./api"
+import type { ClefAnomalies, ClefAnswerSummary, ClefDecision, ClefFileDecision, ClefStatus, ClefStatusName, ClefTestResponse, SettingItem, SettingValue } from "./types"
 import { formatDateTime, timeAgo } from "@/lib/format"
 import { useNow } from "@/lib/hooks"
 import { cn, parseTorrentInput, watchHref } from "@/lib/utils"
@@ -62,7 +62,7 @@ const pct = (p: number) => `${Math.round(p * 1000) / 10}%`
 
 export default function ClefPage() {
   const qc = useQueryClient()
-  const q = useQuery({ queryKey: KEY, queryFn: api.admin.clef, refetchInterval: 15_000 })
+  const q = useQuery({ queryKey: KEY, queryFn: adminApi.clef, refetchInterval: 15_000 })
   return (
     <div>
       <AdminHeader
@@ -171,7 +171,7 @@ function Decisions() {
     return parseTorrentInput(m ? m[1] : search.trim())
   }, [search])
   const st = ih ? "" : status === "all" ? "" : status
-  const q = useQuery({ queryKey: ["admin", "clef", "decisions", st, page, ih], queryFn: () => api.admin.clefDecisions(st, page, ih ?? undefined) })
+  const q = useQuery({ queryKey: ["admin", "clef", "decisions", st, page, ih], queryFn: () => adminApi.clefDecisions(st, page, ih ?? undefined) })
   const items = q.data?.items ?? []
   return (
     <section aria-labelledby="clef-decisions">
@@ -241,7 +241,7 @@ function subjectLabel(d: { title?: string; title_cn?: string }) {
 function DecisionCard({ d, superseded }: { d: ClefDecision; superseded?: boolean }) {
   const qc = useQueryClient()
   const m = useMutation({
-    mutationFn: (accept: boolean) => (accept ? api.admin.clefAccept(d.id) : api.admin.clefReject(d.id)),
+    mutationFn: (accept: boolean) => (accept ? adminApi.clefAccept(d.id) : adminApi.clefReject(d.id)),
     onSuccess: (r) => {
       toast.success(r.status === "applied" ? "已应用映射" : d.status === "applied" ? "已撤销映射" : "已拒绝")
       void qc.invalidateQueries({ queryKey: KEY })
@@ -335,7 +335,7 @@ function DecisionCard({ d, superseded }: { d: ClefDecision; superseded?: boolean
 function RequeueButton({ ih, label }: { ih: string; label: string }) {
   const qc = useQueryClient()
   const m = useMutation({
-    mutationFn: () => api.admin.clefRequeue(ih),
+    mutationFn: () => adminApi.clefRequeue(ih),
     onSuccess: (st) => {
       qc.setQueryData(KEY, st)
       toast.success("已加入决策队列，稍后刷新查看结果")
@@ -427,7 +427,7 @@ function TestBox() {
   const [ih, setIh] = useState("")
   const qc = useQueryClient()
   const m = useMutation({
-    mutationFn: () => api.admin.clefTest(ih.trim()),
+    mutationFn: () => adminApi.clefTest(ih.trim()),
     onSuccess: () => void qc.invalidateQueries({ queryKey: KEY }),
     onError: (e) => toast.error(errorMessage(e)),
   })
@@ -546,7 +546,7 @@ function FileOutcome({ d }: { d: ClefFileDecision }) {
 
 function SettingsCard() {
   const qc = useQueryClient()
-  const q = useQuery({ queryKey: ["admin", "settings"], queryFn: api.admin.settings })
+  const q = useQuery({ queryKey: ["admin", "settings"], queryFn: adminApi.settings })
   const all = useMemo(() => (q.data?.items ?? []).filter((i) => i.group === GROUP), [q.data])
   const base = useMemo(() => Object.fromEntries(all.map((i) => [i.key, i.type === "secret" ? "" : i.value])) as Record<string, SettingValue>, [all])
   const [draft, setDraft] = useState<Record<string, SettingValue>>({})
@@ -556,7 +556,7 @@ function SettingsCard() {
   const items = all.filter((i) => i.key === "clef.enabled" || i.key === "clef.provider" || (provider === "clef" ? i.key.startsWith("clef.") : i.key.startsWith("llm.")))
   const dirty = all.filter((i) => JSON.stringify(draft[i.key]) !== JSON.stringify(base[i.key])).map((i) => i.key)
   const save = useMutation({
-    mutationFn: () => api.admin.saveSettings({ values: Object.fromEntries(dirty.map((k) => [k, draft[k]])) }),
+    mutationFn: () => adminApi.saveSettings({ values: Object.fromEntries(dirty.map((k) => [k, draft[k]])) }),
     onSuccess: (data) => {
       qc.setQueryData(["admin", "settings"], data)
       void qc.invalidateQueries({ queryKey: KEY })
@@ -603,7 +603,7 @@ function SettingsCard() {
 function JobsCard({ s }: { s?: ClefStatus }) {
   const qc = useQueryClient()
   const rerun = useMutation({
-    mutationFn: (ih: string) => api.admin.clefRequeue(ih),
+    mutationFn: (ih: string) => adminApi.clefRequeue(ih),
     onSuccess: (st) => {
       qc.setQueryData(KEY, st)
       toast.success("已重新加入队列")
@@ -651,9 +651,9 @@ function JobsCard({ s }: { s?: ClefStatus }) {
 function AnomaliesCard() {
   const qc = useQueryClient()
   const [data, setData] = useState<ClefAnomalies | null>(null)
-  const check = useMutation({ mutationFn: api.admin.clefAnomalies, onSuccess: setData, onError: (e) => toast.error(errorMessage(e)) })
+  const check = useMutation({ mutationFn: adminApi.clefAnomalies, onSuccess: setData, onError: (e) => toast.error(errorMessage(e)) })
   const run = useMutation({
-    mutationFn: () => api.admin.clefAnomaliesRun(),
+    mutationFn: () => adminApi.clefAnomaliesRun(),
     onSuccess: (r) => {
       toast.success(`已加入队列：${r.queued} 个种子`)
       setData(null)
