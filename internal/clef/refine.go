@@ -13,15 +13,10 @@ package clef
 //     doesn't list — or one that can't have aired yet at the release — is retried as the
 //     number minus the direct prequel's main episode count (14 − 12 = 2); taken only when
 //     that episode is listed and passes the date gate.
-//  3. Date gate (meta.ReleaseCheck): no release time, or the release more than 7 days
-//     before / 30 days after the episode's airdate → review (日期不符 / 缺少发布时间). A main
-//     episode without an airdate counts as not aired when an earlier one airs later.
-//  4. Batch rule: a late release (never an early one) is applied anyway for a re-release
-//     batch: ≥ 3 main files of the torrent on the same work, each passing every other
-//     check, whose episode numbers (with the stated season) fit no other named work among
-//     the candidates and the work's family (meta.UniqueFit; after a season continuation the
-//     continuation is that proof), and any year written in the title / those paths lies in
-//     the work's airing years. Its specials that were held only for being late follow.
+//  3. Date gate (meta.ReleaseGate): no release time, or the release more than 7 days before
+//     the episode's airdate (日期不符; a main episode without an airdate counts as not aired
+//     when an earlier one airs later) → review. A release any time after airing is fine
+//     (owner decision: only too-early releases are suspicious).
 
 import (
 	"context"
@@ -34,12 +29,10 @@ import (
 // Refine runs the post-checks on ds (in place). th routes answers an override revives.
 func Refine(ctx context.Context, ms *meta.Store, t *meta.ClefTask, ds []FileDecision, th LLMThresholds) {
 	ev := TaskEvidence(ms, t)
-	continued := map[int]bool{}
 	// 1. season continuation
 	for i := range ds {
 		d := &ds[i]
 		if d.Status == StatusDiscarded && d.Reason == ReasonSeason && seasonContinues(ctx, ms, t, ds, d) {
-			continued[i] = true
 			d.Answers["rule"] = AnswerSummary{Choice: d.Candidate.ID + " episode " + d.Key, Note: "季数写法不同：同一种子中同季的文件属于前作，本条目接续前作编号"}
 			gateLLM(ctx, d, th, ev, numberAgrees(ctx, d, ms.ValidEpisode))
 		}
@@ -51,8 +44,6 @@ func Refine(ctx context.Context, ms *meta.Store, t *meta.ClefTask, ds []FileDeci
 		}
 	}
 	// 3. date gate
-	late := map[int]bool{}
-	early := map[string]bool{} // works with an early (not aired) answer in this torrent
 	for i := range ds {
 		d := &ds[i]
 		if d.Status != StatusApplied || d.Candidate == nil {
@@ -62,21 +53,15 @@ func Refine(ctx context.Context, ms *meta.Store, t *meta.ClefTask, ds []FileDeci
 		if !ok {
 			continue
 		}
-		r, isLate := ms.ReleaseCheck(ctx, t, d.Candidate.WorkKey, k)
+		r := ms.ReleaseGate(ctx, t, d.Candidate.WorkKey, k)
 		if r == "" {
 			continue
 		}
-		if strings.HasPrefix(r, meta.ReasonDateMismatch) && !isLate && prequelShift(ctx, ms, t, d, th, ev) {
+		if strings.HasPrefix(r, meta.ReasonDateMismatch) && prequelShift(ctx, ms, t, d, th, ev) {
 			continue
 		}
 		d.Status, d.Reason = StatusPending, r
-		late[i] = isLate
-		if strings.HasPrefix(r, meta.ReasonDateMismatch) && !isLate {
-			early[d.Candidate.WorkKey] = true
-		}
 	}
-	// 4. batch rule
-	batchRule(ctx, ms, t, ds, late, early, continued)
 }
 
 // seasonContinues: rule 1 of Refine.
@@ -135,7 +120,7 @@ func prequelShift(ctx context.Context, ms *meta.Store, t *meta.ClefTask, d *File
 	if !ok {
 		return false
 	}
-	if r, _ := ms.ReleaseCheck(ctx, t, w, ck); r != "" {
+	if r := ms.ReleaseGate(ctx, t, w, ck); r != "" {
 		return false
 	}
 	nd := *d
@@ -152,67 +137,4 @@ func prequelShift(ctx context.Context, ms *meta.Store, t *meta.ClefTask, d *File
 		Note: fmt.Sprintf("续作按前作 %d 集顺延编号：%s − %d", k, fmtNum(*d.Episode), k)}
 	*d = nd
 	return true
-}
-
-// batchRule: rule 4 of Refine.
-func batchRule(ctx context.Context, ms *meta.Store, t *meta.ClefTask, ds []FileDecision, late map[int]bool, early map[string]bool, continued map[int]bool) {
-	type group struct {
-		mains, specials []int
-		lateMain        bool
-		override        bool
-		seasons         map[float64]bool
-	}
-	groups := map[string]*group{}
-	for i := range ds {
-		d := &ds[i]
-		if d.Candidate == nil || !(d.Status == StatusApplied || (d.Status == StatusPending && late[i])) {
-			continue
-		}
-		g := groups[d.Candidate.WorkKey]
-		if g == nil {
-			g = &group{seasons: map[float64]bool{}}
-			groups[d.Candidate.WorkKey] = g
-		}
-		if d.Kind != "episode" {
-			if late[i] {
-				g.specials = append(g.specials, i)
-			}
-			continue
-		}
-		g.mains = append(g.mains, i)
-		g.lateMain = g.lateMain || late[i]
-		g.override = g.override || continued[i]
-		g.seasons[d.File.Season] = true
-	}
-	var others []string
-	for _, c := range t.Candidates {
-		others = append(others, c.WorkKey)
-	}
-	for w, g := range groups {
-		if !g.lateMain || len(g.mains) < 3 || early[w] || len(g.seasons) != 1 {
-			continue
-		}
-		var season float64
-		for s := range g.seasons {
-			season = s
-		}
-		texts := []string{t.Title}
-		var nums []float64
-		for _, i := range g.mains {
-			texts = append(texts, ds[i].File.Path)
-			nums = append(nums, *ds[i].Episode)
-		}
-		if !g.override && !ms.UniqueFit(ctx, w, others, nums, season, texts) {
-			continue
-		}
-		if !ms.YearsFit(ctx, w, texts) {
-			continue
-		}
-		for _, i := range append(g.mains, g.specials...) {
-			if d := &ds[i]; d.Status == StatusPending && late[i] {
-				d.Status, d.Reason = StatusApplied, ""
-				d.Answers["rule"] = AnswerSummary{Choice: d.Candidate.ID + " episode " + d.Key, Note: fmt.Sprintf("合集 / 补档：%d 个正片文件只符合这一个条目，晚发布不影响判断", len(g.mains))}
-			}
-		}
-	}
 }

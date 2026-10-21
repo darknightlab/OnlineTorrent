@@ -60,6 +60,7 @@ func refineTask(t *testing.T, ms *meta.Store, title, released string, paths []st
 		tk.Published = released[:10]
 	}
 	ts := meta.TitleSeason(title)
+	tk.Batch = len(paths) >= 2 // video files
 	for i, p := range paths {
 		pn := meta.ParseEpisode(p)
 		tk.Videos = append(tk.Videos, p)
@@ -171,44 +172,43 @@ func spyFiles(n int, year string) []string {
 	return p
 }
 
-// Rule (late-release batch).
-func TestRefineBatchRule(t *testing.T) {
+// The date gate: late releases are only checked for single-episode torrents; early ones
+// for every torrent.
+func TestRefineDateGate(t *testing.T) {
 	const title = "[7³ACG] SPY×FAMILY 间谍家家酒 第3季/Spy x Family S03 | 01-13 [简繁字幕] BDrip 1080p x265 OPUS 2.0"
 	ms, s1, s3 := spyBatch(t)
+	// a batch (2+ main files) released ten months after airing: applied
 	tk := refineTask(t, ms, title, "2026-10-20T00:00:00Z", spyFiles(13, "2025"), s3, s1)
 	ds := decideRefine(ms, tk, answerAll(tk, "bgm_300"))
 	for i, d := range ds {
 		if d.Status != StatusApplied || d.Key != strconv.Itoa(38+i) {
-			t.Fatalf("batch: %s", statuses(ds))
+			t.Fatalf("late batch: %s", statuses(ds))
 		}
 	}
-	// fewer than 3 main files: the date gate stands
 	tk = refineTask(t, ms, title, "2026-10-20T00:00:00Z", spyFiles(2, "2025"), s3, s1)
-	if ds := decideRefine(ms, tk, answerAll(tk, "bgm_300")); ds[0].Status != StatusPending {
-		t.Errorf("2 files: %s", statuses(ds))
+	if ds := decideRefine(ms, tk, answerAll(tk, "bgm_300")); ds[0].Status != StatusApplied || ds[1].Status != StatusApplied {
+		t.Errorf("2-file batch: %s", statuses(ds))
 	}
-	// a year that isn't the work's
-	tk = refineTask(t, ms, title, "2026-10-20T00:00:00Z", spyFiles(13, "2023"), s3, s1)
-	if ds := decideRefine(ms, tk, answerAll(tk, "bgm_300")); ds[0].Status != StatusPending {
-		t.Errorf("year 2023: %s", statuses(ds))
+	// a single episode released late: review
+	tk = refineTask(t, ms, "[G] Spy x Family S03E05", "2026-10-20T00:00:00Z", []string{"Spy x Family S03E05.mkv"}, s3, s1)
+	if ds := decideRefine(ms, tk, answerAll(tk, "bgm_300")); ds[0].Status != StatusPending || !strings.Contains(ds[0].Reason, "晚于本集播出") {
+		t.Errorf("late single: %s", statuses(ds))
 	}
-	// no season stated: season 1 (1–25) fits the numbers too → not unique
-	var plain []string
-	for i := 1; i <= 13; i++ {
-		plain = append(plain, fmt.Sprintf("Spy x Family/Spy x Family - %02d [BDRIP].mkv", i))
+	// one episode plus bonus material (2 video files) is a later compilation: applied
+	tk = refineTask(t, ms, "[G] Spy x Family S03E05", "2026-10-20T00:00:00Z", []string{"Spy x Family S03E05.mkv", "Spy x Family S03 NCOP.mkv"}, s3, s1)
+	if ds := decideRefine(ms, tk, answerAll(tk, "bgm_300")); ds[0].Status != StatusApplied {
+		t.Errorf("late episode + NCOP: %s", statuses(ds))
 	}
-	tk = refineTask(t, ms, "[G] Spy x Family 01-13 BDrip", "2026-10-20T00:00:00Z", plain, s3, s1)
-	ds = decideRefine(ms, tk, answerAll(tk, "bgm_300"))
-	for _, d := range ds {
-		if d.Status == StatusApplied {
-			t.Fatalf("ambiguous batch applied: %s", statuses(ds))
-		}
+	// a single episode released in time: applied
+	tk = refineTask(t, ms, "[G] Spy x Family S03E05", "2025-11-03T00:00:00Z", []string{"Spy x Family S03E05.mkv"}, s3, s1)
+	if ds := decideRefine(ms, tk, answerAll(tk, "bgm_300")); ds[0].Status != StatusApplied || ds[0].Key != "42" {
+		t.Errorf("in-time single: %s", statuses(ds))
 	}
-	// early releases stay strict (before the episodes aired)
+	// early releases (before the episodes aired) stay strict, batch or not
 	tk = refineTask(t, ms, title, "2025-09-01T00:00:00Z", spyFiles(13, "2025"), s3, s1)
 	for _, d := range decideRefine(ms, tk, answerAll(tk, "bgm_300")) {
-		if d.Status == StatusApplied {
-			t.Fatalf("early batch applied")
+		if d.Status == StatusApplied || !strings.Contains(d.Reason, "早于") {
+			t.Fatalf("early batch: %s %s", d.Status, d.Reason)
 		}
 	}
 }

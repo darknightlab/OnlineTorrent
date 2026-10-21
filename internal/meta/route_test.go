@@ -102,7 +102,7 @@ func matchFiles(t *testing.T, s *Store, ih, title string, tags []string, want []
 	for i, w := range want {
 		files = append(files, FileInput{Index: i, Path: w.path, Size: 100})
 	}
-	if err := s.Match(context.Background(), TorrentInput{Infohash: ih, PublishedAt: "2026-01-10T00:00:00Z", Title: title, MoeTagIDs: tags, Files: files}); err != nil {
+	if err := s.Match(context.Background(), TorrentInput{Infohash: ih, PublishedAt: "2026-12-20T00:00:00Z", Title: title, MoeTagIDs: tags, Files: files}); err != nil {
 		t.Fatal(err)
 	}
 	checkMap(t, s, ih, want)

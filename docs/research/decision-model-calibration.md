@@ -10,6 +10,34 @@ backends, chosen by the setting `clef.provider` (settings group 决策模型):
 
 Design: [plan.md](../plan.md) 「规则收紧 + 决策模型」. API: [api.md](../api.md) 「后台」→「决策模型」.
 
+## Date gate v4: late releases only matter for single-episode torrents (2026-10-21)
+
+Owner decisions:
+- **Early releases:** a release more than 7 days before the episode's airdate goes to review
+  (日期不符) for every torrent. This includes the "not aired yet" rule for undated episodes.
+- **Late releases:** a release more than 30 days after the airdate (undated: after the work's
+  end) goes to review only for a **single-episode torrent**, meaning exactly one video file.
+  - A torrent with 2 or more video files of any kind (episodes, SP, NCOP/NCED, PV, extras) is
+    a batch or a later compilation, and may come any time after airing.
+  - This replaces v3's late-release batch rule (≥ 3 files, unique fit, year match).
+- **Both paths:** the gate applies to the rules as well as the decision model.
+  - A certain rule mapping that fails it becomes a pending rule decision (`source = rule`,
+    reason `date_mismatch: …`), as it already did without a release time.
+  - Example: a forged "[LoliHouse] Show - 05" submitted before episode 5 aired → review.
+- **Removed:** the Clef scorer's `old_entry` gate (entry ended long before publication). The
+  single-episode late check covers it.
+
+Offline replays:
+
+| set | v3 | v4 |
+|---|---|---|
+| calibration v2 (240 torrents, 458 files): applied / wrong | 255 / 0 | **255 / 0** (coverage 95.5 %) |
+| the 152 unresolved production files | 149 applied | **149 applied**, 2 not mapped, 1 rule decision |
+
+The calibration replay takes the batch flag from the real torrent's video files, not from
+the sampled task. The date gate's wrong catches still hold. The single-episode namesakes
+(Collector 2001, 桃源暗鬼 S1) stay late singles, and the 2027 桃源暗鬼 第2クール is early.
+
 ## Post-checks v3: unresolved decisions (2026-10-21)
 
 The 152 production files that went through the decision model and still weren't applied
@@ -27,8 +55,9 @@ model answers were made; the model, prompt and candidates are unchanged. Code:
    - The change is recorded in `answers.rule`.
 2. **Parser agreement after the split-cour shift.** "Slime 4th Season - 24(96)" is the same
    official episode (96) whether read as 24 or 96.
-3. **Late-release batch rule.** A release more than 30 days after airing (never an early
-   one) is applied anyway when all of these hold:
+3. **Late-release batch rule** *(replaced in v4 by "late releases only matter for
+   single-episode torrents", see above)*. A release more than 30 days after airing (never
+   an early one) is applied anyway when all of these hold:
    - the torrent has ≥ 3 main files on the same work, each passing every other check;
    - their numbers, with the stated season, fit no other work the torrent names, among the
      candidates and the work's family (`meta.UniqueFit`);

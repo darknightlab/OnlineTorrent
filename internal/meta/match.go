@@ -60,17 +60,41 @@ func (s *Store) Match(ctx context.Context, t TorrentInput) error {
 	res := s.mapFiles(ctx, paths, t.Title, work, method, wconf, sure)
 	// without any release time (no crawl publish date, no user submission time) nothing is
 	// mapped automatically: certain rule mappings go to the review queue instead (a forged
-	// torrent named like an official release must not get mapped)
-	rt, _ := s.ReleaseTime(ctx, t.Infohash)
+	// torrent named like an official release must not get mapped). The same when the date
+	// gate fails (日期不符; CheckDateFull, as for the decision model): released more than 7
+	// days before the episode aired ("[LoliHouse] Show - 05" submitted before episode 5 aired
+	// can't be real), or — single-episode torrents (one video file) only — more than 30
+	// days after.
+	rt, by := s.ReleaseTime(ctx, t.Infohash)
 	noRelease := rt.IsZero()
+	videos := 0
+	for _, f := range t.Files {
+		if IsVideo(f.Path) {
+			videos++
+		}
+	}
 	queue := false
 	for i, f := range t.Files {
 		kind, wk, ep, conf, m := res[i].kind, res[i].work, res[i].ep, res[i].conf, res[i].method
-		if wkey, ok := wk.(string); ok && noRelease && !res[i].queue {
-			if err := s.queueRuleReview(ctx, t.Infohash, f.Index, f.Path, wkey, kind, ep, conf); err != nil {
-				return err
+		if wkey, ok := wk.(string); ok && !res[i].queue {
+			reason := ""
+			if noRelease {
+				reason = ReasonMissingRelease
+			} else {
+				k, _ := KeyOfFile(kind, ep)
+				if k.Kind != "" {
+					k, _ = s.ValidEpisode(ctx, wkey, k)
+				}
+				if c := s.CheckDateFull(ctx, wkey, k, rt, by, videos >= 2); !c.OK {
+					reason = ReasonDateMismatch + ": " + c.Detail
+				}
 			}
-			wk, conf, m = nil, 0, ""
+			if reason != "" {
+				if err := s.queueRuleReview(ctx, t.Infohash, f.Index, f.Path, wkey, kind, ep, conf, reason); err != nil {
+					return err
+				}
+				wk, conf, m = nil, 0, ""
+			}
 		}
 		// automatic rows are rewritten, except decision-model mappings (method clef) and, for
 		// an uncertain result, rows that are already mapped: existing mappings stay as they

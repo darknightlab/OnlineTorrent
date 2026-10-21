@@ -1,7 +1,7 @@
 package meta
 
-// Catalogue lookups of the decision model's post-checks (clef.Refine): prequel numbering,
-// the batch rule's unique-fit and year checks.
+// Catalogue lookups of the decision model's post-checks (clef.Refine): prequel numbering
+// and season continuation.
 
 import (
 	"context"
@@ -66,74 +66,4 @@ func (s *Store) DirectPrequel(ctx context.Context, workKey string) (string, bool
 		found = pw.Key
 	}
 	return found, found != ""
-}
-
-// UniqueFit reports whether workKey is the only work, among others and the work's family
-// (one relation step), that is named by texts (NameEvidence), fits the stated season and
-// lists every main episode number of nums (as written, split-cour shift applied). The work
-// itself must list them too (its season is checked by the caller).
-func (s *Store) UniqueFit(ctx context.Context, workKey string, others []string, nums []float64, season float64, texts []string) bool {
-	lists := func(key string) bool {
-		for _, n := range nums {
-			if _, ok := s.ValidEpisode(ctx, key, EpisodeKey{Kind: KeyMain, Number: n}); !ok {
-				return false
-			}
-		}
-		return true
-	}
-	if !lists(workKey) {
-		return false
-	}
-	set := map[string]bool{}
-	for _, o := range others {
-		set[o] = true
-	}
-	if w, err := s.GetWork(ctx, workKey); err == nil {
-		if id := bgmIDOf(w); id > 0 {
-			for _, rid := range s.relatedBgm(ctx, id, familyRelations, 1, 200) {
-				if rw, err := s.WorkByExternal(ctx, "bgm", strconv.FormatInt(rid, 10)); err == nil {
-					set[rw.Key] = true
-				}
-			}
-		}
-	}
-	delete(set, workKey)
-	for o := range set {
-		c, err := s.CandidateFor(ctx, o)
-		if err != nil || !c.SeasonFits(season) || !lists(o) || !s.NameEvidence(ctx, o, texts) {
-			continue
-		}
-		return false
-	}
-	return true
-}
-
-// YearsFit: when texts write 4-digit years (1900–2099), at least one of them must lie within
-// the work's airing years (begin … end); no year written: true.
-func (s *Store) YearsFit(ctx context.Context, workKey string, texts []string) bool {
-	var years []int
-	for _, t := range texts {
-		years = append(years, yearsIn(t)...)
-	}
-	if len(years) == 0 {
-		return true
-	}
-	w, err := s.GetWork(ctx, workKey)
-	if err != nil {
-		return false
-	}
-	b, e := parseDay(w.Begin), parseDay(w.End)
-	if b.IsZero() {
-		return false
-	}
-	from, to := b.In(jst).Year(), b.In(jst).Year()
-	if !e.IsZero() {
-		to = e.In(jst).Year()
-	}
-	for _, y := range years {
-		if y >= from && y <= to {
-			return true
-		}
-	}
-	return false
 }

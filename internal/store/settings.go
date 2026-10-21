@@ -110,7 +110,7 @@ func clefSettings() []SettingSpec {
 		{Key: KeyLLMConcurrency, Group: g, Type: "number", Label: "LLM：并发数", Description: "同时处理的种子数（1–8）", Default: 2},
 		{Key: KeyLLMRate, Group: g, Type: "number", Label: "LLM：每分钟请求数", Default: 30},
 		{Key: KeyLLMDailyCap, Group: g, Type: "number", Label: "LLM：每日请求上限", Description: "含后台测试；按 UTC 日期计", Default: 5000},
-		{Key: KeyLLMApply, Group: g, Type: "number", Label: "LLM：直接应用阈值", Description: "模型自报置信度 ≥ 此值、校验通过（条目在候选中、集数在官方章节里、季数一致）、标题里有该条目的名字且与规则解析出的集数一致时直接写入映射；发布时间与本集播出日期不符（晚 30 天以上 / 早 7 天以上）或缺少发布时间的一律进入审核", Default: 0.9},
+		{Key: KeyLLMApply, Group: g, Type: "number", Label: "LLM：直接应用阈值", Description: "模型自报置信度 ≥ 此值、校验通过（条目在候选中、集数在官方章节里、季数一致）、标题里有该条目的名字且与规则解析出的集数一致时直接写入映射；发布时间早于本集播出 7 天以上、单集种子（只有一个视频文件）晚于本集播出 30 天以上，或缺少发布时间的一律进入审核", Default: 0.9},
 		{Key: KeyLLMReview, Group: g, Type: "number", Label: "LLM：人工审核阈值", Description: "校验通过但置信度介于此值与直接应用之间（或与解析的集数不一致）的进入审核队列；低于此值不映射", Default: 0.5},
 		{Key: KeyLLMAgreement, Group: g, Type: "bool", Label: "LLM：要求与解析的集数一致", Description: "文件名解析出了集数而模型给出别的数字时只进审核", Default: true},
 		{Key: KeyClefAccountID, Group: g, Type: "string", Label: "Clef：Cloudflare Account ID", Default: ""},

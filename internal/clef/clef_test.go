@@ -215,16 +215,13 @@ func TestDecideValidationAndThresholds(t *testing.T) {
 	if d := Decide(ctx, tk20, c20, th, fakeValid)[0]; d.Status != StatusApplied || d.Candidate.WorkKey != "bgm:101" || d.Key != "20" || d.Answers[QSubject].Conditioned[0].ID != "bgm_101" {
 		t.Errorf("conditioned: %+v", d)
 	}
-	// an entry that ended years before the torrent was published: review, never applied
+	// an entry that ended years before the torrent was published: no longer held by the
+	// scorer (the date gate, Refine, decides: single-episode torrents released late → review)
 	old := task(1, false)
 	old.Published = "2026-10-01"
 	old.Candidates[0].EndDate = "2018-03-24"
-	if d := Decide(ctx, old, cases[0].a, th, fakeValid)[0]; d.Status != StatusPending || d.Reason != ReasonOldEntry {
-		t.Errorf("old entry: %s %s", d.Status, d.Reason)
-	}
-	old.Candidates[0].EndDate = "2026-03-24"
 	if d := Decide(ctx, old, cases[0].a, th, fakeValid)[0]; d.Status != StatusApplied {
-		t.Errorf("recent entry: %s %s", d.Status, d.Reason)
+		t.Errorf("old entry: %s %s", d.Status, d.Reason)
 	}
 	// yes/no answers decide the subject: the confirmed fitting candidate, margin = gap
 	yes := func(p float64) Answer { return Answer{Type: "noul", Noul: &p} }

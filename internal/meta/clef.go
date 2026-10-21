@@ -486,8 +486,10 @@ type ClefTask struct {
 	Published string `json:"published,omitempty"` // YYYY-MM-DD (of Released)
 	// Released: the release time (crawl published_at, or a user submission's submitted_at —
 	// ReleasedBy "published" | "submitted"); empty = unknown (never applied automatically)
-	Released   string          `json:"released,omitempty"`
-	ReleasedBy string          `json:"released_by,omitempty"`
+	Released   string `json:"released,omitempty"`
+	ReleasedBy string `json:"released_by,omitempty"`
+	// Batch: the torrent has 2 or more video files (no late limit in the date gate)
+	Batch      bool            `json:"batch,omitempty"`
 	Videos     []string        `json:"videos"` // every video path (the state)
 	Files      []ClefFile      `json:"files"`
 	Candidates []ClefCandidate `json:"candidates"`
@@ -547,6 +549,7 @@ func (s *Store) BuildClefTask(ctx context.Context, ih string, all bool) (*ClefTa
 		t.Released, t.ReleasedBy = rt.UTC().Format(time.RFC3339), by
 		t.Published = rt.UTC().Format("2006-01-02")
 	}
+	t.Batch = s.VideoFiles(ctx, ih) >= 2
 	titleSeason := ParseTitle(in.Title).Season
 	videos := 0
 	for _, p := range paths {
@@ -1224,35 +1227,35 @@ func (s *Store) EpisodeAirdate(ctx context.Context, workKey string, k EpisodeKey
 	return d
 }
 
-// Date gate tolerances (owner decision): the release may be at most 7 days before and 30
-// days after the episode's airdate (or the work's airing window when the episode has none).
+// Date gate tolerances (owner decisions): a release may be at most 7 days before the
+// episode's airdate (or, without one, the work's start) — for every torrent. A single-
+// episode torrent (exactly one video file) may also be at most 30 days after the airdate
+// (without one: after the work's end); a batch (2 or more video files of any kind: season
+// packs, BDs, an episode plus bonus material) may come any time after airing.
 const (
 	DateEarlyDays = 7
 	DateLateDays  = 30
 )
 
-// DateCheck is the outcome of the date gate. Late: the release is too long after the
-// episode / the work (a re-release such as a BD batch); otherwise a failure means too early
-// (the episode can't have aired yet).
+// DateCheck is the outcome of the date gate (OK=false: review).
 type DateCheck struct {
 	OK     bool
-	Late   bool
 	Detail string // why (Chinese, for the admin)
 }
 
-// CheckDate compares a release time with the airdate of the (canonical) episode, else with
-// the work's airing window (start − 7 d … end + 30 d; open-ended without an end date).
-// ok=false: the decision goes to human review; detail says why. Unknown dates pass.
+// CheckDate is CheckDateFull for a single-episode torrent.
 func (s *Store) CheckDate(ctx context.Context, workKey string, k EpisodeKey, released time.Time, releasedBy string) (bool, string) {
-	c := s.CheckDateFull(ctx, workKey, k, released, releasedBy)
+	c := s.CheckDateFull(ctx, workKey, k, released, releasedBy, false)
 	return c.OK, c.Detail
 }
 
-// CheckDateFull is CheckDate with the direction of a failure. A main episode without an
-// airdate counts as not aired yet when an earlier main episode of the work airs more than
-// 7 days after the release (bangumi lists future episodes before their dates are known:
-// "S2 [14]" released after S2's 2nd broadcast is not episode 14).
-func (s *Store) CheckDateFull(ctx context.Context, workKey string, k EpisodeKey, released time.Time, releasedBy string) DateCheck {
+// CheckDateFull compares a release time with the airdate of the (canonical) episode, else
+// with the work's airing window: more than 7 days before → not OK; for a single-episode
+// torrent (batch=false) also more than 30 days after. A main episode without an airdate
+// counts as not aired yet when an earlier main episode of the work airs more than 7 days
+// after the release (bangumi lists future episodes before their dates are known: "S2 [14]"
+// released after S2's 2nd broadcast is not episode 14). Unknown dates pass.
+func (s *Store) CheckDateFull(ctx context.Context, workKey string, k EpisodeKey, released time.Time, releasedBy string, batch bool) DateCheck {
 	if released.IsZero() {
 		return DateCheck{OK: true}
 	}
@@ -1263,13 +1266,12 @@ func (s *Store) CheckDateFull(ctx context.Context, workKey string, k EpisodeKey,
 	rel := released.In(jst).Format("2006-01-02")
 	early, late := time.Duration(DateEarlyDays)*24*time.Hour, time.Duration(DateLateDays)*24*time.Hour
 	if d := s.EpisodeAirdate(ctx, workKey, k); d != "" {
-		air, err := time.ParseInLocation("2006-01-02", d, jst)
-		if err == nil {
+		if air, err := time.ParseInLocation("2006-01-02", d, jst); err == nil {
 			switch {
 			case released.Before(air.Add(-early)):
 				return DateCheck{Detail: fmt.Sprintf("%s %s 早于本集播出 %s 超过 %d 天", by, rel, d, DateEarlyDays)}
-			case released.After(air.Add(24*time.Hour + late)):
-				return DateCheck{Late: true, Detail: fmt.Sprintf("%s %s 晚于本集播出 %s 超过 %d 天", by, rel, d, DateLateDays)}
+			case !batch && released.After(air.Add(24*time.Hour+late)):
+				return DateCheck{Detail: fmt.Sprintf("%s %s 晚于本集播出 %s 超过 %d 天（单集种子）", by, rel, d, DateLateDays)}
 			}
 			return DateCheck{OK: true}
 		}
@@ -1293,10 +1295,28 @@ func (s *Store) CheckDateFull(ctx context.Context, workKey string, k EpisodeKey,
 	if !begin.IsZero() && released.Before(begin.Add(-early)) {
 		return DateCheck{Detail: fmt.Sprintf("%s %s 早于条目开播 %s 超过 %d 天（本集无播出日期）", by, rel, begin.In(jst).Format("2006-01-02"), DateEarlyDays)}
 	}
-	if !end.IsZero() && released.After(end.Add(24*time.Hour+late)) {
-		return DateCheck{Late: true, Detail: fmt.Sprintf("%s %s 晚于条目完结 %s 超过 %d 天（本集无播出日期）", by, rel, end.In(jst).Format("2006-01-02"), DateLateDays)}
+	if !batch && !end.IsZero() && released.After(end.Add(24*time.Hour+late)) {
+		return DateCheck{Detail: fmt.Sprintf("%s %s 晚于条目完结 %s 超过 %d 天（本集无播出日期，单集种子）", by, rel, end.In(jst).Format("2006-01-02"), DateLateDays)}
 	}
 	return DateCheck{OK: true}
+}
+
+// VideoFiles counts the torrent's video files (any kind: episodes, specials, NCOP, PV,
+// extras); 2 or more make it a batch for the date gate.
+func (s *Store) VideoFiles(ctx context.Context, ih string) int {
+	rows, err := s.R.QueryContext(ctx, `SELECT path FROM torrent_files WHERE infohash = ?`, ih)
+	if err != nil {
+		return 0
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var p string
+		if rows.Scan(&p) == nil && IsVideo(p) {
+			n++
+		}
+	}
+	return n
 }
 
 // Review reasons shared by the decision model and the rules (the decision goes to human
@@ -1308,23 +1328,17 @@ const (
 
 // ReleaseGate says whether a decision for (work, canonical key) may be applied
 // automatically given the task's release time: never without one; otherwise the
-// per-episode date gate (CheckDate). "" when it may, else the review reason.
+// per-episode date gate (CheckDateFull; t.Batch: no late limit). "" when it may, else the
+// review reason.
 func (s *Store) ReleaseGate(ctx context.Context, t *ClefTask, workKey string, k EpisodeKey) string {
-	r, _ := s.ReleaseCheck(ctx, t, workKey, k)
-	return r
-}
-
-// ReleaseCheck is ReleaseGate; late reports a date mismatch because the release is too
-// long after the airing (only those may be lifted by the batch rule, clef.Refine).
-func (s *Store) ReleaseCheck(ctx context.Context, t *ClefTask, workKey string, k EpisodeKey) (reason string, late bool) {
 	rt, err := time.Parse(time.RFC3339, t.Released)
 	if t.Released == "" || err != nil {
-		return ReasonMissingRelease, false
+		return ReasonMissingRelease
 	}
-	if c := s.CheckDateFull(ctx, workKey, k, rt, t.ReleasedBy); !c.OK {
-		return ReasonDateMismatch + ": " + c.Detail, c.Late
+	if c := s.CheckDateFull(ctx, workKey, k, rt, t.ReleasedBy, t.Batch); !c.OK {
+		return ReasonDateMismatch + ": " + c.Detail
 	}
-	return "", false
+	return ""
 }
 
 // hasRuleDecision: a rule decision (any status) exists for the file and mapping, so a
@@ -1335,9 +1349,10 @@ func (s *Store) hasRuleDecision(ctx context.Context, ih string, idx int, workKey
 	return n > 0
 }
 
-// queueRuleReview records a certain rule mapping of a torrent without a release time as a
-// pending review decision (source rule, reason missing_release_time).
-func (s *Store) queueRuleReview(ctx context.Context, ih string, idx int, path, workKey, kind string, ep *float64, conf float64) error {
+// queueRuleReview records a certain rule mapping that may not be applied automatically (no
+// release time, or released before the episode aired) as a pending review decision
+// (source rule).
+func (s *Store) queueRuleReview(ctx context.Context, ih string, idx int, path, workKey, kind string, ep *float64, conf float64, reason string) error {
 	key := ""
 	if k, ok := KeyOfFile(kind, ep); ok {
 		ck, _ := s.ValidEpisode(ctx, workKey, k)
@@ -1347,7 +1362,7 @@ func (s *Store) queueRuleReview(ctx context.Context, ih string, idx int, path, w
 		return nil
 	}
 	return s.AddClefDecision(ctx, &ClefDecision{Infohash: ih, FileIndex: idx, Path: path, WorkKey: workKey, Kind: kind, Episode: ep, EpisodeKey: key,
-		Score: conf, Margin: -1, Confidence: conf, Model: "rules", Source: "rule", Status: "pending", Reason: ReasonMissingRelease})
+		Score: conf, Margin: -1, Confidence: conf, Model: "rules", Source: "rule", Status: "pending", Reason: reason})
 }
 
 // GetClefJob returns the decision-model job of ih (nil if none).

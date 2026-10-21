@@ -27,8 +27,6 @@ type Thresholds struct {
 	// UseChoice: decide the subject by the choice question even when the yes/no answers
 	// are there (calibration only)
 	UseChoice bool `json:"-"`
-	// IgnoreAge: apply decisions for old entries too (calibration only)
-	IgnoreAge bool `json:"-"`
 }
 
 // DefaultThresholds are the calibrated defaults (docs/research/decision-model-calibration.md).
@@ -152,7 +150,7 @@ const (
 	ReasonBadNumber     = "invalid_number"
 	ReasonNotOfficial   = "episode_not_official"
 	ReasonSeason        = "season_mismatch"
-	ReasonOldEntry      = "old_entry" // pending: the entry ended long before the publish date
+	ReasonOldEntry      = "old_entry" // (no longer given) pending: the entry ended long before the publish date
 	ReasonLowConfidence = "low_confidence"
 )
 
@@ -333,11 +331,6 @@ func Decide(ctx context.Context, t *meta.ClefTask, answers map[string]Answer, th
 		}
 		d.Key = ck.String()
 		switch {
-		case d.Score >= th.Apply && d.Margin >= th.Margin && !c.Recent(t.Published) && !th.IgnoreAge:
-			// an entry that ended long before the torrent was published: a new work with the
-			// same name may be missing from the catalogue (remakes, re-edits) — never applied
-			// automatically
-			d.Status, d.Reason = StatusPending, ReasonOldEntry
 		case d.Score >= th.Apply && d.Margin >= th.Margin:
 			d.Status = StatusApplied
 		case d.Score >= th.Review:

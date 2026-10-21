@@ -52,7 +52,7 @@ func TestEpisodesEndpoints(t *testing.T) {
 	_, _ = s.Meta.W.ExecContext(ctx, `INSERT INTO work_ids VALUES('bgm','400602','bgm:400602'),('bangumi_moe','tag1','bgm:400602')`)
 	ih := "ae5e267603990c2e6205f8e43df4c9eb368bbeba"
 	if err := s.Meta.Match(ctx, meta.TorrentInput{Infohash: ih, Title: "[Team] Sousou no Frieren [BD]", Source: "bangumi.moe", SourceKind: "bangumi_moe",
-		Trusted: true, MoeTagIDs: []string{"tag1"}, PublishedAt: "2026-10-18T10:00:00Z",
+		Trusted: true, MoeTagIDs: []string{"tag1"}, PublishedAt: "2099-10-18T10:00:00Z",
 		Files: []meta.FileInput{
 			{Index: 0, Path: "Frieren/[Team] Sousou no Frieren - 02 [1080p].mkv", Size: 100},
 			{Index: 1, Path: "Frieren/[Team] Sousou no Frieren - 02.5 [1080p].mkv", Size: 100},

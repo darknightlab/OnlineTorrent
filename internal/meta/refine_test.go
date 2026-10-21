@@ -129,21 +129,27 @@ func TestCheckDateNotAiredYet(t *testing.T) {
 	w := seedWork(t, s, 471844, "帰還者の魔法は特別です(第二期)", "归还者的魔法要特别 第二季", `[]`, "tv", "2026-10-07", "",
 		seq(1, 14), weekly("2026-10-07", 12))
 	at := func(d string) time.Time { v, _ := time.Parse("2006-01-02", d); return v }
-	if c := s.CheckDateFull(ctx, w, EpisodeKey{Kind: KeyMain, Number: 14}, at("2026-10-19"), "published"); c.OK || c.Late {
+	if c := s.CheckDateFull(ctx, w, EpisodeKey{Kind: KeyMain, Number: 14}, at("2026-10-19"), "published", false); c.OK {
 		t.Errorf("ep 14 before ep 3 aired: %+v", c)
 	}
-	if c := s.CheckDateFull(ctx, w, EpisodeKey{Kind: KeyMain, Number: 14}, at("2027-01-05"), "published"); !c.OK {
+	if c := s.CheckDateFull(ctx, w, EpisodeKey{Kind: KeyMain, Number: 14}, at("2027-01-05"), "published", false); !c.OK {
 		t.Errorf("ep 14 after ep 12 aired: %+v", c)
 	}
-	if c := s.CheckDateFull(ctx, w, EpisodeKey{Kind: KeyMain, Number: 2}, at("2026-10-19"), "published"); !c.OK {
+	if c := s.CheckDateFull(ctx, w, EpisodeKey{Kind: KeyMain, Number: 2}, at("2026-10-19"), "published", false); !c.OK {
 		t.Errorf("ep 2: %+v", c)
 	}
-	// late vs early on a dated episode
-	if c := s.CheckDateFull(ctx, w, EpisodeKey{Kind: KeyMain, Number: 1}, at("2027-06-01"), "published"); c.OK || !c.Late {
-		t.Errorf("late: %+v", c)
+	// years after airing: a batch is fine, a single-episode torrent goes to review
+	if c := s.CheckDateFull(ctx, w, EpisodeKey{Kind: KeyMain, Number: 1}, at("2031-06-01"), "published", true); !c.OK {
+		t.Errorf("batch long after airing: %+v", c)
 	}
-	if c := s.CheckDateFull(ctx, w, EpisodeKey{Kind: KeyMain, Number: 5}, at("2026-10-19"), "published"); c.OK || c.Late {
-		t.Errorf("early: %+v", c)
+	if c := s.CheckDateFull(ctx, w, EpisodeKey{Kind: KeyMain, Number: 1}, at("2031-06-01"), "published", false); c.OK {
+		t.Errorf("single long after airing: %+v", c)
+	}
+	// more than 7 days before airing: review, batch or not
+	for _, batch := range []bool{false, true} {
+		if c := s.CheckDateFull(ctx, w, EpisodeKey{Kind: KeyMain, Number: 5}, at("2026-10-19"), "published", batch); c.OK {
+			t.Errorf("early (batch %v): %+v", batch, c)
+		}
 	}
 }
 
@@ -168,27 +174,12 @@ func TestMakuSeason(t *testing.T) {
 	}
 }
 
-func TestUniqueFitAndYears(t *testing.T) {
+func TestDirectPrequel(t *testing.T) {
 	s := openTest(t)
 	ctx := context.Background()
 	s1 := seedWork(t, s, 100, "スパイ", "间谍", `["Spy x Family"]`, "tv", "2022-04-09", "2022-12-24", seq(1, 25), nil)
 	s3 := seedWork(t, s, 300, "スパイ Season 3", "间谍 第三季", `["Spy x Family Season 3"]`, "tv", "2025-10-04", "2025-12-27", seq(38, 50), nil)
 	relate(t, s, 300, 100, 2)
-	texts := []string{"[G] Spy x Family S03 01-13 BDrip", "Spy x Family 2025 S03E01.mkv"}
-	if !s.UniqueFit(ctx, s3, []string{s1}, seq(1, 13), 3, texts) {
-		t.Error("season 3 stated: unique")
-	}
-	// no season stated: season 1 (1–25, named too) fits as well
-	if s.UniqueFit(ctx, s3, []string{s1}, seq(1, 13), 0, []string{"[G] Spy x Family 01-13 BDrip"}) {
-		t.Error("ambiguous without a season")
-	}
-	// a number the work doesn't list
-	if s.UniqueFit(ctx, s3, nil, seq(1, 14), 3, texts) {
-		t.Error("14 not listed")
-	}
-	if !s.YearsFit(ctx, s3, texts) || s.YearsFit(ctx, s3, []string{"Spy x Family 2023 S03E01.mkv"}) || !s.YearsFit(ctx, s3, []string{"no year"}) {
-		t.Error("years")
-	}
 	if k, ok := s.DirectPrequel(ctx, s3); !ok || k != s1 {
 		t.Errorf("prequel %q %v", k, ok)
 	}

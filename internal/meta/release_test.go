@@ -144,3 +144,84 @@ func TestRomanizeAndRetrieve(t *testing.T) {
 		t.Errorf("token overlap: %v", got)
 	}
 }
+
+// The rules get the same date gate as the decision model: released more than 7 days before
+// the episode aired → review (any torrent); more than 30 days after → review only for a
+// single-episode torrent (one video file).
+func TestRuleDateGate(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	if _, err := s.W.ExecContext(ctx, `INSERT INTO works(id,key,title,title_cn,aliases,type,begin_at,end_at,eps,updated_at) VALUES
+		(1,'bgm:1','フリーレン','葬送的芙莉莲','["Sousou no Frieren"]','tv','2026-10-03T00:00:00Z','2026-12-19T00:00:00Z',12,'x'),
+		(2,'bgm:2','ハルヒ','凉宫春日的忧郁','["Suzumiya Haruhi no Yuuutsu"]','tv','2006-04-02T00:00:00Z','2006-07-02T00:00:00Z',14,'x')`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 12; i++ {
+		_, _ = s.W.ExecContext(ctx, `INSERT INTO episodes(bgm_id,work_key,type,sort,airdate) VALUES(?,'bgm:1',0,?,?)`, 100+i, i, time.Date(2026, 10, 3+7*(i-1), 0, 0, 0, 0, time.UTC).Format("2006-01-02"))
+	}
+	for i := 1; i <= 14; i++ {
+		_, _ = s.W.ExecContext(ctx, `INSERT INTO episodes(bgm_id,work_key,type,sort,airdate) VALUES(?,'bgm:2',0,?,?)`, 200+i, i, time.Date(2006, 4, 2+7*(i-1), 0, 0, 0, 0, time.UTC).Format("2006-01-02"))
+	}
+	uid := int64(3)
+	submit := func(ih, title, at string, paths ...string) {
+		t.Helper()
+		var files []FileInput
+		for i, p := range paths {
+			files = append(files, FileInput{Index: i, Path: p, Size: 1})
+		}
+		if err := s.Match(ctx, TorrentInput{Infohash: ih, Title: title, Source: "user", SourceKind: "user", SubmittedAt: at, SubmittedBy: &uid, Files: files}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mapped := func(ih string, idx int) bool {
+		tm, _ := s.GetTorrentMap(ctx, ih)
+		return tm.Files[idx].Work != nil
+	}
+	review := func(ih, want string) {
+		t.Helper()
+		ds, _, _ := s.ListClefDecisions(ctx, "pending", ih, 0, 10)
+		if len(ds) == 0 || ds[0].Source != "rule" || !strings.HasPrefix(ds[0].Reason, ReasonDateMismatch+": ") || !strings.Contains(ds[0].Reason, want) {
+			t.Errorf("%s review: %+v", ih, ds)
+		}
+	}
+	// a forged "[LoliHouse] Show - 05" submitted two weeks before episode 5 airs
+	submit("f1", "[LoliHouse] Sousou no Frieren - 05 [WebRip 1080p]", "2026-10-17T00:00:00Z", "[LoliHouse] Sousou no Frieren - 05 [WebRip 1080p].mkv")
+	if mapped("f1", 0) {
+		t.Error("forged pre-air episode mapped")
+	}
+	review("f1", "早于本集播出")
+	// … also inside a batch
+	submit("f2", "[LoliHouse] Sousou no Frieren - 01-05 [WebRip 1080p]", "2026-10-17T00:00:00Z",
+		"F/[LoliHouse] Sousou no Frieren - 01 [WebRip 1080p].mkv", "F/[LoliHouse] Sousou no Frieren - 05 [WebRip 1080p].mkv")
+	if !mapped("f2", 0) || mapped("f2", 1) {
+		t.Error("batch: aired episode mapped, forged one not")
+	}
+	// in time: applied
+	submit("f3", "[LoliHouse] Sousou no Frieren - 05 [WebRip 1080p]", "2026-10-31T12:00:00Z", "[LoliHouse] Sousou no Frieren - 05 [WebRip 1080p].mkv")
+	if !mapped("f3", 0) {
+		t.Error("in-time episode not mapped")
+	}
+	// an old show submitted today: a single episode → review; a batch (2+ video files, any
+	// kind) → applied
+	submit("h1", "[G] Suzumiya Haruhi no Yuuutsu - 03 [BD 1080p]", "2026-10-20T00:00:00Z", "[G] Suzumiya Haruhi no Yuuutsu - 03 [BD 1080p].mkv")
+	if mapped("h1", 0) {
+		t.Error("old single episode mapped")
+	}
+	review("h1", "晚于本集播出")
+	submit("h2", "[G] Suzumiya Haruhi no Yuuutsu - 03 [BD 1080p]", "2026-10-20T00:00:00Z",
+		"H/[G] Suzumiya Haruhi no Yuuutsu - 03 [BD 1080p].mkv", "H/[G] Suzumiya Haruhi no Yuuutsu - Menu [BD 1080p].mkv")
+	if !mapped("h2", 0) {
+		t.Error("old episode + bonus video (batch) not mapped")
+	}
+	submit("h3", "[G] Suzumiya Haruhi no Yuuutsu [BD 1080p]", "2026-10-20T00:00:00Z",
+		"H/[G] Suzumiya Haruhi no Yuuutsu - 01 [BD 1080p].mkv", "H/[G] Suzumiya Haruhi no Yuuutsu - 02 [BD 1080p].mkv")
+	if !mapped("h3", 0) || !mapped("h3", 1) {
+		t.Error("old batch not mapped")
+	}
+	// a subtitle file next to the episode doesn't make a batch
+	submit("h4", "[G] Suzumiya Haruhi no Yuuutsu - 04 [BD 1080p]", "2026-10-20T00:00:00Z",
+		"H/[G] Suzumiya Haruhi no Yuuutsu - 04 [BD 1080p].mkv", "H/[G] Suzumiya Haruhi no Yuuutsu - 04 [BD 1080p].ass")
+	if mapped("h4", 0) {
+		t.Error("episode + subtitles counted as a batch")
+	}
+}
