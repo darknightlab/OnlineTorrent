@@ -70,6 +70,8 @@ func main() {
 		err = run(os.Args[2:])
 	case "replay":
 		err = replay(os.Args[2:])
+	case "rules":
+		err = rules(os.Args[2:])
 	case "recall":
 		err = recall(os.Args[2:])
 	case "llm":

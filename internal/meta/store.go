@@ -286,7 +286,7 @@ type Store struct {
 	W, R *sql.DB
 
 	aliasMu sync.Mutex
-	aliases []aliasEntry
+	aliases *aliasIndex
 	aliasAt time.Time
 
 	candMu sync.Mutex // decision-model candidate retrieval index (retrieve.go)

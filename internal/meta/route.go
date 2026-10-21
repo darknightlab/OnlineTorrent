@@ -372,6 +372,11 @@ func (f *family) route(paths []string, title, method string, anchorSure bool) []
 	if ts := ParseTitle(title).Season; anchorSeason == 0 && ts > 0 && method == "moe_tag" {
 		anchorSeason = ts // a bangumi.moe-tagged "Show S2" torrent: the tag is season 2
 	}
+	if anchorSeason == 0 && method == "title_franchise" {
+		// the franchise entry of the stated season (franchiseWork, possibly by airing
+		// order): that season is the anchor's own
+		anchorSeason = torrentSeason(title, paths)
+	}
 	// the season a file names is the anchor's own: stated by its titles (or the tagged
 	// title), or "S1" for an anchor without a season marker that starts its chain
 	onAnchorSeason := func(s float64) bool {

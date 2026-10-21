@@ -1086,7 +1086,7 @@ func (s *Store) QueueAnomalies(ctx context.Context, list []AnomalousTorrent) (in
 
 // reSeasonWords: season / part markers removed before comparing names (the season itself is
 // checked separately, SeasonFits).
-var reSeasonWords = regexp.MustCompile(`(?i)\b(?:S\d{1,2}|season\s*\d{1,2}|\d{1,2}(?:st|nd|rd|th)\s*season|part\s*\d|cour\s*\d|II|III|IV)\b|第\s*[0-9一二三四五六七八九十壱弐参]+\s*(?:季|期|部|クール|幕)|(?:^|[^a-z])dai[\s_.~-]*(?:ichi|ni|san|yon|shi|go)[\s_.~-]*maku|[（(][^)）]{0,20}[)）]`)
+var reSeasonWords = regexp.MustCompile(`(?i)\b(?:S\d{1,2}|season\s*\d{1,2}|\d{1,2}(?:st|nd|rd|th)\s*season|part\s*\d|cour\s*\d|II|III|IV)\b|第\s*[0-9一二三四五六七八九十壱弐参]+\s*(?:季|期|部|クール|幕)|(?:^|[^a-z])dai[\s_.~-]*(?:ichi|ni|san|yon|shi|go)[\s_.~-]*(?:maku|ki)(?:[^a-z]|$)|[（(][^)）]{0,20}[)）]`)
 
 func seasonless(s string) string { return normName(reSeasonWords.ReplaceAllString(normWidth(s), " ")) }
 

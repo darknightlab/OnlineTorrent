@@ -1247,8 +1247,8 @@ type routeHint struct {
 var reSeasonEp = regexp.MustCompile(`^S(\d{1,2})E\d`)
 
 // reMaku: "Dai Ni Maku" / "Dai_Ni_Maku" (romanised 第二幕, "act two" = the second part /
-// season of a work; separators may be spaces, _ . ~ -)
-var reMaku = regexp.MustCompile(`(?i)(?:^|[^a-z])dai[\s_.~-]*(ichi|ni|san|yon|shi|go)[\s_.~-]*maku(?:[^a-z]|$)`)
+// season of a work) and "Dai San Ki" (第三期); separators may be spaces, _ . ~ -
+var reMaku = regexp.MustCompile(`(?i)(?:^|[^a-z])dai[\s_.~-]*(ichi|ni|san|yon|shi|go)[\s_.~-]*(?:maku|ki)(?:[^a-z]|$)`)
 
 var makuNumbers = map[string]float64{"ichi": 1, "ni": 2, "san": 3, "yon": 4, "shi": 4, "go": 5}
 

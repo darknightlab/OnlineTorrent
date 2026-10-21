@@ -3,6 +3,7 @@ package meta
 import (
 	"context"
 	"encoding/json"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -290,7 +291,8 @@ func boolInt(b bool) int {
 //     after normName (titleWork, years in the title must fit): certain, unless the title
 //     carries a season marker that the work's own titles do not state;
 //   - otherwise a guess (not certain; files are left for the decision model, see clef.go):
-//     an alias substring of a recent work, or the title-fragment match with tie-breaking.
+//     the longest name of any work (all eras) contained in the title, or the title-fragment
+//     match with tie-breaking.
 func (s *Store) resolveWork(ctx context.Context, t TorrentInput) (w *Work, method string, conf float64, certain bool) {
 	for _, id := range t.MoeTagIDs {
 		if w, err := s.WorkByExternal(ctx, "bangumi_moe", id); err == nil {
@@ -305,11 +307,29 @@ func (s *Store) resolveWork(ctx context.Context, t TorrentInput) (w *Work, metho
 	if tw != nil && unique && titleSeasonFits(t.Title, tw) {
 		return tw, "title", 0.6, true
 	}
+	if !(tw != nil && unique) || !titleSeasonFits(t.Title, tw) {
+		if fw, ok := s.franchiseWork(ctx, t); fw != nil && ok {
+			return fw, "title_franchise", 0.6, true
+		}
+	}
 	if idx, err := s.aliasIndex(ctx); err == nil {
-		// idx is sorted by alias length descending: the first hit is the longest match
-		for _, e := range idx {
-			if strings.Contains(title, e.alias) {
-				return e.work, "alias", 0.7, false
+		// the longest name of any work contained in the title: a guess, never certain.
+		// Several works carry it (remakes, a franchise name shared by its seasons): the
+		// title-fragment guess when it is one of them, else the most recently begun one.
+		if ws := idx.longest(title); len(ws) > 0 {
+			pick := ws[0]
+			for _, w := range ws[1:] {
+				if w.begin > pick.begin {
+					pick = w
+				}
+			}
+			for _, w := range ws {
+				if tw != nil && w.key == tw.Key {
+					pick = w
+				}
+			}
+			if w, err := s.GetWork(ctx, pick.key); err == nil {
+				return w, "alias", 0.7, false
 			}
 		}
 	}
@@ -317,6 +337,194 @@ func (s *Store) resolveWork(ctx context.Context, t TorrentInput) (w *Work, metho
 		return tw, "title", 0.6, false
 	}
 	return nil, "", 0, false
+}
+
+// franchiseWork resolves a title naming a franchise shared by several entries ("Toaru
+// Majutsu no Index" for S1 and Ⅲ): the TV/WEB entries whose names equal a title fragment
+// once season markers are dropped from both (franchiseBase). The torrent's season is the
+// one its title states, else the one all its videos state; none = season 1.
+//
+//  1. Each entry's own titles state its season (workSeason: Ⅱ, 2nd Season, 第2期, S2, a
+//     trailing numeral …; no number = season 1): exactly one entry of that season → it.
+//     A title fragment that extends a name of the entries ("<name> <subtitle>") names
+//     something else: not certain.
+//  2. Otherwise (titles without numbers: arc subtitles, "The Final Season"; or several
+//     entries read as season 1) airing order decides: the entries ordered by start date,
+//     the N-th is season N — only when that position is unambiguous (no other entry starts
+//     the same day) and the entry's own season, if its titles state one, is N. bgm
+//     前传/续集 relations are not used: they follow story order, release names follow
+//     airing order (a later-made prequel is "S2").
+//
+// Picked by airing order, or without a stated season, the entry must not start more than
+// 7 days after the release. Episode numbers are checked per file against the entry's
+// official list (mapFiles); anything else → not certain (decision model).
+func (s *Store) franchiseWork(ctx context.Context, t TorrentInput) (*Work, bool) {
+	cands := s.franchiseCandidates(ctx, t.Title)
+	if len(cands) < 2 {
+		// one entry: nothing shared to resolve — titleWork (exact name, its own season)
+		// decides. ("Ace of Diamond Act II Season 2" must not become "ダイヤのA actⅡ" by
+		// reading its Ⅱ as a season.)
+		return nil, false
+	}
+	// a fragment that is a name of the franchise plus more ("JOJO的奇妙冒险 飙马野郎": the
+	// Steel Ball Run part, not an entry named "JOJO的奇妙冒险") names an entry the shared
+	// name doesn't cover → not certain
+	for _, f := range titleFragments(t.Title) {
+		fb := franchiseBase(f)
+		for _, w := range cands {
+			for _, n := range append([]string{w.Title, w.TitleCN}, w.Aliases...) {
+				if nb := franchiseBase(n); utf8.RuneCountInString(nb) >= 3 && fb != nb && strings.Contains(fb, nb) {
+					return nil, false
+				}
+			}
+		}
+	}
+	paths := make([]string, len(t.Files))
+	for i, f := range t.Files {
+		paths[i] = f.Path
+	}
+	ts := torrentSeason(t.Title, paths)
+	stated := ts > 0
+	if ts == 0 {
+		ts = 1
+	}
+	if ts != math.Trunc(ts) {
+		return nil, false
+	}
+	var hit []*Work
+	for _, w := range cands {
+		if ws := workSeason(w); ws == ts || (ws == 0 && ts == 1) {
+			hit = append(hit, w)
+		}
+	}
+	pick, byOrder := (*Work)(nil), false
+	if len(hit) == 1 {
+		pick = hit[0] // the titles decide
+	} else {
+		pick, byOrder = airingSeason(cands, int(ts)), true
+	}
+	if pick == nil {
+		return nil, false
+	}
+	if byOrder || !stated {
+		rt, _ := s.ReleaseTime(ctx, t.Infohash)
+		if b := parseDay(pick.Begin); !rt.IsZero() && !b.IsZero() && rt.Before(b.Add(-time.Duration(DateEarlyDays)*24*time.Hour)) {
+			return pick, false // released before that entry began
+		}
+	}
+	return pick, true
+}
+
+// torrentSeason: the season a torrent states — its title's, else the one season all its
+// videos state (0 = none).
+func torrentSeason(title string, paths []string) float64 {
+	if ts := ParseTitle(title).Season; ts > 0 {
+		return ts
+	}
+	seen := map[float64]bool{}
+	for _, p := range paths {
+		if IsVideo(p) {
+			seen[StatedSeason(p, 0)] = true
+		}
+	}
+	if len(seen) == 1 {
+		for v := range seen {
+			return v
+		}
+	}
+	return 0
+}
+
+// airingSeason: the n-th of ws in airing order (start date), nil when the position is
+// ambiguous (unknown / equal start dates) or the entry's titles state another season.
+func airingSeason(ws []*Work, n int) *Work {
+	if n < 1 || n > len(ws) {
+		return nil
+	}
+	o := append([]*Work(nil), ws...)
+	for _, w := range o {
+		if parseDay(w.Begin).IsZero() {
+			return nil
+		}
+	}
+	sort.SliceStable(o, func(i, j int) bool { return o[i].Begin < o[j].Begin })
+	w := o[n-1]
+	day := func(x *Work) string { return parseDay(x.Begin).Format("2006-01-02") }
+	if (n > 1 && day(o[n-2]) == day(w)) || (n < len(o) && day(o[n]) == day(w)) {
+		return nil
+	}
+	if ws := workSeason(w); ws != 0 && ws != float64(n) {
+		return nil
+	}
+	return w
+}
+
+// franchiseCandidates: the TV/WEB works (years in the title fitting) with a name equal to a
+// title fragment after franchiseBase (the index only holds TV/WEB works there). Fragments
+// naming different sets of works: nil.
+func (s *Store) franchiseCandidates(ctx context.Context, title string) []*Work {
+	frags := titleFragments(title)
+	if len(frags) == 0 || len(frags) > 20 {
+		return nil
+	}
+	years := titleYears(title)
+	idx, err := s.aliasIndex(ctx)
+	if err != nil {
+		return nil
+	}
+	get := s.workGetter(ctx)
+	// one name, one franchise: every fragment that names entries must name the same ones
+	// ("[ANi] Keroro / KERORO 軍曹☆": "Keroro" is the 2014 series, "KERORO 軍曹☆" the 2026
+	// one — two franchises, nothing to resolve)
+	var out []*Work
+	set := ""
+	for _, f := range frags {
+		bf := franchiseBase(f)
+		if utf8.RuneCountInString(bf) < 3 || (!hasNonASCII(bf) && utf8.RuneCountInString(bf) < 5) {
+			continue
+		}
+		var ws []*Work
+		for _, k := range idx.base[bf] {
+			if w := get(k); w != nil && yearsFitWork(years, w) {
+				ws = append(ws, w)
+			}
+		}
+		if len(ws) == 0 {
+			continue
+		}
+		sort.Slice(ws, func(i, j int) bool { return ws[i].Key < ws[j].Key })
+		keys := make([]string, len(ws))
+		for i, w := range ws {
+			keys[i] = w.Key
+		}
+		if k := strings.Join(keys, ","); set == "" {
+			set, out = k, ws
+		} else if k != set {
+			return nil
+		}
+	}
+	return out
+}
+
+// reFranchiseSeason: the season / part markers of reSeasonWords, without its bracket clause
+// — "(2012)" / "(TV)" qualifiers tell entries apart and stay.
+var reFranchiseSeason = regexp.MustCompile(strings.TrimSuffix(reSeasonWords.String(), `|[（(][^)）]{0,20}[)）]`))
+
+// franchiseBase: a name without its season marker (reFranchiseSeason; Roman numerals Ⅱ…Ⅹ /
+// II…IV; a trailing sequel numeral, sequelNumber).
+func franchiseBase(n string) string {
+	v := strings.TrimSpace(reFranchiseSeason.ReplaceAllString(normWidth(n), " "))
+	if sequelNumber(v) > 0 {
+		_, sz := utf8.DecodeLastRuneInString(v)
+		v = v[:len(v)-sz]
+	}
+	v = strings.Map(func(r rune) rune {
+		if r >= 'Ⅰ' && r <= 'Ⅻ' {
+			return ' '
+		}
+		return r
+	}, v)
+	return normName(v)
 }
 
 // titleSeasonFits: a season marker in the torrent title ("Show S2", "第二季") must be the
@@ -412,60 +620,39 @@ func titleFragments(title string) []string {
 // fragment, or the winner (most fragments, no tie) has a fragment no other work equals —
 // no tie-breaking was needed.
 func (s *Store) titleWork(ctx context.Context, title string) (*Work, bool) {
+	w, unique, _ := s.titleWorks(ctx, title)
+	return w, unique
+}
+
+// titleWorks is titleWork plus every work equal to some fragment (named; years fitting).
+func (s *Store) titleWorks(ctx context.Context, title string) (*Work, bool, []*Work) {
 	frags := titleFragments(title)
 	if len(frags) == 0 || len(frags) > 20 {
-		return nil, false
+		return nil, false, nil
 	}
-	// years in the title ("Ranma 1/2 (2024)", "[2025][41-44]") must fit the work: begun
-	// within a year of one of them, or still running since before it (no remake mix-ups).
-	// Full dates ("整理时间：2026.07.15") are release dates, not title years.
-	var years []int
-	for _, y := range yearsIn(reFileDate.ReplaceAllString(title, " ")) {
-		if y >= 1950 && y <= time.Now().Year()+1 {
-			years = append(years, y)
-		}
+	// years in the title ("Ranma 1/2 (2024)", "[2025][41-44]") must fit the work
+	years := titleYears(title)
+	yearOK := func(w *Work) bool { return yearsFitWork(years, w) }
+	idx, err := s.aliasIndex(ctx)
+	if err != nil {
+		return nil, false, nil
 	}
-	yearOK := func(w *Work) bool {
-		if len(years) == 0 {
-			return true
-		}
-		by := (&famWork{w: w}).beginYear()
-		if by == 0 {
-			return true
-		}
-		for _, y := range years {
-			if d := y - by; (d >= -1 && d <= 1) || (w.End == "" && d > 0) {
-				return true
-			}
-		}
-		return false
-	}
+	get := s.workGetter(ctx)
 	score := map[string]int{}
 	works := map[string]*Work{}
 	only := map[string]bool{} // works that are the single match of some fragment
 	for _, f := range frags {
 		var hit []string
 		nf := normName(f)
-		rows, err := s.R.QueryContext(ctx, `SELECT `+workCols+` FROM works WHERE id IN (SELECT rowid FROM works_fts WHERE works_fts MATCH ? LIMIT 200)`,
-			`"`+strings.ReplaceAll(f, `"`, `""`)+`"`)
-		if err != nil {
-			continue
-		}
-		for rows.Next() {
-			w, err := scanWork(rows)
-			if err != nil || !yearOK(w) {
+		for _, k := range idx.norm[nf] {
+			w := get(k)
+			if w == nil || !yearOK(w) {
 				continue
 			}
-			for _, n := range append([]string{w.Title, w.TitleCN}, w.Aliases...) {
-				if normName(n) == nf {
-					score[w.Key]++
-					works[w.Key] = w
-					hit = append(hit, w.Key)
-					break
-				}
-			}
+			score[w.Key]++
+			works[w.Key] = w
+			hit = append(hit, w.Key)
 		}
-		rows.Close()
 		if len(hit) == 1 {
 			only[hit[0]] = true
 		}
@@ -490,49 +677,191 @@ func (s *Store) titleWork(ctx context.Context, title string) (*Work, bool) {
 		}
 		best = tv
 	}
+	named := make([]*Work, 0, len(works))
+	for _, w := range works {
+		named = append(named, w)
+	}
+	sort.Slice(named, func(i, j int) bool { return named[i].Key < named[j].Key })
 	if len(best) != 1 {
-		return nil, false
+		return nil, false, named
 	}
 	w, err := s.GetWork(ctx, best[0].Key)
 	if err != nil {
-		return nil, false
+		return nil, false, named
 	}
-	return w, unique
+	return w, unique, named
 }
 
-type aliasEntry struct {
-	alias string // lower-cased
-	work  *Work
+// yearsFitWork: years written in a title must fit the work — begun within a year of one of
+// them, or still running since before it (no remake mix-ups). No years: true.
+func yearsFitWork(years []int, w *Work) bool {
+	if len(years) == 0 {
+		return true
+	}
+	by := (&famWork{w: w}).beginYear()
+	if by == 0 {
+		return true
+	}
+	for _, y := range years {
+		if d := y - by; (d >= -1 && d <= 1) || (w.End == "" && d > 0) {
+			return true
+		}
+	}
+	return false
 }
 
-const aliasIndexTTL = 10 * time.Minute
+// titleYears: the years written in a title (full dates are release dates, not years).
+func titleYears(title string) []int {
+	var years []int
+	for _, y := range yearsIn(reFileDate.ReplaceAllString(title, " ")) {
+		if y >= 1950 && y <= time.Now().Year()+1 {
+			years = append(years, y)
+		}
+	}
+	return years
+}
 
-// aliasIndex returns (cached for 10 min) all aliases of works begun in the last 18 months.
-func (s *Store) aliasIndex(ctx context.Context) ([]aliasEntry, error) {
+// aliasIndex: every title / Chinese title / alias (≥ 4 runes, lower-cased) of every work →
+// the works that carry it. Only work keys and start dates are kept (no Work structs: ~31k
+// works / ~120k names stay a few MB).
+type aliasIndex struct {
+	names  map[string][]aliasWork
+	maxLen int // longest name in bytes (bounds the substrings tried per title)
+	// exact-name lookups of the title-fragment match (titleWorks: normName) and of the
+	// franchise match (franchiseCandidates: franchiseBase) → work keys. In memory: the
+	// former works_fts trigram queries per fragment were most of Match's time.
+	norm, base map[string][]string
+}
+
+type aliasWork struct {
+	key   string
+	begin string // begin_at (RFC 3339; "" = unknown)
+}
+
+// aliasIndexMaxBytes: longer names are not indexed (no torrent title quotes a 150-byte
+// alias verbatim; keeps the per-title substring scan bounded).
+const (
+	aliasIndexTTL      = 10 * time.Minute
+	aliasIndexMaxBytes = 150
+)
+
+// aliasIndex returns the name index of all works — every era: old shows are matched as
+// well as current ones. The first call builds it (≈1 s for ~31k works); afterwards an index
+// older than 10 min is rebuilt in the background while the old one keeps serving (Match
+// never waits for a refresh). Adding a work (catalog) drops it: the next call rebuilds.
+func (s *Store) aliasIndex(ctx context.Context) (*aliasIndex, error) {
 	s.aliasMu.Lock()
 	defer s.aliasMu.Unlock()
-	if s.aliases != nil && time.Since(s.aliasAt) < aliasIndexTTL {
-		return s.aliases, nil
+	if old := s.aliases; old != nil {
+		if time.Since(s.aliasAt) >= aliasIndexTTL {
+			s.aliasAt = time.Now() // one refresh at a time
+			go func() {
+				idx, err := s.buildAliasIndex(context.Background())
+				s.aliasMu.Lock()
+				defer s.aliasMu.Unlock()
+				if err == nil && s.aliases == old { // not dropped meanwhile
+					s.aliases, s.aliasAt = idx, time.Now()
+				}
+			}()
+		}
+		return old, nil
 	}
-	from := time.Now().AddDate(-1, -6, 0).UTC().Format(time.RFC3339)
-	to := time.Now().AddDate(0, 1, 0).UTC().Format(time.RFC3339)
-	works, err := s.WorksBetween(ctx, from, to)
+	idx, err := s.buildAliasIndex(ctx)
 	if err != nil {
 		return nil, err
 	}
-	idx := []aliasEntry{}
-	for _, w := range works {
+	s.aliases, s.aliasAt = idx, time.Now()
+	return idx, nil
+}
+
+func (s *Store) buildAliasIndex(ctx context.Context) (*aliasIndex, error) {
+	rows, err := s.R.QueryContext(ctx, `SELECT key, title, title_cn, aliases, begin_at, type, platform FROM works`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	idx := &aliasIndex{names: make(map[string][]aliasWork, 1<<17), norm: make(map[string][]string, 1<<17), base: make(map[string][]string, 1<<15)}
+	addKey := func(m map[string][]string, n, key string) {
+		if n == "" {
+			return
+		}
+		if l := m[n]; len(l) == 0 || l[len(l)-1] != key {
+			m[n] = append(l, key)
+		}
+	}
+	for rows.Next() {
+		var key, title, cn, aliases, begin, typ string
+		var platform int
+		if err := rows.Scan(&key, &title, &cn, &aliases, &begin, &typ, &platform); err != nil {
+			return nil, err
+		}
+		var al []string
+		_ = json.Unmarshal([]byte(aliases), &al)
+		k := strings.ToLower(typ)
+		if k == "" {
+			k = platformType[platform]
+		}
+		series := k == "tv" || k == "web" // franchise entries (franchiseCandidates)
 		seen := map[string]bool{}
-		for _, a := range append([]string{w.Title, w.TitleCN}, w.Aliases...) {
+		for _, a := range append([]string{title, cn}, al...) {
+			addKey(idx.norm, normName(a), key)
+			if series {
+				addKey(idx.base, franchiseBase(a), key)
+			}
 			a = strings.ToLower(strings.TrimSpace(a))
-			if utf8.RuneCountInString(a) < 4 || seen[a] {
+			if utf8.RuneCountInString(a) < 4 || len(a) > aliasIndexMaxBytes || seen[a] {
 				continue
 			}
 			seen[a] = true
-			idx = append(idx, aliasEntry{a, w})
+			idx.names[a] = append(idx.names[a], aliasWork{key, begin})
+			if len(a) > idx.maxLen {
+				idx.maxLen = len(a)
+			}
 		}
 	}
-	sort.SliceStable(idx, func(i, j int) bool { return len(idx[i].alias) > len(idx[j].alias) })
-	s.aliases, s.aliasAt = idx, time.Now()
-	return idx, nil
+	return idx, rows.Err()
+}
+
+// workGetter: GetWork with a per-call cache (nil: no such work).
+func (s *Store) workGetter(ctx context.Context) func(string) *Work {
+	cache := map[string]*Work{}
+	return func(k string) *Work {
+		if w, ok := cache[k]; ok {
+			return w
+		}
+		w, err := s.GetWork(ctx, k)
+		if err != nil {
+			w = nil
+		}
+		cache[k] = w
+		return w
+	}
+}
+
+// longest returns the works of the longest indexed name contained in title (lower-cased),
+// nil if none: map lookups of the title's substrings (at rune boundaries, ≤ maxLen bytes),
+// longest first — O(len(title) × maxLen), independent of the number of works.
+func (x *aliasIndex) longest(title string) []aliasWork {
+	var starts []int
+	for i := range title {
+		starts = append(starts, i)
+	}
+	ends := append(starts[1:len(starts):len(starts)], len(title))
+	best, bestLen := []aliasWork(nil), 0
+	for si, i := range starts {
+		for ei := len(ends) - 1; ei >= si; ei-- {
+			j := ends[ei]
+			if j-i <= bestLen {
+				break // shorter than the best hit
+			}
+			if j-i > x.maxLen {
+				continue
+			}
+			if ws, ok := x.names[title[i:j]]; ok {
+				best, bestLen = ws, j-i
+				break
+			}
+		}
+	}
+	return best
 }
