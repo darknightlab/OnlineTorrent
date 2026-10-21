@@ -12,6 +12,8 @@ Artplayer.CONTEXTMENU = false
 // 解码失败不自动重连：交给下方的编码提示（重试同一地址只会再次失败）；流卡死由 useStallWatchdog 处理
 Artplayer.RECONNECT_TIME_MAX = 0
 Artplayer.SEEK_STEP = 5
+// 移动端左右滑动整个播放器宽度移动 1/12 视频时长（默认 0.5）
+Artplayer.TOUCH_MOVE_RATIO = 1 / 12
 
 const RATES = [2, 1.5, 1.25, 1, 0.75, 0.5]
 const rateLabel = (r: number) => (r === 1 ? "倍速" : `${r}x`)
@@ -84,6 +86,7 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
     mutex: true,
     backdrop: true,
     gesture: true,
+    fastForward: true,
     moreVideoAttr: { preload: "metadata" },
     icons: {
       state: `<span class="ot-state">${ICON_PLAY}</span>`,
