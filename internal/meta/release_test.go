@@ -225,3 +225,108 @@ func TestRuleDateGate(t *testing.T) {
 		t.Error("episode + subtitles counted as a batch")
 	}
 }
+
+// The release-time gates only stop NEW mappings: an existing mapping that the rules give
+// again is kept (also by Reclassify), manual / decision-model rows are never touched, and a
+// new file of the same torrent is gated.
+func TestRuleGateOnlyNewMappings(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	if _, err := s.W.ExecContext(ctx, `INSERT INTO works(id,key,title,title_cn,aliases,type,begin_at,end_at,eps,updated_at) VALUES
+		(2,'bgm:2','ハルヒ','凉宫春日的忧郁','["Suzumiya Haruhi no Yuuutsu"]','tv','2006-04-02T00:00:00Z','2006-07-02T00:00:00Z',14,'x')`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 14; i++ {
+		_, _ = s.W.ExecContext(ctx, `INSERT INTO episodes(bgm_id,work_key,type,sort,airdate) VALUES(?,'bgm:2',0,?,?)`, 200+i, i, time.Date(2006, 4, 2+7*(i-1), 0, 0, 0, 0, time.UTC).Format("2006-01-02"))
+	}
+	ep3 := FileInput{Index: 0, Path: "[G] Suzumiya Haruhi no Yuuutsu - 03 [1080p].mkv", Size: 1}
+	in := TorrentInput{Infohash: "aa", Title: "[G] Suzumiya Haruhi no Yuuutsu - 03 [1080p]", Source: "Nyaa", SourceKind: "rss", PublishedAt: "2006-04-17T00:00:00Z", Files: []FileInput{ep3}}
+	if err := s.Match(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	row := func(idx int) FileMap {
+		tm, _ := s.GetTorrentMap(ctx, "aa")
+		for _, f := range tm.Files {
+			if f.Index == idx {
+				return f
+			}
+		}
+		return FileMap{}
+	}
+	pending := func() int {
+		_, n, _ := s.ListClefDecisions(ctx, "pending", "aa", 0, 10)
+		return n
+	}
+	if f := row(0); f.Work == nil || f.EpisodeKey != "3" {
+		t.Fatalf("in time: %+v", f)
+	}
+	// the release time changes to 20 years later (the gate would now fail for a single
+	// episode): re-matched and reclassified, the mapping stays, nothing is queued
+	_, _ = s.W.ExecContext(ctx, `UPDATE torrents SET published_at = '2026-10-20T00:00:00Z' WHERE infohash = 'aa'`)
+	if err := s.Match(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Reclassify(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if f := row(0); f.Work == nil || f.EpisodeKey != "3" || pending() != 0 {
+		t.Fatalf("existing mapping after re-match: %+v pending %d", f, pending())
+	}
+	// the same without any release time
+	_, _ = s.W.ExecContext(ctx, `UPDATE torrents SET published_at = '', source = 'user', source_kind = 'user' WHERE infohash = 'aa'`)
+	in2 := in
+	in2.Source, in2.SourceKind, in2.PublishedAt = "user", "user", ""
+	if err := s.Match(ctx, in2); err != nil {
+		t.Fatal(err)
+	}
+	if f := row(0); f.Work == nil || pending() != 0 {
+		t.Fatalf("no release time, existing mapping: %+v pending %d", f, pending())
+	}
+	_, _ = s.W.ExecContext(ctx, `UPDATE torrents SET published_at = '2006-04-17T00:00:00Z', source = 'Nyaa', source_kind = 'rss' WHERE infohash = 'aa'`)
+
+	// a new file in the same torrent is gated: episode 14 "released" 2006-04-17, months
+	// before it aired → review; episode 3 stays
+	ep14 := FileInput{Index: 1, Path: "[G] Suzumiya Haruhi no Yuuutsu - 14 [1080p].mkv", Size: 1}
+	in3 := in
+	in3.Files = []FileInput{ep3, ep14}
+	if err := s.Match(ctx, in3); err != nil {
+		t.Fatal(err)
+	}
+	if f := row(1); f.Work != nil {
+		t.Errorf("new pre-air file mapped: %+v", f)
+	}
+	if ds, _, _ := s.ListClefDecisions(ctx, "pending", "aa", 0, 10); len(ds) != 1 || ds[0].FileIndex != 1 || !strings.HasPrefix(ds[0].Reason, ReasonDateMismatch) {
+		t.Errorf("new file review: %+v", ds)
+	}
+	if f := row(0); f.Work == nil || f.EpisodeKey != "3" {
+		t.Errorf("episode 3 after the new file: %+v", f)
+	}
+
+	// manual and decision-model rows: untouched, no review queued, even when the gate fails
+	_, _ = s.W.ExecContext(ctx, `UPDATE torrent_files SET status = 'verified', method = 'manual', work_key = NULL, episode = NULL WHERE infohash = 'aa' AND file_index = 0`)
+	_, _ = s.W.ExecContext(ctx, `UPDATE torrent_files SET method = ?, work_key = 'bgm:2', episode = 1 WHERE infohash = 'aa' AND file_index = 1`, MethodClef)
+	_, _ = s.W.ExecContext(ctx, `DELETE FROM clef_decisions`)
+	_, _ = s.W.ExecContext(ctx, `UPDATE torrents SET published_at = '2026-10-20T00:00:00Z' WHERE infohash = 'aa'`)
+	_, _ = s.W.ExecContext(ctx, `UPDATE torrents SET published_at = '2006-04-17T00:00:00Z' WHERE infohash = 'aa'`) // ep 14 still early
+	if err := s.Match(ctx, in3); err != nil {
+		t.Fatal(err)
+	}
+	if n := pending(); n != 0 {
+		t.Errorf("reviews queued for untouched rows (ep 14 early): %d", n)
+	}
+	_, _ = s.W.ExecContext(ctx, `UPDATE torrents SET published_at = '2026-10-20T00:00:00Z' WHERE infohash = 'aa'`)
+	in4 := in3
+	in4.Files = []FileInput{ep3}
+	if err := s.Match(ctx, in4); err != nil {
+		t.Fatal(err)
+	}
+	if f := row(0); f.Work != nil || f.Status != "verified" || f.Method != "manual" {
+		t.Errorf("manual row: %+v", f)
+	}
+	if f := row(1); f.Work == nil || f.Method != MethodClef || f.EpisodeKey != "1" {
+		t.Errorf("decision-model row: %+v", f)
+	}
+	if n := pending(); n != 0 {
+		t.Errorf("reviews queued for untouched rows: %d", n)
+	}
+}

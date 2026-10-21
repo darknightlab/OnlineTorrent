@@ -64,32 +64,16 @@ func (s *Store) Match(ctx context.Context, t TorrentInput) error {
 	// gate fails (日期不符; CheckDateFull, as for the decision model): released more than 7
 	// days before the episode aired ("[LoliHouse] Show - 05" submitted before episode 5 aired
 	// can't be real), or — single-episode torrents (one video file) only — more than 30
-	// days after.
-	rt, by := s.ReleaseTime(ctx, t.Infohash)
-	noRelease := rt.IsZero()
-	videos := 0
-	for _, f := range t.Files {
-		if IsVideo(f.Path) {
-			videos++
-		}
-	}
+	// days after. These gates are for NEW mappings only (owner decision): a file whose
+	// stored row already maps it to the same work and episode keeps it (a resubmission,
+	// a re-delivered feed item or re-ingested qB metadata changes the release time), and
+	// rows the gate can't change anyway (manual / verified, decision-model) are left alone.
+	gate := s.newRuleGate(ctx, t.Infohash, len(t.Files), func(i int) string { return t.Files[i].Path })
 	queue := false
 	for i, f := range t.Files {
 		kind, wk, ep, conf, m := res[i].kind, res[i].work, res[i].ep, res[i].conf, res[i].method
 		if wkey, ok := wk.(string); ok && !res[i].queue {
-			reason := ""
-			if noRelease {
-				reason = ReasonMissingRelease
-			} else {
-				k, _ := KeyOfFile(kind, ep)
-				if k.Kind != "" {
-					k, _ = s.ValidEpisode(ctx, wkey, k)
-				}
-				if c := s.CheckDateFull(ctx, wkey, k, rt, by, videos >= 2); !c.OK {
-					reason = ReasonDateMismatch + ": " + c.Detail
-				}
-			}
-			if reason != "" {
+			if reason := gate.check(ctx, f.Index, wkey, kind, ep); reason != "" {
 				if err := s.queueRuleReview(ctx, t.Infohash, f.Index, f.Path, wkey, kind, ep, conf, reason); err != nil {
 					return err
 				}
@@ -118,6 +102,80 @@ func (s *Store) Match(ctx context.Context, t TorrentInput) error {
 		}
 	}
 	return s.refreshFTS(ctx, t.Infohash)
+}
+
+// ruleGate applies the release-time gates to certain rule mappings of one torrent.
+type ruleGate struct {
+	s        *Store
+	released time.Time
+	by       string
+	batch    bool // 2 or more video files: no late limit
+	stored   map[int]storedFile
+}
+
+func (s *Store) newRuleGate(ctx context.Context, ih string, n int, path func(int) string) *ruleGate {
+	g := &ruleGate{s: s, stored: map[int]storedFile{}}
+	g.released, g.by = s.ReleaseTime(ctx, ih)
+	videos := 0
+	for i := 0; i < n; i++ {
+		if IsVideo(path(i)) {
+			videos++
+		}
+	}
+	g.batch = videos >= 2
+	if rows, err := s.R.QueryContext(ctx, `SELECT file_index, path, kind, work_key, episode, status, method FROM torrent_files WHERE infohash = ?`, ih); err == nil {
+		for rows.Next() {
+			var f storedFile
+			if rows.Scan(&f.index, &f.path, &f.kind, &f.work, &f.episode, &f.status, &f.method) == nil {
+				g.stored[f.index] = f
+			}
+		}
+		rows.Close()
+	}
+	return g
+}
+
+// check returns why the mapping of file idx to (wkey, kind, ep) may not be applied
+// automatically ("" = it may): no release time, or the date gate (CheckDateFull). A mapping
+// the stored row already has (same work, same canonical key) and rows that aren't automatic
+// rule rows are not gated.
+func (g *ruleGate) check(ctx context.Context, idx int, wkey, kind string, ep *float64) string {
+	if f, ok := g.stored[idx]; ok {
+		if f.status != "auto" || f.method == MethodClef {
+			return "" // not rewritten anyway
+		}
+		if f.work.Valid && f.work.String == wkey && g.sameKey(ctx, wkey, kind, ep, f) {
+			return ""
+		}
+	}
+	if g.released.IsZero() {
+		return ReasonMissingRelease
+	}
+	k, _ := KeyOfFile(kind, ep)
+	if k.Kind != "" {
+		k, _ = g.s.ValidEpisode(ctx, wkey, k)
+	}
+	if c := g.s.CheckDateFull(ctx, wkey, k, g.released, g.by, g.batch); !c.OK {
+		return ReasonDateMismatch + ": " + c.Detail
+	}
+	return ""
+}
+
+// sameKey: the stored row's episode key equals the new one after the split-cour shift.
+func (g *ruleGate) sameKey(ctx context.Context, wkey, kind string, ep *float64, f storedFile) bool {
+	var old *float64
+	if f.episode.Valid {
+		v := f.episode.Float64
+		old = &v
+	}
+	nk, nok := KeyOfFile(kind, ep)
+	ok2, ook := KeyOfFile(f.kind, old)
+	if !nok || !ook {
+		return !nok && !ook && kind == f.kind
+	}
+	nc, _ := g.s.ValidEpisode(ctx, wkey, nk)
+	oc, _ := g.s.ValidEpisode(ctx, wkey, ok2)
+	return nc == oc
 }
 
 // fileMapping: only episodes and specials (sp/op/ed/pv/cm, see MappableKind) are mapped to

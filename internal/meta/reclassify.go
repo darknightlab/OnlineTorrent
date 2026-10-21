@@ -105,9 +105,6 @@ func (s *Store) Reclassify(ctx context.Context) (int, error) {
 }
 
 func (s *Store) reclassifyTorrent(ctx context.Context, ih, title string) (int, error) {
-	if rt, _ := s.ReleaseTime(ctx, ih); rt.IsZero() {
-		return 0, nil // no release time: never mapped automatically (Match queued a review)
-	}
 	rows, err := s.R.QueryContext(ctx, `SELECT file_index, path, kind, work_key, episode, status, method FROM torrent_files WHERE infohash = ? ORDER BY file_index`, ih)
 	if err != nil {
 		return 0, err
@@ -165,6 +162,10 @@ func (s *Store) reclassifyTorrent(ctx context.Context, ih, title string) (int, e
 	n := 0
 	now := store.Now()
 	res := s.mapFiles(ctx, paths, title, work, method, wconf, sure)
+	// the release-time gates of Match (ruleGate) for new mappings; a stored mapping that
+	// stays the same is never gated, and a gated new result leaves the row as it is (only
+	// the review decision is queued: Reclassify never unmaps for a gate)
+	gate := s.newRuleGate(ctx, ih, len(files), func(i int) string { return files[i].path })
 	for i, f := range files {
 		// existing rows are only rewritten by certain results (an uncertain one leaves the
 		// stored mapping as it is), never decision-model mappings
@@ -180,6 +181,14 @@ func (s *Store) reclassifyTorrent(ctx context.Context, ih, title string) (int, e
 		sameEp := (ep == nil && !f.episode.Valid) || (ep != nil && f.episode.Valid && *ep == f.episode.Float64)
 		if kind == f.kind && newWK == oldWK && sameEp {
 			continue
+		}
+		if newWK != "" {
+			if reason := gate.check(ctx, f.index, newWK, kind, ep); reason != "" {
+				if err := s.queueRuleReview(ctx, ih, f.index, f.path, newWK, kind, ep, conf, reason); err != nil {
+					return n, err
+				}
+				continue
+			}
 		}
 		if _, err := s.W.ExecContext(ctx, `UPDATE torrent_files SET kind=?, work_key=?, episode=?, confidence=?, method=?, updated_at=? WHERE infohash=? AND file_index=? AND status='auto'`,
 			kind, wk, ep, conf, m, now, ih, f.index); err != nil {
