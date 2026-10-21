@@ -134,8 +134,7 @@
   }
 }
 
-/* 文字按钮：弹幕、字幕、资源、倍速（同样的字号与粗细） */
-.art-video-player .art-control-danmaku,
+/* 文字按钮：字幕、资源、倍速（同样的字号与粗细） */
 .art-video-player .art-control-subtitle,
 .art-video-player .art-control-panel,
 .art-video-player .art-control-rate {
@@ -172,12 +171,7 @@
   pointer-events: none;
 }
 
-/* 弹幕关闭：按钮变暗加删除线 */
-.art-video-player.art-video-player .art-control.art-control-danmaku.ot-off {
-  opacity: 0.5;
-  text-decoration: line-through;
-}
-/* 弹幕插件自带的发送框 / 设置面板 / 开关不用（控制栏只有「弹幕」按钮），也不让它给播放器加下边距 */
+/* 弹幕插件自带的发送框 / 设置面板 / 开关不用（在播放器下方的弹幕栏），也不让它给播放器加下边距 */
 .art-video-player .artplayer-plugin-danmuku {
   display: none !important;
 }

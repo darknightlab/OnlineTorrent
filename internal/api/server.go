@@ -335,6 +335,20 @@ func (l *limiter) allow(key string, burst float64, every time.Duration) bool {
 	return true
 }
 
+// allow2 takes a token from two buckets at once, only if both have one.
+func (l *limiter) allow2(k1 string, burst1 float64, every1 time.Duration, k2 string, burst2 float64, every2 time.Duration) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	b1, b2 := l.get(k1, burst1, every1, now), l.get(k2, burst2, every2, now)
+	if b1.tokens < 1 || b2.tokens < 1 {
+		return false
+	}
+	b1.tokens--
+	b2.tokens--
+	return true
+}
+
 // peek reports whether a token is available without consuming it.
 func (l *limiter) peek(key string, burst float64, every time.Duration) bool {
 	l.mu.Lock()

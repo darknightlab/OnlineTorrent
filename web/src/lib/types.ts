@@ -209,12 +209,25 @@ export interface EpisodeFile {
   swarm?: SwarmStats | null
 }
 
-/** 一条弹幕：[时间（秒）, 模式（1 滚动 / 4 底部 / 5 顶部）, 颜色 0xRRGGBB, 文字] */
-export type DanmakuItem = [number, number, number, string]
+/** 一条弹幕：[时间（秒）, 模式（1 滚动 / 4 底部 / 5 顶部）, 颜色 0xRRGGBB, 文字]，当前用户自己发送的末尾多一个 1 */
+export type DanmakuItem = [number, number, number, string] | [number, number, number, string, 1]
 
 /** GET /subjects/{provider}/{id}/episodes/{key}/danmaku；没有弹幕时 items 为空 */
 export interface DanmakuResponse {
   items: DanmakuItem[]
+}
+
+/** POST /subjects/{provider}/{id}/episodes/{key}/danmaku */
+export interface SendDanmakuRequest {
+  /** 视频中的时间（秒） */
+  time: number
+  /** 视频时长（秒，服务端只做合理性检查） */
+  duration: number
+  /** 1 滚动（默认）、4 底部、5 顶部 */
+  mode?: 1 | 4 | 5
+  /** 0xRRGGBB，默认白色 */
+  color?: number
+  text: string
 }
 
 /** GET /subjects/{provider}/{id}/episodes/{key}；items 按发布时间倒序，由前端按推荐规则排序（lib/rank.ts） */

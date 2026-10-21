@@ -279,6 +279,23 @@ CREATE TABLE danmaku (
 	fetched_at TEXT NOT NULL,
 	PRIMARY KEY (work_key, episode, platform)
 );
+`,
+	// 14: danmaku sent by users (danmaku.go), per episode like the collected ones; merged into
+	// GET …/danmaku. user_id = app user id (otd.db, no FK).
+	`
+CREATE TABLE user_danmaku (
+	id         INTEGER PRIMARY KEY,
+	work_key   TEXT NOT NULL,
+	episode    TEXT NOT NULL,   -- episode key (canonical)
+	user_id    INTEGER NOT NULL,
+	time       REAL NOT NULL,   -- seconds from the start of the episode
+	mode       INTEGER NOT NULL, -- 1 scroll, 4 bottom, 5 top
+	color      INTEGER NOT NULL, -- 0xRRGGBB
+	text       TEXT NOT NULL,
+	created_at TEXT NOT NULL
+);
+CREATE INDEX user_danmaku_episode ON user_danmaku(work_key, episode);
+CREATE INDEX user_danmaku_user ON user_danmaku(user_id, created_at);
 `}
 
 // Store is the meta database.

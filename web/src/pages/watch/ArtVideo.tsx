@@ -7,6 +7,8 @@ import { loadPref, prefFor, savePref } from "@/player/subs/prefs"
 import { byteToTimeFraction } from "@/lib/timemap"
 import type { TimeMapResult } from "@/player/types"
 import { api } from "@/lib/api"
+import { DEFAULT_DANMAKU_SETTINGS, type DanmakuSettings } from "@/lib/danmaku"
+import type { DanmakuItem } from "@/lib/types"
 
 /** 本集弹幕：单集页传入（条目 + 集的键） */
 export interface DanmakuSource {
@@ -21,8 +23,6 @@ const loadDanmaku = () =>
     danmakuModule = null
     throw e
   }))
-/** 「弹幕」开关：默认开，本次会话内沿用（换集、换资源不变） */
-let danmakuOn = true
 
 let setupModule: Promise<typeof import("./artplayer-setup")> | null = null
 /** 加载 ArtPlayer（单独的 chunk，含样式）；Player 挂载时调用以预加载 */
@@ -54,8 +54,12 @@ export interface ArtVideoProps {
   timeMap?: () => Promise<TimeMapResult | null>
   /** 当前文件长度（字节），与 timeMap 一起使用 */
   fileLength?: number
-  /** 本集弹幕（只在单集页、正在播放本集的文件时）；有弹幕时控制栏出现「弹幕」开关 */
+  /** 本集弹幕（只在单集页、正在播放本集的文件时） */
   danmaku?: DanmakuSource | null
+  /** 弹幕显示设置（弹幕栏） */
+  danmakuSettings?: DanmakuSettings
+  /** 由本组件填入：把自己刚发送的弹幕显示到播放器里（没有弹幕层时为 null） */
+  danmakuEmit?: React.RefObject<((item: DanmakuItem) => void) | null>
 }
 
 /**
@@ -63,14 +67,14 @@ export interface ArtVideoProps {
  * StrictMode 下 effect 会执行两次：第一次的实例在清理时 destroy（移除 DOM 与事件，释放流请求），第二次重新创建；
  * 模块尚未加载完就被清理时不会创建实例。
  */
-export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, subtitles, onLog, timeMap, fileLength, danmaku }: ArtVideoProps) {
+export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, subtitles, onLog, timeMap, fileLength, danmaku, danmakuSettings, danmakuEmit }: ArtVideoProps) {
   const box = useRef<HTMLDivElement>(null)
   const handle = useRef<ArtHandle | null>(null)
   const [ready, setReady] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   // 回调与动态数据用 ref 读取最新值，不触发重建
-  const latest = useRef({ poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, onLog, timeMap, fileLength })
-  latest.current = { poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, onLog, timeMap, fileLength }
+  const latest = useRef({ poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, onLog, timeMap, fileLength, danmakuSettings, danmakuEmit })
+  latest.current = { poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, onLog, timeMap, fileLength, danmakuSettings, danmakuEmit }
   const hasPanel = !!onPanel
 
   useEffect(() => {
@@ -195,11 +199,12 @@ export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetada
     }
   }, [ready, subtitles, url])
 
-  // 弹幕：向服务器要本集弹幕（第一次打开该集时服务器才采集，可能要等十几秒），有弹幕时才加载弹幕插件
-  // 并在控制栏加「弹幕」开关
+  // 弹幕（单集页）：加载弹幕插件并向服务器要本集弹幕（第一次打开该集时服务器才采集，可能要等十几秒）；
+  // 没有弹幕时插件也在，自己发送的弹幕（danmakuEmit）照样显示。开关与设置在播放器下方的弹幕栏
   const dmProvider = danmaku?.provider
   const dmId = danmaku?.id
   const dmEpisode = danmaku?.episode
+  const [dmReady, setDmReady] = useState(false)
   useEffect(() => {
     const h = handle.current
     if (!ready || !h || !url || !dmProvider || !dmId || !dmEpisode) return
@@ -207,32 +212,37 @@ export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetada
     let cancelled = false
     let shown: typeof import("./danmaku") | null = null
     const log = (level: "info" | "warn", msg: string) => latest.current.onLog?.(level, msg)
-    api
-      .danmaku(dmProvider, dmId, dmEpisode, ctl.signal)
-      .then(async (r) => {
-        if (cancelled || !r.items.length) return
-        const m = await loadDanmaku()
-        if (cancelled || h.art.isDestroy) return
-        m.showDanmaku(h.art, r.items, danmakuOn)
-        shown = m
-        const toggle = () => {
-          danmakuOn = !danmakuOn
-          m.setDanmakuVisible(h.art, danmakuOn)
-          h.setDanmakuButton(danmakuOn, toggle)
-        }
-        h.setDanmakuButton(danmakuOn, toggle)
-        log("info", `弹幕：${r.items.length} 条`)
-      })
-      .catch((e) => {
+    const items = api.danmaku(dmProvider, dmId, dmEpisode, ctl.signal).then(
+      (r) => r.items,
+      (e) => {
         if (!cancelled && (e as Error)?.name !== "AbortError") log("warn", `弹幕加载失败：${String((e as Error)?.message ?? e)}`)
+        return [] as DanmakuItem[]
+      },
+    )
+    Promise.all([loadDanmaku(), items])
+      .then(([m, list]) => {
+        if (cancelled || h.art.isDestroy) return
+        m.showDanmaku(h.art, list, latest.current.danmakuSettings ?? DEFAULT_DANMAKU_SETTINGS)
+        shown = m
+        if (latest.current.danmakuEmit) latest.current.danmakuEmit.current = (item) => m.emitDanmaku(h.art, item)
+        setDmReady(true)
+        log("info", `弹幕：${list.length} 条`)
       })
+      .catch((e) => log("warn", `弹幕插件加载失败：${String((e as Error)?.message ?? e)}`))
     return () => {
       cancelled = true
       ctl.abort()
       shown?.clearDanmaku(h.art)
-      h.setDanmakuButton(null, () => {})
+      if (latest.current.danmakuEmit) latest.current.danmakuEmit.current = null
+      setDmReady(false)
     }
   }, [ready, url, dmProvider, dmId, dmEpisode])
+  // 显示设置（弹幕栏里修改）立即生效
+  useEffect(() => {
+    const h = handle.current
+    if (!dmReady || !h || !danmakuSettings) return
+    void loadDanmaku().then((m) => m.applyDanmakuSettings(h.art, danmakuSettings))
+  }, [dmReady, danmakuSettings])
 
   return (
     <>

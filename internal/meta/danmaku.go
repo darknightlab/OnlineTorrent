@@ -192,3 +192,39 @@ func (s *Store) SaveDanmaku(ctx context.Context, workKey string, ep EpisodeKey, 
 	n, _ := res.RowsAffected()
 	return n > 0, nil
 }
+
+// UserComment is a danmaku sent by a user of the site.
+type UserComment struct {
+	Comment
+	ID        int64
+	UserID    int64
+	CreatedAt string
+}
+
+// AddUserDanmaku stores a danmaku sent by a user (validated by the caller).
+func (s *Store) AddUserDanmaku(ctx context.Context, workKey string, ep EpisodeKey, userID int64, c Comment) (int64, error) {
+	res, err := s.W.ExecContext(ctx, `INSERT INTO user_danmaku(work_key,episode,user_id,time,mode,color,text,created_at) VALUES(?,?,?,?,?,?,?,?)`,
+		workKey, ep.String(), userID, c.Time, c.Mode, c.Color, c.Text, store.Now())
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// UserDanmaku lists the danmaku users sent for an episode (oldest first).
+func (s *Store) UserDanmaku(ctx context.Context, workKey string, ep EpisodeKey) ([]UserComment, error) {
+	rows, err := s.R.QueryContext(ctx, `SELECT id,user_id,time,mode,color,text,created_at FROM user_danmaku WHERE work_key = ? AND episode = ? ORDER BY id`, workKey, ep.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []UserComment
+	for rows.Next() {
+		var u UserComment
+		if err := rows.Scan(&u.ID, &u.UserID, &u.Time, &u.Mode, &u.Color, &u.Text, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, u)
+	}
+	return out, rows.Err()
+}

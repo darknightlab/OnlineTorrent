@@ -24,6 +24,9 @@ import { loadEngine } from "@/player/engine"
 import { isPlayable, likelyUnsupported, type Engine, type FileKind, type FileSnap, type LogLevel, type Session, type TorrentSnap } from "@/player/types"
 import { segmentCount } from "@/lib/pieces"
 import { ArtVideo, loadArtplayer, type DanmakuSource } from "./ArtVideo"
+import { DanmakuBar } from "./DanmakuBar"
+import { loadDanmakuSettings, saveDanmakuSettings, type DanmakuSettings } from "@/lib/danmaku"
+import type { DanmakuItem } from "@/lib/types"
 import { PlayerSpinner } from "@/components/PlayerSpinner"
 import { useWebseedEvents } from "./useWebseedEvents"
 import { useStallWatchdog } from "./useStallWatchdog"
@@ -174,6 +177,17 @@ export function Player({
   const canReport = can(me.data, PERM.report)
   const canTorrentFile = can(me.data, PERM.torrentFile) && can(me.data, PERM.torrentStatus)
   const canDanmaku = can(me.data, PERM.danmaku)
+  const canSendDanmaku = can(me.data, PERM.danmakuSend)
+  // 弹幕显示设置（每个浏览器保存）与「把自己发送的弹幕显示到播放器」（ArtVideo 填入）
+  const [dmSettings, setDmSettings] = useState<DanmakuSettings>(loadDanmakuSettings)
+  const changeDmSettings = useCallback((patch: Partial<DanmakuSettings>) => {
+    setDmSettings((cur) => {
+      const v = { ...cur, ...patch }
+      saveDanmakuSettings(v)
+      return v
+    })
+  }, [])
+  const dmEmit = useRef<((item: DanmakuItem) => void) | null>(null)
 
   const meta = play?.meta ?? null
   const metaPath = meta ? subjectPath(meta) : null
@@ -443,6 +457,13 @@ export function Player({
   )
 
   const loginHref = `/login?next=${encodeURIComponent(here)}`
+  // 发送弹幕：当前播放位置；成功后马上显示在播放器里（带边框）
+  const sendDanmaku = async (text: string) => {
+    const v = videoRef.current
+    if (!danmaku || !v || !(v.duration > 0) || !Number.isFinite(v.duration)) throw new Error("视频开始播放后才能发送弹幕")
+    const r = await api.sendDanmaku(danmaku.provider, danmaku.id, danmaku.episode, { time: v.currentTime, duration: v.duration, text })
+    dmEmit.current?.(r.item)
+  }
   const compactActions = (
     <div className="flex shrink-0 items-center sm:gap-1">
       <ActionButton icon={Share2} label="分享" onClick={share} />
@@ -514,6 +535,8 @@ export function Player({
                 timeMap={session?.timeMap && current !== null ? () => session.timeMap!(current) : undefined}
                 fileLength={file?.length}
                 danmaku={url && canDanmaku && danmaku && danmaku.file === current ? danmaku : null}
+                danmakuSettings={dmSettings}
+                danmakuEmit={dmEmit}
               />
             ) : file.kind === "audio" ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-gradient-to-br from-primary/40 to-accent/40 p-6">
@@ -575,6 +598,18 @@ export function Player({
             )}
           </div>
         </div>
+
+        {/* 弹幕栏（单集页）：播放器与标题之间 */}
+        {danmaku && canDanmaku && (!file || file.kind === "video") && (
+          <DanmakuBar
+            settings={dmSettings}
+            onSettings={changeDmSettings}
+            canSend={canSendDanmaku}
+            loggedIn={loggedIn}
+            loginHref={loginHref}
+            onSend={sendDanmaku}
+          />
+        )}
 
         {/* 编码提示 */}
         {(mediaError || noPicture) && file?.kind === "video" ? (
