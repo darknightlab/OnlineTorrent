@@ -112,6 +112,12 @@ func (s *Store) episodeOffset(ctx context.Context, workKey string) (float64, flo
 	if mn.Valid && mn.Float64 > 1 && mn.Float64 == math.Trunc(mn.Float64) {
 		e.min, e.count = mn.Float64, n
 	}
+	// Undated overlapping placeholders are not the beginning of a split entry's real
+	// continuation (e.g. 13/13.5 placeholders before dated 14–25). Only a proven
+	// continuous official spine across the corresponding entries can override MIN(sort).
+	if _, first, count, ok := s.officialContinuation(ctx, workKey); ok {
+		e.min, e.count = first, float64(count)
+	}
 	episodeOffsets.Store(workKey, e)
 	return e.min, e.count
 }

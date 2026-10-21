@@ -805,7 +805,7 @@ func parseName(name string, allowBare bool) analysis {
 	trustTypes(toks)
 	a := analysis{toks: toks, numIdx: -1}
 	for _, t := range toks {
-		if t.cat == cSeason && t.hasNum && a.season == 0 {
+		if t.cat == cSeason && t.hasNum && a.season == 0 && !reCourPart.MatchString(t.text) {
 			a.season = t.num
 		}
 	}
@@ -1275,6 +1275,9 @@ func routeSeason(toks []token) float64 {
 	for i, t := range toks {
 		switch {
 		case t.cat == cSeason && t.hasNum:
+			if reCourPart.MatchString(t.text) {
+				continue
+			} // 部/部分 is a part, not a season
 			if i > 0 && toks[i-1].group == t.group {
 				u := strings.ToUpper(toks[i-1].text)
 				if typeWords[u] == "sp" || reOVAWord.MatchString(u) {

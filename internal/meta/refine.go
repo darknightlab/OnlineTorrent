@@ -56,8 +56,8 @@ func (s *Store) DirectPrequel(ctx context.Context, workKey string) (string, bool
 		if err != nil {
 			continue
 		}
-		c := s.candidateOf(ctx, pw, "rule")
-		if c.Type != "tv" && c.Type != "web" {
+		typ := (&famWork{w: pw}).kind()
+		if typ != "tv" && typ != "web" {
 			continue
 		}
 		if found != "" && found != pw.Key {

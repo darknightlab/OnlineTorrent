@@ -581,9 +581,19 @@ func titleSeasonFits(title string, w *Work) bool {
 // (第2期, Season 2, S2, Ⅱ …), else a sequel number ending a title ("Cyberpunk: Edgerunners 2",
 // "エッジランナーズ２").
 func workSeason(w *Work) float64 {
-	names := append([]string{w.TitleCN, w.Title}, w.Aliases...)
-	for _, n := range names {
-		if v := nameHint(n).Season; v > 0 {
+	// Explicit season evidence in primary titles wins. A primary cour/part marker
+	// prevents aliases such as "Season 2" from turning that cour into season two.
+	primary := []string{w.TitleCN, w.Title}
+	for _, n := range primary {
+		if v := nameHint(withoutCour(n)).Season; v > 0 {
+			return v
+		}
+	}
+	if hasCourTitle(w) {
+		return 0
+	}
+	for _, n := range w.Aliases {
+		if v := nameHint(withoutCour(n)).Season; v > 0 {
 			return v
 		}
 	}

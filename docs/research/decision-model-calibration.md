@@ -10,6 +10,36 @@ backends, chosen by the setting `clef.provider` (settings group 决策模型):
 
 Design: [plan.md](../plan.md) 「规则收紧 + 决策模型」. API: [api.md](../api.md) 「后台」→「决策模型」.
 
+## Split-entry season proof from official chapters (2026-10)
+
+`workSeason` no longer reads 第N部分 / 第N部 / 第Nクール / Part N / Cour N as a
+season number. Explicit season evidence in primary titles wins; a primary part/cour marker
+prevents aliases such as “Season 2” from relabelling it. This distinction is a veto, **not
+proof** that a candidate belongs to season 1.
+
+A single-file season-mismatch answer can be reconsidered only with official chapter proof:
+- One corresponding direct prequel, used to select entries, not count seasons in story order.
+- Complete contiguous integer chapter ranges across the entries, with dated broadcast
+  boundaries in chronological order. No gaps or dated overlaps.
+- Undated overlapping chapters already present in the previous range are treated as
+  placeholders; undated fractional recap placeholders do not establish a new range.
+- The selected chapter is actually listed beyond the previous range and has an airdate;
+  its release must pass the ordinary early/late gate. The previous entry must fit the
+  stated season, and an explicit **real season** on the target must not contradict it.
+- Every normal number/parser/name/confidence check still runs. Unknown or conflicting
+  proof stays uncertain; no identifier-specific cases.
+
+This permits Chitose S01E15 → bgm:584847: previous chapters 1–13, overlapping undated
+13/13.5 placeholders, dated continuation 14–25 (episode 15: 2026-10-20). Local 02 also
+canonicalises to 15 using the proven boundary **14**, not MIN(sort)=13. It needs neither
+another file in the torrent nor Part 2 title matching. A true S2 labelled S1 is rejected.
+
+Calibration against the same snapshot: model **255 → 253 applied / 0 wrong**; the two
+conservatively deferred files are the older Chitose sample naming it “第二季” plus its
+unlisted special. Rules unchanged: **196 certain / 7 pre-existing raw mismatches**; broader
+raw-rules replay (370 torrents / 395 labelled files) also unchanged, no new wrong mapping.
+The real production chapter lists were fetched read-only; no production requeue or writes.
+
 ## Official singleton main chapters (2026-10)
 
 A genuinely unnumbered main video may use the actual sort of the work's **sole official

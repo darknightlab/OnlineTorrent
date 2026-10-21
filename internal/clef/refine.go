@@ -13,10 +13,11 @@ package clef
 //     doesn't list — or one that can't have aired yet at the release — is retried as the
 //     number minus the direct prequel's main episode count (14 − 12 = 2); taken only when
 //     that episode is listed and passes the date gate.
-//  3. Date gate (meta.ReleaseGate): no release time, or the release more than 7 days before
-//     the episode's airdate (日期不符; a main episode without an airdate counts as not aired
-//     when an earlier one airs later) → review. A release any time after airing is fine
-//     (owner decision: only too-early releases are suspicious).
+//  3. Date gate (meta.ReleaseGate): no release time, or more than 7 days before airing →
+//     review. For a single-video torrent, more than 30 days after airing is also reviewed;
+//     multi-video compilations have no late limit. An undated main after a future-airing
+//     earlier episode is not aired yet. Single-file split-entry overrides additionally
+//     require a dated selected chapter and unambiguous official numbering continuation.
 
 import (
 	"context"
@@ -29,6 +30,19 @@ import (
 // Refine runs the post-checks on ds (in place). th routes answers an override revives.
 func Refine(ctx context.Context, ms *meta.Store, t *meta.ClefTask, ds []FileDecision, th LLMThresholds) {
 	ev := TaskEvidence(ms, t)
+	// Official split-entry continuity can prove a single-file season answer without
+	// needing another file in this torrent (Chitose S01E15, cour 2).
+	for i := range ds {
+		d := &ds[i]
+		if d.Status != StatusDiscarded || d.Reason != ReasonSeason || d.Candidate == nil || d.Kind != "episode" || d.Episode == nil {
+			continue
+		}
+		k, valid := ms.ValidEpisode(ctx, d.Candidate.WorkKey, meta.EpisodeKey{Kind: meta.KeyMain, Number: *d.Episode})
+		if valid && ms.ContinuationSeasonFits(ctx, t, d.Candidate, d.File.Season, k) {
+			d.Key = k.String()
+			gateLLM(ctx, d, th, ev, numberAgrees(ctx, d, ms.ValidEpisode))
+		}
+	}
 	// 1. season continuation
 	for i := range ds {
 		d := &ds[i]
@@ -66,7 +80,7 @@ func Refine(ctx context.Context, ms *meta.Store, t *meta.ClefTask, ds []FileDeci
 
 // seasonContinues: rule 1 of Refine.
 func seasonContinues(ctx context.Context, ms *meta.Store, t *meta.ClefTask, ds []FileDecision, d *FileDecision) bool {
-	if d.Candidate == nil || d.Kind != "episode" || d.Episode == nil || d.File.Season <= 0 {
+	if d.Candidate == nil || d.Candidate.SplitEntry || d.Kind != "episode" || d.Episode == nil || d.File.Season <= 0 {
 		return false
 	}
 	w := d.Candidate.WorkKey

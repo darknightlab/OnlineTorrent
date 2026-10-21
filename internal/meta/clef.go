@@ -473,8 +473,11 @@ type ClefCandidate struct {
 	Type       string `json:"type,omitempty"`
 	// Season: the TV season this entry is — stated by its titles (第2期, Season 2, Ⅱ …), else
 	// 1 for an entry without a TV/WEB prequel; 0 = a later season of unknown number
-	Season int    `json:"season,omitempty"`
-	Why    string `json:"why"` // anchor | hint | search | related
+	Season int `json:"season,omitempty"`
+	// SplitEntry: primary titles state a cour/part but no explicit season. Such an
+	// entry needs official continuity proof rather than interpreting its part as S2.
+	SplitEntry bool   `json:"split_entry,omitempty"`
+	Why        string `json:"why"` // anchor | hint | search | related
 }
 
 // Recent: the entry was airing around the publish date (YYYY-MM-DD): it ended at most a
@@ -506,6 +509,9 @@ func (c ClefCandidate) StartsAfter(published string, days int) bool {
 // the entry's own season, or any for a later entry without its own marker (Season 0).
 // Movies and OVAs carry no season.
 func (c ClefCandidate) SeasonFits(stated float64) bool {
+	if c.SplitEntry && stated > 0 {
+		return false // proven separately from official chapters + episode airdate
+	}
 	if stated <= 0 || c.Type == "movie" || c.Type == "ova" {
 		return true
 	}
@@ -835,6 +841,7 @@ func (s *Store) candidateOf(ctx context.Context, w *Work, why string) ClefCandid
 	c.MainEpisodes, c.Specials = s.episodeSummary(ctx, w.Key)
 	c.OfficialSingleton = s.OfficialSingleton(ctx, w.Key)
 	c.MainMapped = s.hasMappedMain(ctx, w.Key)
+	c.SplitEntry = hasCourTitle(w) && workSeason(w) == 0
 	if v := workSeason(w); v > 0 && v == float64(int(v)) {
 		c.Season = int(v)
 	} else if c.Type == "tv" || c.Type == "web" {
