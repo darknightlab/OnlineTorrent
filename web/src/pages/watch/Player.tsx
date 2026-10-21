@@ -476,10 +476,10 @@ export function Player({
     <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-5 xl:grid-cols-[minmax(0,1fr)_400px]">
       <section className="min-w-0">
         {/* 播放区：移动端吸顶、全宽。外框只占位；里面的播放框对齐到整设备像素（useSnappedFrame，避免小数像素
-            宽度时两侧的细黑线）。宽屏的圆角由 .ot-frame-corners 画在上面（见 index.css），不裁剪视频 */}
+            宽度时两侧的细黑线），宽屏的圆角用 clip-path（整体裁剪一次；overflow-hidden + 圆角会对每个铺满的图层
+            分别抗锯齿，叠加后圆角外缘出现一圈黑边。网页全屏时 ArtPlayer 把播放器移出这里，不受裁剪） */}
         <div ref={playerBox} className="sticky top-[env(safe-area-inset-top)] z-20 -mx-3 sm:-mx-4 sm:top-14 lg:static lg:mx-0">
-          <div ref={playerFrame} className="ot-player-frame relative aspect-video w-full overflow-hidden bg-black select-none">
-            <div aria-hidden className="ot-frame-corners" />
+          <div ref={playerFrame} className="ot-player-frame relative aspect-video w-full overflow-hidden bg-black select-none lg:[clip-path:inset(0_round_0.75rem)]">
             {/* 未出画面时：竖版封面两侧用模糊背景填满，避免大片纯黑 */}
             {poster && !url && (
               <>
@@ -908,8 +908,7 @@ export function PlayerShell({ poster, panelSources, children }: { poster?: strin
   }, [])
   return (
     <div ref={box} className="sticky top-[env(safe-area-inset-top)] z-20 -mx-3 sm:-mx-4 sm:top-14 lg:static lg:mx-0">
-      <div ref={frame} className="ot-player-frame relative aspect-video w-full overflow-hidden bg-black select-none">
-            <div aria-hidden className="ot-frame-corners" />
+      <div ref={frame} className="ot-player-frame relative aspect-video w-full overflow-hidden bg-black select-none lg:[clip-path:inset(0_round_0.75rem)]">
         {poster && (
           <>
             <div aria-hidden className="absolute inset-0 scale-110 bg-cover bg-center opacity-50 blur-2xl" style={{ backgroundImage: `url("${poster}")` }} />

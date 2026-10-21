@@ -1,9 +1,6 @@
 // 播放框与字幕画布（e2e/edge/run.mjs 的 EXTRA，媒体用带 ASS 的 MKV：/tmp/subs-e2e/test.mkv）：
-// 双列布局（宽屏）里显示字幕时：
-//  - 视频与字幕画布的祖先上没有圆角裁剪 / clip-path / mask / filter / opacity（合成器会把它们画进中间纹理，
-//    硬件覆盖层显示的视频——Windows 上硬件解码的 10-bit HEVC——因此整块变黑）；
-//  - 画布透明、与视频内容区重合，视频照常可见；圆角外没有黑边；网页全屏铺满窗口；页头盖在播放器上面；
-//  - 「字幕」控件没有悬停提示；手机上同样正常。
+// 双列布局（宽屏，播放框圆角 clip-path）里显示字幕时：画布透明、与视频内容区重合，视频照常可见；
+// 圆角外没有黑边；网页全屏铺满窗口（此时不裁剪）；页头盖在播放器上面；字幕 / 倍速 / 资源没有悬停提示；手机上同样正常。
 import fs from "node:fs"
 import { decodePNG } from "../subtitles/checks.mjs"
 
@@ -28,20 +25,11 @@ export default async function ({ ev, send, sleep, RUN }) {
   }
   const inspect = () =>
     ev(`const v = document.querySelector("video"); const c = document.querySelector("canvas.ot-subtitles")
-      const bad = []
-      for (const el of [v, c]) {
-        for (let a = el?.parentElement; a && a !== document.documentElement; a = a.parentElement) {
-          const s = getComputedStyle(a)
-          const rounded = s.overflow !== "visible" && parseFloat(s.borderTopLeftRadius) > 0
-          if (s.clipPath !== "none" || s.maskImage !== "none" || s.filter !== "none" || Number(s.opacity) < 1 || rounded)
-            bad.push((a.className || a.tagName).toString().slice(0, 40) + ": " + [s.clipPath !== "none" && "clip-path", s.maskImage !== "none" && "mask", s.filter !== "none" && "filter", Number(s.opacity) < 1 && "opacity", rounded && "rounded overflow"].filter(Boolean).join(","))
-        }
-      }
       const vb = v.getBoundingClientRect(); const cb = c?.getBoundingClientRect()
       // the video's content box (object-fit: contain)
       const ar = v.videoWidth / v.videoHeight, w = Math.min(vb.width, vb.height * ar), h = w / ar
       const content = { x: vb.x + (vb.width - w) / 2, y: vb.y + (vb.height - h) / 2, w, h }
-      return { bad: [...new Set(bad)], canvas: cb ? { x: cb.x, y: cb.y, w: cb.width, h: cb.height, bg: getComputedStyle(c).backgroundColor } : null, content, video: { x: vb.x, y: vb.y, w: vb.width, h: vb.height } }`)
+      return { canvas: cb ? { x: cb.x, y: cb.y, w: cb.width, h: cb.height, bg: getComputedStyle(c).backgroundColor } : null, content, video: { x: vb.x, y: vb.y, w: vb.width, h: vb.height } }`)
   const fits = (i) => i.canvas && Math.abs(i.canvas.x - i.content.x) < 1.5 && Math.abs(i.canvas.y - i.content.y) < 1.5 && Math.abs(i.canvas.w - i.content.w) < 1.5 && Math.abs(i.canvas.h - i.content.h) < 1.5
   // share of very dark pixels in the video area, outside the bottom third (subtitles / controls)
   const darkShare = async (name, v) => {
@@ -58,14 +46,13 @@ export default async function ({ ev, send, sleep, RUN }) {
     const i = await inspect()
     const dark = await darkShare(`frame-${width}`, i.video)
     console.log(`${width}: ${JSON.stringify(i)} dark ${(dark * 100).toFixed(1)}%`)
-    r[`${width}: no clip-path / rounded clip / mask / filter / opacity above the video and the subtitle canvas`] = i.bad.length === 0
     r[`${width}: subtitle canvas transparent, on the video's content box`] = fits(i) && i.canvas.bg === "rgba(0, 0, 0, 0)"
     r[`${width}: video visible under the subtitles`] = dark < 0.2
   }
 
   // corners: the ring just outside the rounded corner matches the page background (light + dark)
-  await layout(1366)
-  for (const theme of ["light", "dark"]) {
+  for (const [theme, cw] of [1280, 1366, 1600].flatMap((w) => [["light", w], ["dark", w]])) {
+    await layout(cw)
     await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: theme }] })
     await sleep(800)
     const b = await ev(`window.scrollTo(0, 0); const f = document.querySelector(".ot-player-frame").getBoundingClientRect(); return { x: f.x, y: f.y, w: f.width, h: f.height }`)
@@ -87,10 +74,11 @@ export default async function ({ ev, send, sleep, RUN }) {
           worst = Math.max(worst, Math.abs(bgL - lum(img.px, y * img.w + x, img.bpp)))
         }
     }
-    console.log(`corners ${theme}: ring deviation ${worst.toFixed(0)}`)
-    r[`corners (${theme}): rounded, no dark fringe`] = worst < 40
+    console.log(`corners ${theme} ${cw}: ring deviation ${worst.toFixed(0)}`)
+    r[`corners (${theme}, ${cw}): rounded, no dark fringe`] = worst < 40
   }
   await send("Emulation.setEmulatedMedia", { features: [] })
+  await layout(1366)
 
   // header above the player when scrolled under it
   const hdr = await ev(`document.body.style.minHeight = "300vh"; const f = document.querySelector(".ot-player-frame"); const h = document.querySelector("header"); window.scrollTo(0, f.getBoundingClientRect().top + scrollY - 20); await new Promise((r) => setTimeout(r, 300))
@@ -115,7 +103,7 @@ export default async function ({ ev, send, sleep, RUN }) {
   await sleep(800)
 
   // tooltips: none on 字幕; 倍速 / 资源 reported
-  const tips = await ev(`const q = (n) => document.querySelector(".art-control-" + n); return { subtitle: q("subtitle")?.getAttribute("aria-label") ?? null, rate: q("rate")?.getAttribute("aria-label") ?? null, panel: document.querySelector(".art-control-panel, .art-control-sources")?.getAttribute("aria-label") ?? null }`)
+  const tips = await ev(`const q = (n) => document.querySelector(".art-control-" + n); return { subtitle: q("subtitle")?.getAttribute("aria-label") ?? null, rate: q("rate")?.getAttribute("aria-label") ?? null, panel: q("panel")?.getAttribute("aria-label") ?? null }`)
   // hover 倍速: its menu and its hint both open above the control
   const rateBox = await ev(`const b = document.querySelector(".art-control-rate").getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }`)
   await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: rateBox.x, y: rateBox.y })
@@ -129,15 +117,15 @@ export default async function ({ ev, send, sleep, RUN }) {
   console.log("tooltips:", JSON.stringify(tips), "rate menu on hover:", JSON.stringify(rateMenu))
   r["「字幕」 has no tooltip"] = tips.subtitle === null
   r["「倍速」 has no tooltip (it covered its own menu)"] = tips.rate === null
+  r["「资源」 has no tooltip"] = tips.panel === null
 
   // phone
   await layout(390, 844, true)
   await atCue()
   const m = await inspect()
   const mDark = await darkShare("frame-phone", m.video)
-  const corners = await ev(`return getComputedStyle(document.querySelector(".ot-frame-corners")).display`)
-  console.log(`phone: ${JSON.stringify(m)} dark ${(mDark * 100).toFixed(1)}% corners ${corners}`)
-  r["phone: canvas on the video's content box, video visible, no corner mask"] = fits(m) && mDark < 0.2 && corners === "none"
+  console.log(`phone: ${JSON.stringify(m)} dark ${(mDark * 100).toFixed(1)}%`)
+  r["phone: canvas on the video's content box, video visible"] = fits(m) && mDark < 0.2
   await send("Emulation.clearDeviceMetricsOverride")
   return r
 }
