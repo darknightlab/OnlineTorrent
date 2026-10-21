@@ -257,6 +257,28 @@ ALTER TABLE clef_decisions ADD COLUMN source TEXT NOT NULL DEFAULT 'model';
 	// may replace automatic mappings; automatic jobs only take the uncertain files
 	`
 ALTER TABLE clef_jobs ADD COLUMN force INTEGER NOT NULL DEFAULT 0;
+`,
+	// 13: danmaku (danmaku.go): the streaming-site ids of every bangumi-data item (all years,
+	// unlike the works import) used to map an episode to a platform episode, and the stored
+	// comments per (work, episode, platform). A stored set is never replaced.
+	`
+CREATE TABLE bd_sites (
+	bgm_id INTEGER NOT NULL,   -- bangumi subject id
+	site   TEXT NOT NULL,      -- bangumi-data site: bilibili | bilibili_hk_mo_tw | bilibili_hk_mo | bilibili_tw | gamer | gamer_hk
+	ext_id TEXT NOT NULL,      -- bilibili media id / Bahamut acgDetail id
+	PRIMARY KEY (bgm_id, site, ext_id)
+);
+CREATE INDEX bd_sites_ext ON bd_sites(ext_id);
+CREATE TABLE danmaku (
+	work_key   TEXT NOT NULL,
+	episode    TEXT NOT NULL,   -- episode key (official numbering, e.g. "29")
+	platform   TEXT NOT NULL,   -- bilibili | bahamut
+	ref        TEXT NOT NULL,   -- platform episode: bilibili ep id / Bahamut video sn
+	count      INTEGER NOT NULL,
+	data       BLOB NOT NULL,   -- gzip JSON [[time seconds, mode, colour, text], ...] (mode: 1 scroll, 4 bottom, 5 top)
+	fetched_at TEXT NOT NULL,
+	PRIMARY KEY (work_key, episode, platform)
+);
 `}
 
 // Store is the meta database.

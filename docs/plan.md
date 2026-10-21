@@ -90,13 +90,17 @@
   - 推荐：`internal/rank` 只定义与校验规则（`rank.rules`，/site 公开）；打分在前端 `web/src/lib/rank.ts`（依赖用户权限：游客看 WebRTC 节点与服务器缓存，会员还看 BT 做种者）；单集页按分排序、自动播放第一个。后台页「Tracker」「推荐规则」。默认值第二版（服务器缓存只作小加分、做种人数对数加分、简体 > 繁体 > 清晰度 > 小文件，关键词分组）见 [research/rank-rules.md](research/rank-rules.md)；库中未改过的第一版默认值启动时自动升级。
   - 待改进：tracker 状态只在内存（重启清空）；服务器缓存状态依赖 qB `torrents/info` 全量快照（1 分钟）；条目页 100 个种子首次打开要 scrape 100 个（单个 UDP 包 74 个，所以每个 tracker 2 个包）。
 
+- **弹幕（2026-10）**：只取 Bilibili 与动画疯（巴哈姆特），由**未修改**的 huangxd-/danmu_api 作边车采集（AGPL；部署见 deploy.md「弹幕边车」，设置 `danmaku.api_url`，空 = 关闭）。不按标题搜索：bangumi 条目 → bangumi-data 的平台 ID（`bd_sites`，导入全部年份）→ 平台分集列表 → 我们的官方集数（只在确定时，规则见 api.md「GET …/danmaku」）→ 平台分集 → danmu_api。只在有人打开该集（弹幕请求）时采集，从不批量；保存到映射库 `danmaku`（每集每平台：时间、模式、颜色、文字，gzip；平台分集 ID、采集时间），一集有了弹幕就不再采集；空 / 失败不保存，按集退避重试；同一集并发请求共用一次采集（singleflight）。代码 `internal/danmaku`、`internal/meta/danmaku.go`、`internal/api/danmaku.go`。前端：单集页（正在播放映射到本集的文件时）请求弹幕，有弹幕才懒加载 artplayer-plugin-danmuku（单独 chunk）并在控制栏加「弹幕」开关（默认开，本次会话内沿用；插件自带的发送框 / 设置面板不用）；弹幕层在视频之上、内封字幕画布（z 35）之下，底部 25% 不放弹幕；`/watch/hash` 页不请求。
+  - 覆盖（开发库 2026-10-21）：bangumi 条目有 Bilibili / 动画疯 ID 的 4266 个（Bilibili 3379、动画疯 1739）；2023–2026 每年约 190–200 部 TV/WEB 有平台 ID。当前时间表 140 部有平台 ID（本季全部只在动画疯，bangumi-data 没有 Bilibili）：第 1 集可确定映射 134 部，最新已播集 127 部；2023 年以前随机 60 部（都有 ID）：Bilibili 57 部中 40 部可确定（另有 10 部当时被 Bilibili 风控 412 拒绝），动画疯 14 部中 9 部。不能确定的常见原因：动画疯一页里包含上一季 / 下一部分的集、台湾限定作品超过 12 集（acgDetail 页只列前 12 集，API 在台湾以外拒绝）、同一部作品多个 Bilibili 列表都不完整。
+  - 待定 / 待改进：播出当天第一次打开就采集，之后不再更新（新番弹幕会很少，可考虑播出后若干天才采集）；Bilibili 只拿到当前弹幕池（数千条，不是全部历史）；Bilibili 风控（-352 / 412）时失败退避重试；退避状态只在内存。
+
 ## TODO（低优先级）
 - **边缘节点 v2**：
   - 浏览器 → 边缘节点目前经 Cloudflare；同一局域网 / 同运营商的用户可考虑直连（需证书与入站端口），按网络选择地址。
   - 将来允许用户在家里运行边缘节点（为此令牌里没有用户身份）：不再给完整的 qB WebUI 转发，改为受限命令集（添加 / 删除本站分类的种子、查询状态）；节点主人的配额与允许列表（哪些种子、多少流量）；按节点记录可靠性（失败率、哈希校验失败次数 → 自动停用）；经隧道推送的令牌吊销列表（按 `sid` / 角色）。
   - 分块读取的 LRU（同一分块被多个观众请求时只读盘、校验一次）。
 - 浏览器分块缓存按稀有度淘汰：同等距离下优先淘汰 swarm 里副本多的 piece（`_rarityMap` 作次级排序键，见 web/src/player/store/policy.ts `pickVictim`）
-- dandanplay 弹幕（需 AppId/Secret，用户暂无账号）
+- dandanplay 弹幕（需 AppId/Secret，用户暂无账号；dandan episodeId = AniDB aid × 10000 + 集数，可经 bangumi-data 的 anidb ID 确定映射）。现有弹幕见「已实现的补充」→「弹幕」
 - 番剧页按集分组（映射库已有文件级集数，前端目前是种子列表 + 字幕组筛选）
 - ✅ 特别篇（2026-10）：集的键 `12` / `12.5` / `0` / `sp1` / `ncop1` / `nced1` / `pv1` / `cm1`（api.md「集的键」），选集列表 `GET /subjects/{p}/{id}/episodes`，SP/NCOP/NCED/PV/CM 保留编号并映射到作品（迁移 5 + 启动时一次性重新分类）。待改进：SPs 目录里文件名解析不出编号的特别篇都记为 sp1；日文写法（ノンテロップOP/ED、映像特典内的 PV）未识别。
 - 映射纠错的后台界面（API `PUT /meta/v1/torrents/{ih}/files/{idx}` 已有）
@@ -111,7 +115,7 @@
 - 向 qBittorrent 上游反馈 #24512 过滤 wss 的副作用
 
 ## 5. 已确认
-单仓库；直接用 www；注册支持邀请码/邀请链接；只有一台生产服务器；弹幕放 TODO。
+单仓库；直接用 www；注册支持邀请码/邀请链接；只有一台生产服务器；弹幕（2026-10 已做，见上）。
 
 ## （原）待确认
 1. 仓库：新建一个 monorepo（建议 `darknightlab/onlinetorrent` 新开 `v2` 分支或新仓库），还是继续前后端两个仓库？

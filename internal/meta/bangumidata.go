@@ -2,10 +2,12 @@ package meta
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,6 +59,9 @@ func (s *Store) ImportBangumiData(ctx context.Context, hc *http.Client, url stri
 		return 0, err
 	}
 	defer tx.Rollback()
+	if err := replaceDanmakuSites(ctx, tx, data.Items); err != nil {
+		return 0, err
+	}
 	n := 0
 	now := store.Now()
 	for _, it := range data.Items {
@@ -103,6 +108,39 @@ func (s *Store) ImportBangumiData(ctx context.Context, hc *http.Client, url stri
 		n++
 	}
 	return n, tx.Commit()
+}
+
+// danmakuSites: bangumi-data sites whose ids map episodes to danmaku sources
+// (internal/danmaku): bilibili media ids and Bahamut acgDetail ids.
+var danmakuSites = map[string]bool{"bilibili": true, "bilibili_hk_mo_tw": true, "bilibili_hk_mo": true, "bilibili_tw": true, "gamer": true, "gamer_hk": true}
+
+// replaceDanmakuSites rewrites bd_sites from every bangumi-data item that has a bangumi id.
+// Unlike work_ids (one work per provider id) it keeps every subject of a shared id: two
+// subjects on one platform listing (both cours of a split-cour show) must be seen as such.
+func replaceDanmakuSites(ctx context.Context, tx *sql.Tx, items []bdItem) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bd_sites`); err != nil {
+		return err
+	}
+	for _, it := range items {
+		bgm := 0
+		for _, st := range it.Sites {
+			if st.Site == "bangumi" {
+				bgm, _ = strconv.Atoi(st.ID)
+			}
+		}
+		if bgm <= 0 {
+			continue
+		}
+		for _, st := range it.Sites {
+			if !danmakuSites[st.Site] || st.ID == "" {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO bd_sites(bgm_id,site,ext_id) VALUES(?,?,?) ON CONFLICT DO NOTHING`, bgm, st.Site, st.ID); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func normTime(s string) string {

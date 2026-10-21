@@ -65,6 +65,8 @@ const (
 	// and the lifetime of the access tokens handed to browsers.
 	KeyEdgeSigningKeys  = "edge.signing_keys"
 	KeyEdgeTokenMinutes = "edge.token_minutes"
+	// danmaku: internal address of the danmu_api sidecar (internal/danmaku); empty = off
+	KeyDanmakuAPIURL = "danmaku.api_url"
 )
 
 // Decision model (Cloudflare Workers AI Clef, internal/clef) settings.
@@ -199,7 +201,7 @@ func SettingsSchema() []SettingSpec {
 		{Key: KeyDefaultAction, Group: "审核", Type: "enum", Label: "默认权限", Options: []string{"allow", "login", "vip"}, Description: "没有任何规则命中时的权限要求", Default: "allow"},
 		{Key: KeyAutoReviewUnknown, Group: "审核", Type: "bool", Label: "用户自填磁力进入审核队列", Description: "记录用户自行提交的种子，供管理员事后审核", Default: true},
 
-		{Key: KeyUpstreamProxy, Group: "上游", Type: "string", Label: "上游代理", Description: "访问 bangumi.moe / bgm.tv 用的代理，如 socks5://127.0.0.1:1080，留空直连", Default: ""},
+		{Key: KeyUpstreamProxy, Group: "上游", Type: "string", Label: "上游代理", Description: "访问 bangumi.moe / bgm.tv（以及弹幕平台 Bilibili / 巴哈姆特的分集列表）用的代理，如 socks5://127.0.0.1:1080，留空直连", Default: ""},
 		{Key: KeyMoeBase, Group: "上游", Type: "string", Label: "bangumi.moe 地址", Default: "https://bangumi.moe"},
 		{Key: KeyBangumiDataURL, Group: "上游", Type: "string", Label: "bangumi-data 地址", Default: "https://cdn.jsdelivr.net/npm/bangumi-data@0.3/dist/data.json"},
 		{Key: KeyBgmUserAgent, Group: "上游", Type: "string", Label: "bgm.tv User-Agent", Default: "darknightlab/onlinetorrent (https://www.projectk.org)"},
@@ -216,6 +218,8 @@ func SettingsSchema() []SettingSpec {
 		{Key: KeyWebseedEnabled, Group: "WebSeed", Type: "bool", Label: "启用 HTTP WebSeed 加速", Description: "qB 下载完成的文件可经本站以 HTTP 方式补充传输（经 Cloudflare 隧道，消耗服务器上行流量）", Default: true},
 		{Key: KeyEdgeTokenMinutes, Group: "WebSeed", Type: "number", Label: "边缘节点访问令牌有效期（分钟）", Description: "浏览器访问边缘节点 WebSeed 所用的签名令牌的有效期；播放期间服务器在到期前自动推送新令牌", Default: 10},
 		{Key: KeyEdgeSigningKeys, Group: "WebSeed", Type: "json", Label: "边缘节点签名密钥", Default: map[string]any{}, Hidden: true},
+
+		{Key: KeyDanmakuAPIURL, Group: "弹幕", Type: "string", Label: "danmu_api 地址", Description: "弹幕采集服务（huangxd-/danmu_api，只在内网可达）的地址，含访问令牌，如 http://danmu-api:9321/<TOKEN>；留空则不采集（已保存的弹幕仍会显示）。只在有人打开某一集时采集该集（Bilibili / 巴哈姆特），已有弹幕的集不再采集", Default: ""},
 	}, clefSettings()...)
 }
 

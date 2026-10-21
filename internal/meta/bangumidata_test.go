@@ -48,3 +48,35 @@ func TestImportBangumiDataAllYears(t *testing.T) {
 		t.Errorf("schedule candidates: %+v", sched)
 	}
 }
+
+// bd_sites keeps the danmaku site ids of every subject, also shared ones (one Bahamut page
+// for both cours), and is rebuilt on every import.
+func TestImportDanmakuSites(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	data := `{"items":[
+		{"title":"A","type":"tv","begin":"2022-04-09T15:00:00.000Z","sites":[{"site":"bangumi","id":"329906"},{"site":"gamer","id":"120396"},{"site":"bilibili","id":"28237119"},{"site":"mal","id":"1"}]},
+		{"title":"A 2","type":"tv","begin":"2022-10-01T15:00:00.000Z","sites":[{"site":"bangumi","id":"371546"},{"site":"gamer","id":"120396"},{"site":"gamer_hk","id":"120396"}]},
+		{"title":"no bgm id","type":"tv","begin":"2022-10-01T15:00:00.000Z","sites":[{"site":"gamer","id":"5"}]}
+	]}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(data)) }))
+	defer srv.Close()
+	for range 2 { // re-import: same rows
+		if _, err := s.ImportBangumiData(ctx, srv.Client(), srv.URL); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sites, _ := s.SiteIDs(ctx, 329906)
+	if len(sites) != 2 || sites[0] != (SiteID{"bilibili", "28237119"}) || sites[1] != (SiteID{"gamer", "120396"}) {
+		t.Errorf("sites: %+v", sites)
+	}
+	ids, _ := s.SubjectsWithSite(ctx, []string{"gamer", "gamer_hk"}, "120396")
+	if len(ids) != 2 || ids[0] != 329906 || ids[1] != 371546 {
+		t.Errorf("sharing subjects: %v", ids)
+	}
+	var n int
+	_ = s.R.QueryRow(`SELECT COUNT(*) FROM bd_sites`).Scan(&n)
+	if n != 4 {
+		t.Errorf("bd_sites rows: %d", n)
+	}
+}

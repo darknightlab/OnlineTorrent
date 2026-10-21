@@ -52,5 +52,13 @@ services:
 
 `OTD_MAIN` 也可以用 LAN 地址 `ws://192.168.233.8:23380/api/v1/edge/connect`（不经 Cloudflare，少一跳；令牌明文经过 LAN）。隧道每 25 秒心跳，Cloudflare 的 ~100 秒空闲断开不会触发；断开后 1 s 起指数退避（最长 60 s）重连，令牌被拒时 5 分钟后重试。
 
+## 弹幕边车 danmu_api（2026-10-21 已部署）
+- huangxd-/danmu_api **未修改**（AGPL-3.0），官方镜像 `docker.io/logvar/danmu-api:1.21.6@sha256:8e1e8f0e3ad578d6c2babaf1434c47e56ffbfe47c16a63108ced9af093b63800`（= commit `5ef63a0`；与该提交的 `danmu_api/` 逐文件 md5 一致），容器 `onlinetorrent-danmu-api`，服务名 `danmu-api`，在 stack 26 的 compose 文件里（`/root/app/portainer/portainer_data/compose/26/v2/docker-compose.yml`，修改前备份 `docker-compose.yml.bak-20261021-danmaku`）。
+- 隔离：**不发布端口**，只在 compose 项目网络 `onlinetorrent_default`（podman `isolate=true`，只有 otd 与它）上；其他网络的容器按名字或 IP 都连不上（已测）；主机上没有 9321 / 5321 监听。访问令牌 `TOKEN` 在 `/root/app/onlinetorrent-danmu-api/danmu-api.env`（root 600，经 `env_file` 读入），无令牌 401。
+- 配置：`GROUP_MINUTE=0`（不合并去重）、`LIKE_SWITCH=false`（不在文字后加点赞数）、`RATE_LIMIT_MAX_REQUESTS=0`、`OTHER_SERVER=http://127.0.0.1:9`（不回退第三方弹幕服务器）、`SOURCE_ORDER=bilibili,bahamut`、`PLATFORM_ORDER=bilibili1,bahamut`、`LOG_LEVEL=warn`。otd 只用它的 `GET /api/v2/comment?url=`（Bilibili）与 `POST /api/v2/segmentcomment`（动画疯），不用它的搜索。
+- otd 设置：后台 → 设置 → 弹幕 →「danmu_api 地址」= `http://danmu-api:9321/<TOKEN>`（TOKEN 见上面的文件）。留空 = 不采集。
+- 部署方式：stack 26 的容器由 podman-compose 创建（标签 `io.podman.compose.*`），Portainer 的「更新 stack」会用 docker compose 重建同名容器而失败（`container name "onlinetorrent" is already in use`，2026-10-21 实测；未改动 otd）。所以改的是 v2 的 compose 文件（Portainer 读同一文件，显示一致），再 `cd …/compose/26/v2 && podman-compose -p onlinetorrent -f docker-compose.yml up -d danmu-api`。
+- 升级：改镜像 tag + digest（看 Docker Hub `logvar/danmu-api` 与上游提交对应关系），同上命令只重建 `danmu-api`。
+
 ## 仓库
 - `darknightlab/OnlineTorrent`：`main` = 新版单仓库；`legacy` = 旧前端 main；`beta` 保留原样。

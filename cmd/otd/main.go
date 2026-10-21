@@ -23,6 +23,7 @@ import (
 	"github.com/darknightlab/onlinetorrent/internal/catalog"
 	"github.com/darknightlab/onlinetorrent/internal/clef"
 	"github.com/darknightlab/onlinetorrent/internal/crawl"
+	"github.com/darknightlab/onlinetorrent/internal/danmaku"
 	"github.com/darknightlab/onlinetorrent/internal/edge"
 	"github.com/darknightlab/onlinetorrent/internal/meta"
 	"github.com/darknightlab/onlinetorrent/internal/policy"
@@ -111,7 +112,11 @@ func serve(args []string) error {
 	cl := &clef.Service{St: st, Meta: ms, Log: log}
 	wg.Go(func() { cl.Run(ctx) })
 
-	srv := &api.Server{St: st, Meta: ms, Cat: cat, Crawl: cr, Pool: pool, Swarm: sw, Clef: cl, Policy: policy.New(st), Log: log, WebFS: web.FS(), BaseCtx: ctx}
+	// danmaku: collected on demand by the danmu_api sidecar (setting danmaku.api_url); the
+	// platform episode lists use the upstream client
+	dm := &danmaku.Service{St: st, Meta: ms, Log: log, HTTP: cat.HTTPClient}
+
+	srv := &api.Server{St: st, Meta: ms, Cat: cat, Crawl: cr, Pool: pool, Swarm: sw, Clef: cl, Danmaku: dm, Policy: policy.New(st), Log: log, WebFS: web.FS(), BaseCtx: ctx}
 	// edge nodes connect to /api/v1/edge/connect (token-signing key is created on first start)
 	if _, err := srv.NewEdgeHub(); err != nil {
 		return err

@@ -36,6 +36,7 @@
 | GET | `/api/v1/subjects/{provider}/{id}` | 条目详情 + 本地种子（映射到该条目的） |
 | GET | `/api/v1/subjects/{provider}/{id}/episodes` | 选集列表：正片 + 特别篇（SP / NCOP / NCED / PV / CM） |
 | GET | `/api/v1/subjects/{provider}/{id}/episodes/{n}` | 单集所有已知文件（含当前用户 access 与做种统计 swarm），由前端按推荐规则排序；`{n}` 为集的键 |
+| GET | `/api/v1/subjects/{provider}/{id}/episodes/{n}/danmaku` | 单集弹幕（Bilibili / 巴哈姆特；第一次打开该集时采集并永久保存） |
 | GET | `/api/v1/search/{keyword}` | 搜索：番剧 + 种子（本地库；翻页 `?page=`）。番剧只在第 1 页返回，数量为设置 `site.search_subjects`（默认 24），`subjects_total` 为匹配总数 |
 | GET | `/api/v1/search/{keyword}/subjects?offset=` | 展开更多番剧：下一批（数量同上）→ `{subjects, total}` |
 | GET | `/api/v1/torrents/hash/{ih}` | 种子收录状态与文件刮削结果（做种后轮询） |
@@ -153,6 +154,18 @@ URL 与 API 中用来指代某一集（Go：`meta.ParseEpisodeKey`，`internal/m
               "swarm": Swarm | null }] }
 ```
 `items` 只含当前用户可播放的文件（管理员为全部，见「列表只包含可播放的种子」），按发布时间倒序（中性顺序），**不再由服务端推荐**：前端按 `/site.rank_rules` 与当前用户权限打分排序（`web/src/lib/rank.ts`，见「推荐规则」），列表第一项自动播放。无已知文件时 `items` 为空数组。`swarm` 见「做种统计」。特别篇的文件来自 `torrent_files` 中对应的 kind（见「集的键」）。
+
+### `GET /subjects/{provider}/{id}/episodes/{n}/danmaku`
+单集弹幕。接口权限可配置（「播放」组），默认游客可用。只有正片（`kind=main`，且是该条目 bangumi 官方章节里的一集）有弹幕；`{n}` 按分割放送换算为官方集数（`01` = `1`）。
+```json
+{ "items": [[12.35, 1, 16777215, "弹幕文字"], [3, 5, 255, "顶部弹幕"]] }   // [时间（秒）, 模式, 颜色 0xRRGGBB, 文字]，按时间排序
+```
+- 模式：1 滚动、4 底部、5 顶部（Bilibili 写法；其他滚动变体存为 1，高级 / 代码弹幕不保存）。不返回来源平台。
+- 没有弹幕（未映射、采集失败、尚未上传）时 `{"items": []}`，`Cache-Control: no-store`；有弹幕时 `private, no-cache` + `ETag`（`If-None-Match` → 304）。
+- **按需采集**（`internal/danmaku`）：该集还没有保存的弹幕、设置了 `danmaku.api_url`、不在失败退避中时，本请求触发采集并最多等待 40 秒（超时则返回空，采集在后台继续，下次打开即有）。同一集的并发请求共用一次采集；触发采集的请求每 IP 突发 10 次、之后每 30 秒 1 次（已保存的弹幕不限）。从不批量抓取。
+- 映射（只在确定时采集）：bangumi 条目 → bangumi-data 的平台 ID（映射库 `bd_sites`：`bilibili*` 为番剧 media id，`gamer*` 为动画疯 acgDetail id；导入全部年份）→ 平台分集列表（Bilibili `pgc/review/user` + `pgc/web/season/section` 正片区，标题不是纯数字的（预告、SP）跳过；动画疯 acgDetail 页 + `api.gamer.com.tw/anime/v1/video.php` 本篇区，`acgSn` 必须一致，台湾限定作品用 acgDetail 页上不含「更多」的完整列表）→ 本集：平台编号全部是我们的官方集数（可以少，播出中）时按编号对应（动画疯第二季从 29 起与 bangumi 一致）；平台从 1 编号而 bangumi 延续上一季（如 13–24，整数、连续）时按顺序对应；平台独有的 .5 总集篇忽略；同一平台列表属于多个 bangumi 条目（分割放送）时这些条目的官方集数不能重叠，合起来按上述规则对应；一个条目有多个同平台 ID（地区版、配音版、每季一个列表）时只用包含全部官方集数的列表；其他情况（平台有我们没有的整数集、编号重复）不采集。特别篇不采集。
+- 采集：经 danmu_api 边车（Bilibili：`GET /api/v2/comment?url=https://www.bilibili.com/bangumi/play/ep{ep_id}?season_id={sid}&format=json&duration=true`；动画疯：`POST /api/v2/segmentcomment?format=json` `{"type":"bahamut","url":"{videoSn}",…}`）。空结果、错误不保存，按集退避重试（10 分钟起翻倍，最长 12 小时；不确定的映射 6 小时后再试；退避只在内存）；Bilibili 结果最后 7 分钟没有弹幕（danmu_api 遇到失败的 6 分钟分片会截断）视为失败，重试 2 次后仍如此才接受。
+- 保存：映射库 `danmaku`（每集每平台一行：平台分集 ID、条数、gzip JSON、采集时间）。**一集只要已有弹幕就不再采集**（其他平台也不再补采，已保存的从不更新）。
 
 ### `GET /search/{keyword}?page=1`
 关键词放在路径里（需 URL 编码，最长 100 字）；`page` 上限 50。每 IP 突发 20 次、之后每 3 秒 1 次。全部读本地库（SQLite FTS5 trigram，中日文可搜；关键词中任一词少于 3 个字时改用 LIKE 子串匹配）。
@@ -310,7 +323,7 @@ WebSeed **只由边缘节点提供**：`{edge_url}/webseed/hash/{ih}/…`（如 
 ## 后台 `/admin/*`（仅 admin）
 - `GET /admin/permissions` → `{"roles":["guest","member","vip"], "items":[{key, method, path, group, label, access, default_roles, granted:{guest,member,vip}}]}`
 - `PUT /admin/permissions` `{"grants": {"POST /api/v1/torrents/hash/{ih}/seed": ["member"], ...}}` → 同 GET（只能改 configurable / user 类型；user 类型不能授权给 guest）
-- `GET/PUT /admin/settings` 全部站点设置（KV 对象，字段见 `GET` 返回）
+- `GET/PUT /admin/settings` 全部站点设置（KV 对象，字段见 `GET` 返回）。组「弹幕」：`danmaku.api_url`（string，默认空 = 不采集；danmu_api 边车的内网地址含访问令牌，如 `http://danmu-api:9321/<TOKEN>`，部署见 deploy.md「弹幕边车」；已保存的弹幕不受影响）。
 - `GET/POST /admin/qb-servers`，`PUT/DELETE /admin/qb-servers/id/{id}`，`POST /admin/qb-servers/id/{id}/test`
   - 服务器字段 `edge_url`（边缘节点公开地址，`https://…`，可空）、`edge_api`（qB WebUI API 经边缘节点隧道访问，不再直连 `url`；边缘节点断开时该服务器离线）；列表另有 `edge_bound`（已生成令牌）与 `edge {connected, since, version, host, remote, rtt_ms, bytes_served, requests, listen, stats_error}`。
   - `POST /admin/qb-servers/id/{id}/edge-token` → `{token, connect_url}`：生成 / 重新生成边缘节点令牌（`otde_` + 43 字符，只返回这一次，库里只存 SHA-256；旧令牌立即失效，已连接的边缘节点断开）。`DELETE` 同路径：解除绑定。
