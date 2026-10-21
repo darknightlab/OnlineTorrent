@@ -11,6 +11,7 @@ import { timeAgo } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { AdminHeader, StatusDot } from "./components"
 import { BangumiDataCard } from "./BangumiData"
+import { ManamiCard } from "./Manami"
 import { BgmArchiveCard } from "./BgmArchive"
 
 export default function Overview() {
@@ -55,6 +56,9 @@ export default function Overview() {
         </div>
         <div className="xl:col-span-2">
           <BangumiDataCard />
+        </div>
+        <div className="xl:col-span-2">
+          <ManamiCard />
         </div>
         <Card className="overflow-hidden">
           <PanelTitle title="qB 服务器" to="/admin/qb" />

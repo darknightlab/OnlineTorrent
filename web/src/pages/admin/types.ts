@@ -293,6 +293,25 @@ export interface BangumiDataStatus {
   next_at: string | null
 }
 
+/** GET /admin/manami：anime-offline-database（manami-project，ODbL）导入状态（每周一次） */
+export interface ManamiStatus {
+  url: string
+  /** 数据库版本（lastUpdate） */
+  release: string
+  synced_at: string
+  /** 数据库条目数 */
+  entries: number
+  /** 按 MAL / AniDB / AniList ID 对应上的条目数 */
+  linked: number
+  /** 存下的名称数 */
+  names: number
+  duration_sec: number
+  error?: string
+  error_at?: string
+  running: boolean
+  next_at?: string
+}
+
 export interface BgmArchiveStatus {
   /** 当前已导入的导出文件名 */
   dump: string

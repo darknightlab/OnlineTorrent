@@ -406,6 +406,7 @@ Source：
 - `DELETE /admin/sources/id/{id}` → `{"items": [Source]}`（已收录的种子保留）
 - `POST /admin/sources/id/{id}/run` → 202 Source（`running: true`），后台立即抓取一次（无视间隔、启用状态与全局开关）；正在抓取时 409 `busy`。结果稍后见列表。
 - `GET /admin/bgm-archive` → `{dump, dump_at, digest, synced_at, subjects, episodes, relations, duration_sec, checked_at, error?, error_at?, running, phase?}`（bangumi Archive 同步状态；phase 为 subjects|episodes|relations）；`POST /admin/bgm-archive/run` → 202（即使未更新也重新导入），运行中 409 `busy`。设置 `bgm_archive.enabled` 控制每 6 小时自动检查。
+- `GET /admin/manami` → `{url, release, running, synced_at, entries, linked, names, duration_sec, error?, error_at?, next_at?}`：manami-project anime-offline-database 名称库导入状态（持久化）；固定每周一次，失败至少隔 6 小时重试；`POST /admin/manami/run` → 202 + 同一结构，运行中 409 `busy`，地址为空 400。设置 `upstream.manami_url` 为官方 JSONL release asset（空 = 不导入）。只按 MAL / AniDB / AniList 共享 ID 关联，不按标题猜；独立存于 meta 迁移 15 `manami_names(work_key,name,entry)`，用于规则名称索引和模型名称核对；ODbL / DbCL 署名及校准详见 [名称库说明](research/manami-names.md)。
 - `GET /admin/bangumi-data` → `{url, running, synced_at, works, duration_sec, error?, error_at?, next_at}`（bangumi-data 同步状态，只在内存中；服务启动时及每 12 小时同步一次，导入全部条目（不限年份；时间表按日期另行筛选）；`POST /admin/bangumi-data/run` → 202，运行中 409 `busy`。
 - `GET /admin/metadata-jobs` → `{"items":[{infohash, source_id, status:"pending|running|done|failed", attempts, next_at, server_id, added, started_at, last_error, created_at, updated_at}]}`（最近 200 条，未完成的在前）
 

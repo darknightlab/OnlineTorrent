@@ -1125,7 +1125,7 @@ func (s *Store) NameEvidence(ctx context.Context, workKey string, texts []string
 	var keep, shorts []string
 	seen := map[string]bool{}
 	for _, n := range names {
-		for _, v := range []string{normName(n), seasonless(n)} {
+		for _, v := range nameVariants(n) {
 			if seen[v] {
 				continue
 			}
@@ -1141,23 +1141,23 @@ func (s *Store) NameEvidence(ctx context.Context, workKey string, texts []string
 	var frags []string
 	brackets := map[string]bool{}
 	for _, t := range texts {
-		all.WriteString(normName(t))
+		all.WriteString(evidenceFold(normName(t)))
 		all.WriteByte('|')
-		all.WriteString(seasonless(t))
+		all.WriteString(evidenceFold(seasonless(t)))
 		all.WriteByte('|')
 		// fragments of the last path part, and of the whole text: a torrent title
 		// "[G] 牧神记 / Tales of Herding Gods - 105" is not a path ("/" separates titles)
 		for _, src := range []string{stem(t), t} {
 			for _, f := range titleFragments(src) {
 				for _, v := range []string{normName(f), seasonless(f)} {
-					if long(v) {
+					if v = evidenceFold(v); long(v) {
 						frags = append(frags, v)
 					}
 				}
 			}
 		}
 		for _, m := range reBracketPart.FindAllStringSubmatch(normWidth(t), -1) {
-			brackets[normName(m[1])] = true
+			brackets[evidenceFold(normName(m[1]))] = true
 		}
 	}
 	text := all.String()
@@ -1178,6 +1178,49 @@ func (s *Store) NameEvidence(ctx context.Context, workKey string, texts []string
 	}
 	return false
 }
+
+// nameVariants: the forms a work name is compared in (NameEvidence), long vowels folded:
+// as written, without season markers (seasonless), without a trailing sequel number
+// (franchiseBase: "Cyberpunk: Edgerunners 2" is named by "Cyberpunk Edgerunners S02") and
+// without bracketed parts ("Battle Spirits [Re] 絕界之空" by "Battle Spirits 絕界之空").
+func nameVariants(n string) []string {
+	vs := []string{normName(n), seasonless(n)}
+	if FixSequelNumber {
+		vs = append(vs, franchiseBase(n))
+	}
+	if FixBrackets {
+		if b := reAnyBracket.ReplaceAllString(normWidth(n), " "); b != n {
+			vs = append(vs, normName(b))
+		}
+	}
+	for i := range vs {
+		vs[i] = evidenceFold(vs[i])
+	}
+	return vs
+}
+
+// reAnyBracket: one bracketed part of a name.
+var reAnyBracket = regexp.MustCompile(`[\[【〔「『(（][^\]】〕」』)）\[【]{0,40}[\]】〕」』)）]`)
+
+// evidenceFold folds romanised long vowels for NameEvidence (the retrieval index's folding:
+// ō / ū … → o / u, ou / oo → o, uu → u, wo → o, ei → e) — "Genso Suikoden" names "Gensou
+// Suikoden".
+func evidenceFold(s string) string {
+	if !FixVowels {
+		return s
+	}
+	return foldVowels(foldReplacer.Replace(s))
+}
+
+// Name-matching fixes (2026-10), switchable for calibration.
+var (
+	FixSequelNumber = true
+	FixBrackets     = true
+	FixVowels       = true
+	FixColonPrefix  = true
+	FixParentNames  = true
+	UseManamiNames  = true
+)
 
 // reBracketPart: the content of one bracket pair.
 var reBracketPart = regexp.MustCompile(`[\[【〔「『(（]([^\]】〕」』)）\[【]{1,40})[\]】〕」』)）]`)
@@ -1202,18 +1245,94 @@ func (s *Store) WorkNames(ctx context.Context, workKey string) []string {
 	if err != nil {
 		return nil
 	}
-	names := append([]string{w.Title, w.TitleCN}, w.Aliases...)
+	own := append([]string{w.Title, w.TitleCN}, w.Aliases...)
+	names := append([]string(nil), own...)
+	if UseManamiNames {
+		names = append(names, s.ManamiNames(ctx, w.Key)...)
+	}
 	id := bgmIDOf(w)
 	if id == 0 {
 		return names
 	}
-	for _, rid := range s.relatedBgm(ctx, id, directFamily, 1, 12) {
-		if rw, err := s.WorkByExternal(ctx, "bgm", strconv.FormatInt(rid, 10)); err == nil {
-			names = append(names, rw.Title, rw.TitleCN)
-			names = append(names, rw.Aliases...)
+	addWork := func(rw *Work) {
+		names = append(names, rw.Title, rw.TitleCN)
+		names = append(names, rw.Aliases...)
+		if UseManamiNames {
+			names = append(names, s.ManamiNames(ctx, rw.Key)...)
 		}
 	}
+	for _, rid := range s.relatedBgm(ctx, id, directFamily, 1, 12) {
+		if rw, err := s.WorkByExternal(ctx, "bgm", strconv.FormatInt(rid, 10)); err == nil {
+			addWork(rw)
+		}
+	}
+	// an OVA / special also goes by its parent's names (日常 OAD: "Nichijou"): bgm 主线故事
+	// (12) from it, or 番外篇 (6) to it
+	if k := (&famWork{w: w}).kind(); FixParentNames && (k == "ova" || k == "special") {
+		for _, rid := range s.nameParents(ctx, id) {
+			if rw, err := s.WorkByExternal(ctx, "bgm", strconv.FormatInt(rid, 10)); err == nil {
+				addWork(rw)
+			}
+		}
+	}
+	if FixColonPrefix {
+		names = append(names, s.franchisePrefixes(ctx, own, id)...)
+	}
 	return append(names, s.derivedNames(ctx, w, id)...)
+}
+
+// nameParents follows only toward the parent, never toward sibling side stories.
+func (s *Store) nameParents(ctx context.Context, id int64) []int64 {
+	rows, err := s.R.QueryContext(ctx, `SELECT related_id FROM subject_relations WHERE subject_id=? AND relation_type=12
+		UNION SELECT subject_id FROM subject_relations WHERE related_id=? AND relation_type=6`, id, id)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var rid int64
+		if rows.Scan(&rid) == nil {
+			out = append(out, rid)
+		}
+	}
+	return out
+}
+
+// franchisePrefixes: the part before ":" / " - " of the work's own names ("Tokyo Revengers:
+// Santen Sensou-hen" → "Tokyo Revengers"), when a work of its season chain (前传 / 续集, any
+// distance) is called exactly that — the franchise name, not a guess.
+func (s *Store) franchisePrefixes(ctx context.Context, own []string, id int64) []string {
+	var prefixes []string
+	for _, n := range own {
+		i := strings.IndexAny(n, ":：")
+		if j := strings.Index(n, " - "); i < 0 || (j > 0 && j < i) {
+			i = j
+		}
+		if i > 0 {
+			if p := strings.TrimSpace(n[:i]); utf8.RuneCountInString(normName(p)) >= 3 {
+				prefixes = append(prefixes, p)
+			}
+		}
+	}
+	if len(prefixes) == 0 {
+		return nil
+	}
+	chain := map[string]bool{}
+	for _, rid := range s.relatedBgm(ctx, id, chainRelations, 8, 30) {
+		if rw, err := s.WorkByExternal(ctx, "bgm", strconv.FormatInt(rid, 10)); err == nil {
+			for _, n := range append([]string{rw.Title, rw.TitleCN}, rw.Aliases...) {
+				chain[normName(n)] = true
+			}
+		}
+	}
+	var out []string
+	for _, p := range prefixes {
+		if chain[normName(p)] {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // derivedNames: related works (any family relation, one step) whose Japanese title is the

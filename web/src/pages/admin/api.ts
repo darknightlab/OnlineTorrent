@@ -7,6 +7,7 @@ import type {
   AdminUserUpdate,
   AuditEntry,
   BangumiDataStatus,
+  ManamiStatus,
   BgmArchiveStatus,
   ClefAnomalies,
   ClefDecision,
@@ -99,6 +100,8 @@ export const adminApi = {
   runBgmArchive: () => post<BgmArchiveStatus>("/admin/bgm-archive/run"),
   bangumiData: () => get<BangumiDataStatus>("/admin/bangumi-data"),
   runBangumiData: () => post<BangumiDataStatus>("/admin/bangumi-data/run"),
+  manami: () => get<ManamiStatus>("/admin/manami"),
+  runManami: () => post<ManamiStatus>("/admin/manami/run"),
 
   trackers: () => get<TrackersResponse>("/admin/trackers"),
   rankRules: () => get<RankRulesResponse>("/admin/rank-rules"),

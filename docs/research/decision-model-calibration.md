@@ -10,6 +10,18 @@ backends, chosen by the setting `clef.provider` (settings group 决策模型):
 
 Design: [plan.md](../plan.md) 「规则收紧 + 决策模型」. API: [api.md](../api.md) 「后台」→「决策模型」.
 
+## Names v5: attributed manami names and evidence normalisation (2026-10-21)
+
+See [manami-names.md](manami-names.md) for release format, deterministic ID linking,
+filtering, attribution, memory measurements and production pending-file replay.
+Recorded v2 model answers: **255 applied / 0 wrong**, unchanged. Each evidence change
+(long vowels, trailing sequel number, bracket removal, franchise-only alias prefix,
+OVA parent names) was ablated independently; no change introduced a wrong auto-mapping.
+Rules on the same full bangumi-data baseline: 197 → 196 certain, no new wrong; Tenipuri
+is conservatively deferred because its short franchise name now names an older work.
+Of 91 live production `no_name_evidence` files, **66 pass the name gate** offline; 25 remain
+without deterministic shared-ID links. No model API calls or production writes.
+
 ## Date gate v4: late releases only matter for single-episode torrents (2026-10-21)
 
 Owner decisions:

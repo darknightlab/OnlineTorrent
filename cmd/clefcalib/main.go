@@ -64,6 +64,24 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: clefcalib run|analyze …")
 		os.Exit(2)
 	}
+	// CLEFCALIB_DISABLE=vowels,brackets,sequel,colon,parent,manami: replay without those
+	// name-matching changes (meta.Fix*, meta.UseManamiNames)
+	for _, f := range strings.Split(os.Getenv("CLEFCALIB_DISABLE"), ",") {
+		switch strings.TrimSpace(f) {
+		case "vowels":
+			meta.FixVowels = false
+		case "brackets":
+			meta.FixBrackets = false
+		case "sequel":
+			meta.FixSequelNumber = false
+		case "colon":
+			meta.FixColonPrefix = false
+		case "parent":
+			meta.FixParentNames = false
+		case "manami":
+			meta.UseManamiNames = false
+		}
+	}
 	var err error
 	switch os.Args[1] {
 	case "run":

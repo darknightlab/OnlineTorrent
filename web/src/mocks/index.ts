@@ -382,6 +382,12 @@ function torrentStatus(ih: string): TorrentStatus {
 
 // ---- 抓取源 ----
 const sources = fx.sources
+const manami = {
+  url: "https://github.com/manami-project/anime-offline-database/releases/latest/download/anime-offline-database.jsonl",
+  release: "2026-07-04", synced_at: new Date(Date.now() - 86400_000).toISOString(),
+  entries: 41537, linked: 8228, names: 117423, duration_sec: 3.5, running: false,
+  next_at: new Date(Date.now() + 6 * 86400_000).toISOString(),
+}
 const bgmArchive: BgmArchiveStatus = {
   dump: "dump-2026-10-13.210353Z.zip",
   dump_at: "2026-10-13T21:03:54Z",
@@ -601,6 +607,14 @@ const routes: [string, string, Handler][] = [
       s.next_run_at = s.enabled ? new Date(Date.now() + s.interval_min * 60_000 * 2 ** s.fail_count).toISOString() : null
     }, 4000)
     return new Status(202, { ...s })
+  }],
+  ["GET", "/admin/manami", () => (requireAdmin(), { ...manami })],
+  ["POST", "/admin/manami/run", () => {
+    requireAdmin()
+    if (manami.running) throw new HttpError(409, "busy", "正在导入")
+    manami.running = true
+    setTimeout(() => { manami.running = false; manami.synced_at = new Date().toISOString() }, 3000)
+    return new Status(202, { ...manami })
   }],
   ["GET", "/admin/bgm-archive", () => (requireAdmin(), { ...bgmArchive })],
   ["POST", "/admin/bgm-archive/run", () => {

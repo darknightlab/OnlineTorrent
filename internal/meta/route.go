@@ -453,10 +453,16 @@ func (s *Store) otherWorkNamer(ctx context.Context, fam *family) func(path strin
 		for _, f := range fam.works {
 			m[f.w.Key] = true
 		}
-		for _, n := range append([]string{w.Title, w.TitleCN}, w.Aliases...) {
-			for _, k := range idx.base[franchiseBase(n)] {
+		names := append([]string{w.Title, w.TitleCN}, w.Aliases...)
+		for _, n := range names {
+			for _, k := range idx.nativeBase[franchiseBase(n)] {
 				m[k] = true
 			}
+			own = append(own, normName(n))
+		}
+		// Imported names can identify this work, but cannot grant a franchise exemption
+		// to another work (generic synonyms such as "Bleach" span different series).
+		for _, n := range idx.extra[w.Key] {
 			own = append(own, normName(n))
 		}
 		tg := &target{keys: m, names: own}

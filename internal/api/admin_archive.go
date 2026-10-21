@@ -44,3 +44,26 @@ func (s *Server) adminBangumiDataRun(w http.ResponseWriter, r *http.Request) err
 	httpx.JSON(w, 202, st)
 	return nil
 }
+
+// GET /api/v1/admin/manami — anime-offline-database import status
+func (s *Server) adminManamiStatus(w http.ResponseWriter, r *http.Request) error {
+	httpx.JSON(w, 200, s.Cat.ManamiState(r.Context()))
+	return nil
+}
+
+// POST /api/v1/admin/manami/run — import now; 202 with the live status, 409 if running,
+// 400 without a URL.
+func (s *Server) adminManamiRun(w http.ResponseWriter, r *http.Request) error {
+	st := s.Cat.ManamiState(r.Context())
+	if st.Running {
+		return httpx.E(409, "busy", "anime-offline-database 正在导入")
+	}
+	if st.URL == "" {
+		return httpx.E(400, "bad_request", "未设置 anime-offline-database 地址")
+	}
+	go func() { _, _ = s.Cat.SyncManami(s.BaseCtx) }()
+	s.audit(r, "manami.run", "", "")
+	st.Running = true
+	httpx.JSON(w, 202, st)
+	return nil
+}

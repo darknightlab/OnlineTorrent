@@ -228,6 +228,10 @@ GitHub release 支持 Range（不支持后缀式 `bytes=-N`，要用绝对区间
 - 合并：别名分来源存（bd_aliases / bgm_aliases）后取并集；中文名、简介以 bangumi 为准；放送时间、类型、日期以 bangumi-data 为准；本站数字 ID 不变。
 - bangumi-data 导入不限年份（2026-10；原来只导入近 3 年）：全部条目的标题、各语言译名（zh-Hans / zh-Hant / en / ja，作别名）、放送、类型、日期与平台 ID 都导入，旧作品也有 bangumi-data 的英文名（决策模型的名称核对用）。时间表只按日期窗口取候选（`WorksForSchedule`），不受影响。开发库实测：作品 31230 → 31296（新增 62 个无 bangumi ID 的 `bd:` 条目等），来源为 bangumi-data 的 1106 → 8910，时间表候选 233 → 233。注意 bangumi-data 的英文名并不全：魔法禁书目录（2008）没有英文 / 罗马字名，点兔 BLOOM 只有 "Is the order a rabbit ? BLOOM"，这两例的名称核对仍不通过。
 
+## 名称来源：anime-offline-database
+
+manami-project 的 ODbL 名称库按共享 MAL / AniDB / AniList ID 确定关联（不按标题），每周后台流式导入；管理概览有状态 / 立即同步，地址设置 `upstream.manami_url`。独立表 `manami_names` 合并到规则名称索引和模型名称证据，可整批删除；不覆盖原始标题或别名。模型证据还支持长音折叠、末尾续作号、去括号、限系列的冒号前缀和 OVA 的母篇名称。实现、授权、过滤、校准见 [manami-names.md](research/manami-names.md)。
+
 ## 映射关系（2026-10-18 确认）
 不做「系列（series）」：跟随 bangumi，每季 / 每部剧场版 / OVA 都是独立条目（subject）。
 - 一个条目对应多个种子；一个种子可以对应多个条目（多季合集、正片 + 剧场版合集）。

@@ -52,6 +52,7 @@ const (
 	KeyUpstreamProxy     = "upstream.proxy"
 	KeyMoeBase           = "upstream.bangumi_moe"
 	KeyBangumiDataURL    = "upstream.bangumi_data_url"
+	KeyManamiURL         = "upstream.manami_url"
 	KeyBgmUserAgent      = "upstream.bgm_user_agent"
 	KeyTMDBKey           = "upstream.tmdb_api_key"
 	KeyCrawlEnabled      = "crawl.enabled"
@@ -204,6 +205,7 @@ func SettingsSchema() []SettingSpec {
 		{Key: KeyUpstreamProxy, Group: "上游", Type: "string", Label: "上游代理", Description: "访问 bangumi.moe / bgm.tv（以及弹幕平台 Bilibili / 巴哈姆特的分集列表）用的代理，如 socks5://127.0.0.1:1080，留空直连", Default: ""},
 		{Key: KeyMoeBase, Group: "上游", Type: "string", Label: "bangumi.moe 地址", Default: "https://bangumi.moe"},
 		{Key: KeyBangumiDataURL, Group: "上游", Type: "string", Label: "bangumi-data 地址", Default: "https://cdn.jsdelivr.net/npm/bangumi-data@0.3/dist/data.json"},
+		{Key: KeyManamiURL, Group: "上游", Type: "string", Label: "anime-offline-database 地址", Description: "manami-project 的 anime-offline-database（JSON Lines 版，约 60 MB，ODbL）：每周导入一次，按 MAL / AniDB / AniList ID 与条目对应，标题与别名只用于名称匹配；留空则不导入", Default: "https://github.com/manami-project/anime-offline-database/releases/latest/download/anime-offline-database.jsonl"},
 		{Key: KeyBgmUserAgent, Group: "上游", Type: "string", Label: "bgm.tv User-Agent", Default: "darknightlab/onlinetorrent (https://www.projectk.org)"},
 
 		{Key: KeyTMDBKey, Group: "上游", Type: "secret", Label: "TMDB API Key", Description: "可选；本地搜不到番剧时也查询 TMDB（v3 API Key 或 v4 读取令牌），留空只查 bgm.tv", Default: ""},

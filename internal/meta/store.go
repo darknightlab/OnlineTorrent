@@ -296,6 +296,16 @@ CREATE TABLE user_danmaku (
 );
 CREATE INDEX user_danmaku_episode ON user_danmaku(work_key, episode);
 CREATE INDEX user_danmaku_user ON user_danmaku(user_id, created_at);
+`,
+	// 15: names from manami-project's anime-offline-database (manami.go; ODbL), linked to
+	// works by shared external ids only; used for matching, kept apart from works.aliases
+	`
+CREATE TABLE manami_names (
+	work_key TEXT NOT NULL,
+	name     TEXT NOT NULL,
+	entry    TEXT NOT NULL,   -- the database entry (its first source URL)
+	PRIMARY KEY (work_key, name)
+);
 `}
 
 // Store is the meta database.

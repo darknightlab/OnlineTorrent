@@ -770,6 +770,8 @@ type aliasIndex struct {
 	// franchise match (franchiseCandidates: franchiseBase) → work keys. In memory: the
 	// former works_fts trigram queries per fragment were most of Match's time.
 	norm, base map[string][]string
+	nativeBase map[string][]string // original-source franchise names, for contradiction exemptions
+	extra      map[string][]string // attributed manami names per work (file-name checks, no DB query)
 }
 
 type aliasWork struct {
@@ -819,14 +821,18 @@ func (s *Store) buildAliasIndex(ctx context.Context) (*aliasIndex, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	idx := &aliasIndex{names: make(map[string][]aliasWork, 1<<17), norm: make(map[string][]string, 1<<17), base: make(map[string][]string, 1<<15)}
+	idx := &aliasIndex{names: make(map[string][]aliasWork, 1<<17), norm: make(map[string][]string, 1<<17), base: make(map[string][]string, 1<<15), nativeBase: make(map[string][]string, 1<<15), extra: map[string][]string{}}
 	addKey := func(m map[string][]string, n, key string) {
 		if n == "" {
 			return
 		}
-		if l := m[n]; len(l) == 0 || l[len(l)-1] != key {
-			m[n] = append(l, key)
+		l := m[n]
+		for _, k := range l {
+			if k == key {
+				return
+			}
 		}
+		m[n] = append(l, key)
 	}
 	for rows.Next() {
 		var key, title, cn, aliases, begin, typ string
@@ -846,6 +852,7 @@ func (s *Store) buildAliasIndex(ctx context.Context) (*aliasIndex, error) {
 			addKey(idx.norm, normName(a), key)
 			if series {
 				addKey(idx.base, franchiseBase(a), key)
+				addKey(idx.nativeBase, franchiseBase(a), key)
 			}
 			a = strings.ToLower(strings.TrimSpace(a))
 			if utf8.RuneCountInString(a) < 4 || len(a) > aliasIndexMaxBytes || seen[a] {
@@ -858,7 +865,48 @@ func (s *Store) buildAliasIndex(ctx context.Context) (*aliasIndex, error) {
 			}
 		}
 	}
-	return idx, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if UseManamiNames {
+		// anime-offline-database names (manami.go), linked by shared ids
+		mrows, err := s.R.QueryContext(ctx, `SELECT m.work_key, m.name, w.begin_at, w.type, w.platform FROM manami_names m JOIN works w ON w.key = m.work_key ORDER BY m.work_key`)
+		if err != nil {
+			return nil, err
+		}
+		defer mrows.Close()
+		for mrows.Next() {
+			var key, name, begin, typ string
+			var platform int
+			if err := mrows.Scan(&key, &name, &begin, &typ, &platform); err != nil {
+				return nil, err
+			}
+			k := strings.ToLower(typ)
+			if k == "" {
+				k = platformType[platform]
+			}
+			idx.extra[key] = append(idx.extra[key], name)
+			addKey(idx.norm, normName(name), key)
+			if k == "tv" || k == "web" {
+				addKey(idx.base, franchiseBase(name), key)
+			}
+			a := strings.ToLower(strings.TrimSpace(name))
+			if utf8.RuneCountInString(a) < 4 || len(a) > aliasIndexMaxBytes {
+				continue
+			}
+			if ws := idx.names[a]; len(ws) == 0 || ws[len(ws)-1].key != key {
+				idx.names[a] = append(ws, aliasWork{key, begin})
+			}
+			if len(a) > idx.maxLen {
+				idx.maxLen = len(a)
+			}
+		}
+		if err := mrows.Err(); err != nil {
+			return nil, err
+		}
+	}
+	return idx, nil
 }
 
 // workGetter: GetWork with a per-call cache (nil: no such work).

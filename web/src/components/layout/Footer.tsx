@@ -11,9 +11,28 @@ export function Footer() {
             © 2022–{new Date().getFullYear()} Project Kawaii · projectk.org
           </span>
         </div>
-        <p className="leading-relaxed lg:text-right">
-          基于 WebTorrent 在浏览器中点对点播放；观看时会同时为其他用户上传数据。本站不存储任何视频文件。
-        </p>
+        <div className="space-y-1 leading-relaxed lg:text-right">
+          <p>基于 WebTorrent 在浏览器中点对点播放；观看时会同时为其他用户上传数据。本站不存储任何视频文件。</p>
+          <p>
+            番剧资料来自{" "}
+            <a className="underline-offset-2 hover:underline" href="https://bgm.tv" target="_blank" rel="noreferrer">
+              Bangumi 番组计划
+            </a>
+            、
+            <a className="underline-offset-2 hover:underline" href="https://github.com/bangumi-data/bangumi-data" target="_blank" rel="noreferrer">
+              bangumi-data
+            </a>
+            ；名称匹配使用{" "}
+            <a className="underline-offset-2 hover:underline" href="https://github.com/manami-project/anime-offline-database" target="_blank" rel="noreferrer">
+              anime-offline-database
+            </a>
+            （manami-project，依{" "}
+            <a className="underline-offset-2 hover:underline" href="https://opendatacommons.org/licenses/odbl/1-0/" target="_blank" rel="noreferrer">
+              ODbL 1.0
+            </a>{" "}
+            授权）。
+          </p>
+        </div>
       </Container>
     </footer>
   )
