@@ -130,7 +130,10 @@ function SectionTitle({ id, title, extra }: { id: string; title: string; extra?:
   )
 }
 
-/** 番剧：移动端单行横向滚动；桌面端网格。「展开更多」每次再取一批（数量同首批，后台设置） */
+/** 番剧网格：手机 3 列、sm 5、md 6、lg 8 */
+const SUBJECT_GRID = "grid grid-cols-3 gap-3 sm:grid-cols-5 sm:gap-4 md:grid-cols-6 lg:grid-cols-8"
+
+/** 番剧：网格，「展开更多」每次再取一批（数量同首批，后台设置） */
 function SubjectSection({ q, subjects, total }: { q: string; subjects: Subject[]; total: number }) {
   const [extra, setExtra] = useState<Subject[]>([])
   const [loading, setLoading] = useState(false)
@@ -149,14 +152,9 @@ function SubjectSection({ q, subjects, total }: { q: string; subjects: Subject[]
   return (
     <section aria-labelledby="search-subjects">
       <SectionTitle id="search-subjects" title="番剧" extra={`${total} 部`} />
-      <ul
-        className={cn(
-          "-mx-3 flex snap-x gap-3 overflow-x-auto px-3 pb-1 scrollbar-none",
-          "sm:mx-0 sm:grid sm:snap-none sm:grid-cols-5 sm:gap-4 sm:overflow-visible sm:px-0 sm:pb-0 md:grid-cols-6 lg:grid-cols-8",
-        )}
-      >
+      <ul className={SUBJECT_GRID}>
         {shown.map((s) => (
-          <li key={s.subject_id || s.key} className="w-[28vw] max-w-36 shrink-0 snap-start sm:w-auto sm:max-w-none">
+          <li key={s.subject_id || s.key}>
             <SubjectResult s={s} />
           </li>
         ))}
@@ -211,9 +209,10 @@ function SearchSkeleton() {
     <div className="space-y-6" aria-hidden>
       <div>
         {title}
-        <div className="-mx-3 flex gap-3 overflow-hidden px-3 pb-1 sm:mx-0 sm:grid sm:grid-cols-5 sm:gap-4 sm:px-0 sm:pb-0 md:grid-cols-6 lg:grid-cols-8">
+        <div className={SUBJECT_GRID}>
           {Array.from({ length: 8 }, (_, i) => (
-            <div key={i} className={cn("w-[28vw] max-w-36 shrink-0 sm:w-auto sm:max-w-none", i === 5 && "sm:hidden md:block", i >= 6 && "sm:hidden lg:block")}>
+            // 一行：手机 3、sm 5、md 6、lg 8
+            <div key={i} className={cn(i >= 3 && i < 5 && "hidden sm:block", i === 5 && "hidden md:block", i >= 6 && "hidden lg:block")}>
               <Skeleton className="aspect-[3/4] w-full rounded-lg" />
               <SkeletonLine className="mt-1.5 text-[13px] leading-snug sm:text-sm" bar="w-4/5" />
               <SkeletonLine className="mt-0.5 text-[11px]" bar="w-1/2" />
