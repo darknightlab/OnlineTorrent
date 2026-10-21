@@ -253,9 +253,17 @@
   --art-control-height: 44px;
 }
 .art-video-player.art-video-player .art-bottom .art-progress {
+  z-index: 15;
   padding-top: 12px;
-  padding-bottom: 0;
-  margin-bottom: -3px;
+  padding-bottom: 4px;
+  margin-bottom: -7px;
+}
+.art-video-player.art-video-player .art-bottom .art-controls {
+  z-index: auto;
+}
+.art-video-player.art-video-player .art-control-volume:hover,
+.art-video-player.art-video-player .art-control-selector:hover {
+  z-index: 25;
 }
 .art-video-player.art-video-player .art-bottom .art-control-progress {
   height: 6px;

@@ -73,6 +73,14 @@ export default async function ({ send, sleep, RUN, SITE, IH, onCDP }) {
     await show()
     const m = result[device] = await metrics();check(m,mobile?phone:desktop)
     if (process.env.EXPECT_SUBTITLES) assert.ok(m.buttons.includes('subtitle'))
+    // Progress track (centre and lower half + thumb radius) must hit .art-progress, never .art-controls.
+    const hits = await ev(`
+      const p = document.querySelector('.art-video-player');
+      const r = p.querySelector('.art-control-progress-inner').getBoundingClientRect();
+      const x = Math.round(r.left + r.width / 2), cy = r.top + r.height / 2;
+      return [-6, -2, 0, 1, 2, 3, 6].map((dy) => !!document.elementFromPoint(x, Math.round(cy + dy))?.closest('.art-progress'));
+    `)
+    assert.deepEqual(hits, [true, true, true, true, true, true, true], `progress hit-test failed: ${JSON.stringify(hits)}`)
     await shot(`${device}-playing`)
 
     // Exact pause semantics: play→pause→resume, paused→pause→paused. Unmapped source must
