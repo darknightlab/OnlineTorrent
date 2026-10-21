@@ -36,8 +36,27 @@ function devStreamingSW(): Plugin {
   }
 }
 
+/**
+ * JASSUB 的渲染器用 desynchronized: true 创建字幕画布（低延迟叠加平面）。在 Windows（DirectComposition）
+ * 与 Android 的硬件视频叠加路径上，这样的画布会以不透明的黑色盖住下面的 <video>（只剩字幕可见）：
+ * https://github.com/ThaUnknown/jassub/issues/70（上游不改）。构建时改为 false；
+ * scripts/check-webtorrent-compat.mjs 检查构建产物里的 JASSUB worker 不再含 desynchronized: true。
+ */
+function jassubSynchronizedCanvas(): Plugin {
+  return {
+    name: "jassub-synchronized-canvas",
+    enforce: "pre",
+    transform(code, id) {
+      if (!/[\\/]jassub[\\/]dist[\\/]worker[\\/]/.test(id) || !code.includes("desynchronized")) return null
+      return { code: code.replace(/desynchronized:\s*true/g, "desynchronized: false"), map: null }
+    },
+  }
+}
+
 export default defineConfig({
+  worker: { plugins: () => [jassubSynchronizedCanvas()] },
   plugins: [
+    jassubSynchronizedCanvas(),
     react(),
     tailwindcss(),
     devStreamingSW(),

@@ -30,5 +30,11 @@ if (problems.length) fail(problems.map((p) => `  - ${p}`).join("\n"))
 const swProblems = checkServiceWorker(readFileSync(path.join(dist, "sw.js"), "utf8"), readFileSync(file, "utf8"))
 if (swProblems.length) fail(swProblems.map((p) => `  - ${p}`).join("\n"))
 console.log("✓ Service Worker：流处理在前，/webtorrent/ 不经过 workbox，预缓存清单已注入")
+// JASSUB 字幕画布：desynchronized 画布在 Windows / Android 的硬件视频叠加路径上会以黑色盖住视频（vite.config.ts）
+const desync = names.filter((n) => n.endsWith(".js") && /desynchronized:\s*(?:!0|true)/.test(readFileSync(path.join(assets, n), "utf8")))
+if (desync.length) fail(`  - 字幕画布仍为 desynchronized: true：${desync.join("、")}`)
+if (!names.some((n) => n.endsWith(".js") && /desynchronized:\s*(?:!1|false)/.test(readFileSync(path.join(assets, n), "utf8"))))
+  fail("  - 没有找到 JASSUB 渲染器（desynchronized: false），字幕画布补丁可能失效")
+console.log("✓ 字幕画布：desynchronized 已关闭（不会盖黑视频）")
 console.log(`✓ WebTorrent 构建产物兼容（dist/assets/${chunk}）`)
 process.exit(0) // 浏览器包在 node 里可能留下定时器
