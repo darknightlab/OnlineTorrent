@@ -2,7 +2,7 @@
 // 桌面全屏 / 手机横屏全屏且中间有足够空间时，发送框改在控制栏中间；否则仍在弹窗里。
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
-import { Send } from "lucide-react"
+import { SendHorizontal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -137,7 +137,7 @@ export function DanmakuSendBox({
         />
         {bar ? (
           <button type="submit" aria-label="发送弹幕" disabled={problem !== null || sending} className="absolute inset-y-0 right-0 flex w-8 items-center justify-center text-white/85 disabled:opacity-40">
-            <Send className="h-4 w-4" aria-hidden />
+            <SendHorizontal className="h-4 w-4" aria-hidden />
           </button>
         ) : (
           <Button type="submit" size="sm" disabled={problem !== null || sending} className="shrink-0">发送</Button>
