@@ -113,7 +113,7 @@ test("tap: subtitle blocks from the video's byte stream (random chunking), dedup
   await src.header
   const got: string[] = []
   src.onCue((tr, c) => got.push(`${tr}@${c.start}+${c.duration}:${c.text}`))
-  for (const seed of [1, 7, 42]) assert.equal(feed(src, file, 0, seed).dead, false)
+  for (const seed of [1, 7, 42]) feed(src, file, 0, seed)
   await new Promise((r) => setTimeout(r, 20))
   assert.deepEqual(got, [
     "2@500+2000:1,0,Default,,0,0,0,,第一句",
@@ -137,6 +137,32 @@ test("tap: a stream starting mid-file (seek) resyncs on the next cluster", async
   assert.deepEqual(src.cuesOf(3).map((c) => c.start), [20200])
 })
 
+test("tap: a file read as many short adjacent requests (cached replay) still yields every cue", async () => {
+  const { file } = makeMkv()
+  const mid = Math.floor(file.length * 0.4)
+  // reference: one long stream from the same point
+  const one = new SubtitleSource(reader(file), file.length)
+  await one.header
+  feed(one, file, mid, 3)
+  // the browser reading local data: a chain of 4 KB range requests, each a new stream (shorter than a cluster)
+  const many = new SubtitleSource(reader(file), file.length)
+  await many.header
+  for (let p = mid; p < file.length; p += 4096) many.tap(p).push(file.subarray(p, Math.min(file.length, p + 4096)))
+  // overlapping / repeated requests don't disturb it
+  for (let p = mid; p < file.length; p += 6000) many.tap(p).push(file.subarray(p, Math.min(file.length, p + 9000)))
+  await new Promise((r) => setTimeout(r, 20))
+  assert.ok(one.cuesOf(2).length > 0)
+  assert.deepEqual(many.cuesOf(2), one.cuesOf(2))
+  assert.deepEqual(many.cuesOf(3), one.cuesOf(3))
+  // from the very start, also in short requests
+  const head = new SubtitleSource(reader(file), file.length)
+  await head.header
+  for (let p = 0; p < file.length; p += 4096) head.tap(p).push(file.subarray(p, Math.min(file.length, p + 4096)))
+  await new Promise((r) => setTimeout(r, 20))
+  assert.equal(head.cuesOf(2).length, 3)
+  assert.equal(head.cuesOf(3).length, 2)
+})
+
 test("tap: tracks learnt from the stream itself when the header isn't parsed yet", async () => {
   const { file } = makeMkv()
   let release: () => void = () => {}
@@ -147,7 +173,7 @@ test("tap: tracks learnt from the stream itself when the header isn't parsed yet
   }
   const blocks: RawBlock[] = []
   const src = new SubtitleSource(slow, file.length)
-  const tap = src.tap(0)
+  const tap = (src as unknown as { newTap(start: number): unknown }).newTap(0) as { push(c: Uint8Array): void }
   // peek at what the tap classifies before the header is known
   ;(tap as unknown as { o: { onBlock: (b: RawBlock) => void } }).o.onBlock = (b) => blocks.push(b)
   tap.push(file)

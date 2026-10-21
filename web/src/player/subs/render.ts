@@ -29,6 +29,7 @@ export class SubtitleRenderer {
 
   private canvas: HTMLCanvasElement
   private watchdog = 0
+  private onSeeked: (() => void) | null = null
 
   /** player：播放器元素（画布放在里面）；video 必须在它里面 */
   constructor(video: HTMLVideoElement, player: HTMLElement, set: SubtitleSet, mobile: boolean) {
@@ -115,16 +116,33 @@ export class SubtitleRenderer {
     }
     const src = this.set.embedded
     if (!src) return
+    // 拖动 / 从中间打开时，补读播放位置之前开始、此刻仍在显示的字幕块
+    if (!this.onSeeked) {
+      this.onSeeked = () => void src.backfill(this.video.currentTime * 1000)
+      this.video.addEventListener("seeked", this.onSeeked)
+    }
+    if (this.video.currentTime > 1) void src.backfill(this.video.currentTime * 1000)
     const t = track.track
     await this.j.renderer.setTrack(t.codec === "srt" || !t.header.trim() ? srtHeader() : t.header)
     if (this.destroyed || gen !== this.gen) return
     const add = (c: Cue) => this.j.renderer.processChunk(c.text, c.start, c.duration)
     // 先订阅再取已有的（去重由 source 保证；processChunk 对同一 ReadOrder 也会去重）
     this.unsub = src.onCue((tr, c) => {
-      if (tr === this.track) void add(c)
+      if (tr !== this.track) return
+      // 补读到的字幕块常在拖动后的那一帧之后才到：暂停时要重画（播放时下一帧自然会画）
+      void add(c).then(() => this.repaintSoon())
     })
     await Promise.all(src.cuesOf(t.number).map(add))
     this.repaint()
+  }
+
+  private repaintTimer = 0
+  private repaintSoon() {
+    if (!this.video.paused || this.repaintTimer) return
+    this.repaintTimer = window.setTimeout(() => {
+      this.repaintTimer = 0
+      this.repaint()
+    }, 50)
   }
 
   /** 暂停时 JASSUB 不会重画（它跟着视频帧渲染）：换轨道 / 关闭后手动重画当前帧 */
@@ -136,6 +154,8 @@ export class SubtitleRenderer {
     if (this.destroyed) return
     this.destroyed = true
     window.clearInterval(this.watchdog)
+    window.clearTimeout(this.repaintTimer)
+    if (this.onSeeked) this.video.removeEventListener("seeked", this.onSeeked)
     this.unsub?.()
     this.canvas.remove()
     void this.j.destroy().catch(() => {})

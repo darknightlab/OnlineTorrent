@@ -2,7 +2,7 @@
 // 引擎为正在播放的 MKV 文件创建；字幕块按轨道去重保存，渲染器随时可以取全部已收集的 + 订阅新的。
 import { children, readString } from "./ebml.ts"
 import { ID } from "./ebml.ts"
-import { decodeContent, isFont, parseMkvHeader, readAttachment, type MkvHeader, type ReadRange, type SubTrack } from "./mkv.ts"
+import { decodeContent, isFont, parseMkvHeader, readAttachment, readCuePoints, type MkvHeader, type ReadRange, type SubTrack } from "./mkv.ts"
 import { ClusterTap, type RawBlock } from "./tap.ts"
 
 export interface Cue {
@@ -14,6 +14,16 @@ export interface Cue {
 }
 
 export type CueListener = (track: number, cue: Cue) => void
+
+/** 一个视频读取流的字节入口（按顺序推入） */
+export interface TapSink {
+  push(chunk: Uint8Array): void
+}
+
+/** 补读：播放位置之前多少秒内开始的字幕块（字幕通常不超过这么长） */
+const BACKFILL_SECONDS = 10
+/** 补读一次最多读取的字节数 */
+const BACKFILL_MAX_BYTES = 32 << 20
 
 /** 字体附件合计超过此值时不加载（手机流量 / 内存） */
 const MAX_FONT_BYTES = 64 << 20
@@ -31,8 +41,16 @@ export class SubtitleSource {
   /** 视频读过的 Cluster（文件偏移 → 毫秒），Cues 缺失时用于进度条的时间映射 */
   readonly clusters = new Map<number, number>()
 
-  constructor(read: ReadRange, size: number) {
+  private size: number
+  private readBg: ReadRange
+  private cuePoints: Promise<[number, number][] | null> | null = null
+  private backfilled = new Set<number>()
+
+  /** read：辅助读取（头部、字体）；readBackground：低优先级读取（补读字幕块，见 backfill） */
+  constructor(read: ReadRange, size: number, readBackground: ReadRange = read) {
     this.read = read
+    this.size = size
+    this.readBg = readBackground
     this.header = parseMkvHeader(read, size).then(
       (h) => (this.h = h),
       () => null,
@@ -44,8 +62,39 @@ export class SubtitleSource {
     return this.h?.subtitles ?? []
   }
 
-  /** 为一个视频读取流（从 start 开始）创建解析器 */
-  tap(start: number): ClusterTap {
+  /** 解析器（每个连续读取的区段一个；新的读取流接着已有区段时继续用它） */
+  private taps: ClusterTap[] = []
+
+  /**
+   * 一个视频读取流（从 start 开始）的入口。浏览器常把文件分成许多相邻的短请求来读（数据已在本地缓存时尤其如此：
+   * 重新打开页面后每个请求只有几十 KB），每个请求单独从头同步的话，短于一个 Cluster 的请求永远找不到
+   * Cluster 头，字幕块一个也收不到。所以接着已有解析器的读取流继续用那个解析器（只送它还没见过的字节），
+   * 只有真正的跳跃（拖动）才新建解析器、从下一个 Cluster 开始同步。
+   */
+  tap(start: number): TapSink {
+    let pos = start
+    let t: ClusterTap | null = this.taps.find((x) => !x.dead && x.start <= start && start <= x.next) ?? null
+    return {
+      push: (chunk: Uint8Array) => {
+        const end = pos + chunk.length
+        if (!t || t.dead || t.next < pos) {
+          // 没有、或者与已解析的区段之间有空隙：找一个正好接得上的，否则新建
+          t = this.taps.find((x) => !x.dead && x.start <= pos && pos <= x.next) ?? this.newTap(pos)
+        }
+        if (t.next < end) t.push(chunk.subarray(t.next - pos)) // 已解析过的部分跳过
+        pos = end
+      },
+    }
+  }
+
+  private newTap(start: number): ClusterTap {
+    const t = this.createTap(start)
+    this.taps.push(t)
+    if (this.taps.length > 16) this.taps.shift()
+    return t
+  }
+
+  private createTap(start: number): ClusterTap {
     return new ClusterTap(start, {
       isSub: (n) => {
         const t = this.h?.trackTypes.get(n) ?? this.tracksFromStream.get(n)
@@ -94,6 +143,38 @@ export class SubtitleSource {
       m.set(key, cue)
       this.listeners.forEach((l) => l(b.track, cue))
     })
+  }
+
+  /**
+   * 补读播放位置之前的字幕块：字幕块存放在它开始时间所在的 Cluster 里，而拖动（以及从本地缓存重新打开，
+   * 浏览器直接从播放位置附近读起）后视频从目标时间的关键帧所在的 Cluster 开始读——此前开始、此刻仍在显示的
+   * 那一句永远读不到。读取播放位置前约 10 秒的 Cluster 到播放位置所在的 Cluster（按 Cues 索引；没有 Cues 时
+   * 按已见到的 Cluster），送进同一个解析器。低优先级读取，不与视频抢；同一段只读一次。
+   */
+  async backfill(ms: number): Promise<void> {
+    const h = this.h ?? (await this.header)
+    if (!h || !h.subtitles.length) return
+    this.cuePoints ??= readCuePoints(this.read, h).catch(() => null)
+    const idx = (await this.cuePoints) ?? [...this.clusters].map(([p, t]): [number, number] => [p, t / 1000]).sort((a, b) => a[0] - b[0])
+    if (!idx.length) return
+    const sec = ms / 1000
+    let from = idx[0][0]
+    let to = this.size
+    for (const [p, t] of idx) {
+      if (t <= sec - BACKFILL_SECONDS) from = p
+      if (t > sec) {
+        to = p
+        break
+      }
+    }
+    if (to <= from || to - from > BACKFILL_MAX_BYTES || this.backfilled.has(from)) return
+    this.backfilled.add(from)
+    try {
+      const bytes = await this.readBg(from, to)
+      this.tap(from).push(bytes)
+    } catch {
+      this.backfilled.delete(from) // 下次再试
+    }
   }
 
   /** 该轨道已收集的字幕块 */

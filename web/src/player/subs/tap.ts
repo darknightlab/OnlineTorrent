@@ -55,10 +55,19 @@ export class ClusterTap {
   /** 解析出错后停止（不影响视频本身） */
   dead = false
 
+  /** 这个解析器从哪里开始读（文件偏移） */
+  readonly start: number
+
   constructor(start: number, o: TapOptions) {
     this.o = o
+    this.start = start
     this.pos = start
     this.syncing = start !== 0
+  }
+
+  /** 下一块输入应从的文件偏移（输入必须连续） */
+  get next(): number {
+    return this.pos + this.buf.length
   }
 
   push(chunk: Uint8Array) {

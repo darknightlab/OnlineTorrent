@@ -34,7 +34,7 @@ import { readCuePoints } from "./subs/mkv"
 import { mp4Points } from "./timemap/mp4"
 import { buildTimeMap } from "@/lib/timemap"
 import type { TimeMapResult } from "./types"
-import type { ClusterTap } from "./subs/tap"
+import type { TapSink } from "./subs/source"
 import type { WebSeedAvail, WebSeedUpdate } from "./types"
 
 const SW_URL = "/sw.js" // 站点唯一的 Service Worker（src/sw/sw.js；应用启动时已由 PWAUpdatePrompt 注册，这里得到同一个注册）
@@ -187,7 +187,12 @@ class WTSession implements Session {
       const p = checkWire(w)
       if (p.length) this.setFatal(new IncompatibleError(p).message)
     })
-    t.once("metadata", () => {
+    // 元数据已经有了（从本地缓存打开：添加种子时就带着缓存的 .torrent），"metadata" 事件不会再来——
+    // 直接执行；否则读取器、字幕解析、兼容检查都不会装上（刷新后内封字幕消失）
+    let instrumented = false
+    const onMetadata = () => {
+      if (instrumented) return
+      instrumented = true
       const p = checkTorrentMetadata(t)
       const own = t.pieces.find(Boolean)?.constructor as PieceCtor | undefined
       const Piece = own ?? (TorrentPiece as unknown as PieceCtor)
@@ -216,7 +221,9 @@ class WTSession implements Session {
         },
       })
       this.installSubtitleTaps(torrent)
-    })
+    }
+    if ((t as unknown as { files?: unknown[] }).files?.length) onMetadata()
+    else t.once("metadata", onMetadata)
     t.on("evicted", (i: number) => {
       // 整文件后台下载时淘汰了正在播放的文件的 piece：改为窗口模式，避免下载 → 淘汰 → 再下载
       const f = this.focused !== null ? torrent.files?.[this.focused] : undefined
@@ -441,7 +448,11 @@ class WTSession implements Session {
     if (!f || this.destroyed || !/\.mk[vs]$/i.test(f.name)) return null
     let s = this.subs.get(fileIndex)
     if (!s) {
-      s = new SubtitleSource((a, b) => this.readRange(fileIndex, a, b), f.length)
+      s = new SubtitleSource(
+        (a, b) => this.readRange(fileIndex, a, b),
+        f.length,
+        (a, b) => this.readRange(fileIndex, a, b, true),
+      )
       this.subs.set(fileIndex, s)
     }
     return s
@@ -826,7 +837,7 @@ export const webtorrentEngine: Engine = {
 }
 
 /** 透传迭代器，同时把每块数据交给字幕解析器（return / throw 原样转发，读取器照常释放） */
-function tapIterator<T extends AsyncIterator<Uint8Array>>(inner: T, tap: ClusterTap) {
+function tapIterator<T extends AsyncIterator<Uint8Array>>(inner: T, tap: TapSink) {
   const it = {
     async next() {
       const r = await inner.next()
