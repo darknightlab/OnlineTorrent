@@ -156,8 +156,11 @@ export default function PlaybackPage() {
   if (urlIh && rawIh !== urlIh) return <Navigate replace to={sourceHref(urlIh, urlIndex)} state={loc.state} />
   // 单集页只播放映射到本集的文件：网址里的种子 / 文件不属于本集（在「文件」里点了别的文件、或手动拼的链接）
   // → 种子页；该文件映射到别的集时，种子页再跳到那一集，未映射的就留在种子页（不借用本集的名义）
-  if (isEpisode && urlIh && epData && !epQ.isFetching && !listed)
+  // 番剧 / 集不存在（404）同样转到种子页；其他错误显示错误页，不在未知的番剧名下播放
+  const missing = isApiError(epQ.error) && epQ.error.status === 404
+  if (isEpisode && urlIh && ((epData && !epQ.isFetching && !listed) || missing))
     return <Navigate replace to={watchHref(urlIh, urlIndex)} state={{ ...((loc.state as object | null) ?? {}), leftEpisode: loc.pathname }} />
+  if (isEpisode && urlIh && epQ.error) return <EpisodeError error={epQ.error} retry={() => epQ.refetch()} />
 
   const here = `${loc.pathname}${loc.search}`
   // 等待播放会话时：统计行（单集页）、信息与文件列表（播放页）的骨架；需登录 / 无权播放等结果不显示
