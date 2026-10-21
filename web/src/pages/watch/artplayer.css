@@ -1,7 +1,7 @@
 /*
  * ArtPlayer 主题：与站点一致（主色 #4caf50、进行中 / 下载用蓝色 #2196f3），播放器本身始终是暗色，与站点亮/暗主题无关。
  * 选择器写成 .art-video-player.art-video-player 以压过 ArtPlayer 运行时注入的样式（注入顺序不确定）。
- * 网页全屏时播放器会被移到 <body> 下，所以不要依赖外层容器的类名。
+ * 全屏时样式只依赖播放器自身。
  */
 .art-video-player.art-video-player {
   --art-theme: #4caf50;
@@ -172,12 +172,12 @@
   pointer-events: none;
 }
 
-/* 控制栏中间：只在横屏全屏时显示（弹幕发送框，填满左右按钮之间的空间；太窄时隐藏发送框，不挤压按钮）。
+/* 控制栏中间：桌面全屏 / 手机横屏全屏，且实测剩余宽度足够。
    弹幕插件初始化时把中间设成 flex（放它自己的设置栏），这里一律以本站的规则为准 */
-.art-video-player:not(.ot-landscape) .art-controls .art-controls-center {
+.art-video-player:not(.ot-center-send) .art-controls .art-controls-center {
   display: none !important;
 }
-.art-video-player.ot-landscape .art-controls .art-controls-center {
+.art-video-player.ot-center-send .art-controls .art-controls-center {
   display: flex !important;
   min-width: 0;
   padding: 0 12px;
@@ -188,12 +188,6 @@
   width: 100%;
   max-width: 560px;
   min-width: 0;
-  container-type: inline-size;
-}
-@container (max-width: 160px) {
-  .art-video-player .ot-danmaku-slot > * {
-    display: none;
-  }
 }
 /* 弹幕插件自带的发送框 / 设置面板 / 开关不用（「弹幕」按钮打开本站的弹窗），也不让它给播放器加下边距 */
 .art-video-player .artplayer-plugin-danmuku {
@@ -209,12 +203,11 @@
   padding: 0 6px;
 }
 
-/* 窄屏（手机竖屏）：控件更紧凑 */
-@media (max-width: 480px) {
+/* 与页面 sm 一致（手机设备横屏时仍由 ot-phone 保持控件清单） */
+@media (max-width: 639px) {
   .art-video-player.art-video-player {
     --art-padding: 8px;
     --art-control-icon-size: 30px;
-    --art-progress-top-gap: 6px;
   }
   .art-video-player.art-video-player .art-control-time {
     font-size: 12px;
@@ -239,7 +232,34 @@
   display: none !important;
 }
 
-/* 手机：音量由实体按键控制，不显示音量按钮 */
-.art-video-player.art-mobile .art-controls .art-control.art-control-volume {
-  display: none;
+/* Explicit control geometry, independent of ArtPlayer's UA-only mobile defaults.
+   Progress centre is the top boundary of the control zone: icons are centred exactly
+   halfway between it and the player bottom. Keep a 12px hit target above the track. */
+.art-video-player.art-video-player {
+  --art-control-height: 44px;
+  --art-bottom-gap: 0px;
+  --art-progress-top-gap: 12px;
+}
+.art-video-player.art-video-player.ot-phone {
+  --art-control-height: 40px;
+  --art-control-icon-size: 30px;
+  --art-control-icon-scale: 1;
+}
+.art-video-player.art-video-player.art-fullscreen {
+  --art-control-height: 52px;
+  --art-control-icon-scale: 1;
+}
+.art-video-player.art-video-player.art-fullscreen.ot-phone {
+  --art-control-height: 44px;
+}
+.art-video-player.art-video-player .art-bottom .art-progress {
+  padding-top: 12px;
+  padding-bottom: 0;
+  margin-bottom: -3px;
+}
+.art-video-player.art-video-player .art-bottom .art-control-progress {
+  height: 6px;
+}
+.art-video-player.art-video-player .art-bottom .art-control-progress-inner {
+  height: 100%;
 }

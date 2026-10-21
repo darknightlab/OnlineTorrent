@@ -1,5 +1,5 @@
 // 弹幕层（artplayer-plugin-danmuku）。单独成块：只在单集页由 ArtVideo 动态加载。
-// 插件自带的发送框 / 设置面板 / 开关图标都不用（artplayer.css 隐藏；开关、设置、发送在播放器下方的弹幕栏）；
+// 插件自带的发送框 / 设置面板 / 开关图标都不用；设置/发送由 DanmakuControls 提供。
 // 弹幕显示在 ArtPlayer 的 .art-danmuku 层（z 30）：视频之上，内封字幕（z 35）与控制栏之下。
 import type Artplayer from "artplayer"
 import artplayerPluginDanmuku, { type Result } from "artplayer-plugin-danmuku"
@@ -36,6 +36,12 @@ export function showDanmaku(art: Artplayer, items: DanmakuItem[], settings: Danm
   plugin.config({ danmuku: toDanmu(items) })
   void plugin.load()
   applyDanmakuSettings(art, settings)
+}
+
+/** Collected/user snapshots can arrive after initialising the layer; append rather than
+ * reset it, so comments sent during the request aren't discarded. */
+export function appendDanmaku(art: Artplayer, items: DanmakuItem[]) {
+  if (!art.isDestroy) void layers.get(art)?.load(toDanmu(items))
 }
 
 /** 显示设置（开关、不透明度、字号、速度、区域）立即生效 */

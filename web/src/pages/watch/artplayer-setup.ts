@@ -4,14 +4,13 @@ import Artplayer from "artplayer"
 import { formatSpeed } from "@/lib/format"
 import { segmentsGradient } from "@/lib/pieces"
 import "./artplayer.css"
+import { phoneControls, centerSender } from "@/lib/player-controls"
 
 // ---- 全局配置（本站只有这一种播放器，静态属性直接改） ----
 // 右键使用浏览器自带菜单（不加 ArtPlayer 的统计信息 / 翻转等菜单）
 Artplayer.CONTEXTMENU = false
 // 解码失败不自动重连：交给下方的编码提示（重试同一地址只会再次失败）；流卡死由 useStallWatchdog 处理
 Artplayer.RECONNECT_TIME_MAX = 0
-// 网页全屏时把播放器移到 <body>，避免被吸顶容器的层叠上下文盖住
-Artplayer.FULLSCREEN_WEB_IN_BODY = true
 Artplayer.SEEK_STEP = 5
 
 const RATES = [2, 1.5, 1.25, 1, 0.75, 0.5]
@@ -32,6 +31,7 @@ export interface MountOptions {
   onMediaError: (err: MediaError) => void
   /** 控制栏「资源」按钮（倍速左边） */
   onPanel?: () => void
+  onDanmaku: () => void
 }
 
 export interface SubtitleMenuItem {
@@ -45,16 +45,11 @@ export interface ArtHandle {
   video: HTMLVideoElement
   /** 控制栏「字幕」选择（「资源」左边）；items 为 null 时移除按钮 */
   setSubtitleMenu: (items: SubtitleMenuItem[] | null, current: number, onSelect: (value: number) => void) => void
-  /** 控制栏「弹幕」按钮（「字幕」左边）；null = 移除 */
-  setDanmakuButton: (onClick: (() => void) | null) => void
-  /** 控制栏中间放弹幕发送框的容器（只在横屏全屏时显示，见 isLandscape） */
   danmakuSlot: HTMLDivElement
-  /** 横屏全屏：浏览器全屏或网页全屏，且播放器宽 > 高（手机全屏会锁定横屏） */
-  isLandscape: () => boolean
-  /** 横屏全屏状态 / 网页全屏元素变化时回调；返回取消函数 */
+  /** Sender is actually visible: device/fullscreen policy AND sufficient free width. */
+  hasCenterSender: () => boolean
   onLayout: (cb: () => void) => () => void
-  /** 网页全屏时的播放器元素（弹窗要挂在它里面），否则 null */
-  webFullscreenHost: () => HTMLElement | null
+  fullscreenHost: () => HTMLElement | null
   setPoster: (poster: string | undefined) => void
   setSegments: (segments: Uint8Array) => void
   /** 字节比例 → 时间比例（进度条是时间轴）；null = 按字节比例 */
@@ -68,7 +63,9 @@ export interface ArtHandle {
  * 返回的 destroy 会移除全部 DOM 与事件，可在 React effect 清理里直接调用（StrictMode 安全）。
  */
 export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
-  const mobile = Artplayer.utils.isMobile
+  // Width follows the site's sm breakpoint; device identity remains phone in landscape.
+  const phoneDevice = Artplayer.utils.isMobile || (navigator as Navigator & { userAgentData?: { mobile?: boolean } }).userAgentData?.mobile === true
+  let mobile = phoneControls(window.innerWidth, phoneDevice)
   const art: Artplayer = new Artplayer({
     container: el,
     url: o.url,
@@ -78,9 +75,9 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
     volume: 1,
     autoplay: false, // 由下面的 play() 发起，以便处理浏览器拦截
     playsInline: true,
-    pip: !mobile, // 手机：系统自带画中画 / 后台播放，不需要小窗按钮
+    pip: true, // Construct once; phone layouts detach this control below.
     fullscreen: true,
-    fullscreenWeb: !mobile,
+    fullscreenWeb: false,
     setting: false,
     playbackRate: false,
     hotkey: true,
@@ -93,31 +90,38 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
       loading: `<div class="ot-loading"><span class="ot-spin">${ICON_SPIN}</span><span class="ot-loading-text"></span></div>`,
     },
     controls: [
-      ...(o.onPanel
-        ? [
-            {
-              name: "panel",
-              position: "right" as const,
-              index: 4,
-              html: "资源",
-              click: () => o.onPanel?.(),
-            },
-          ]
-        : []),
-      {
-        name: "rate",
-        position: "right",
-        index: 5,
-        html: rateLabel(1),
-        selector: RATES.map((r) => ({ html: r === 1 ? "1.0x" : `${r}x`, value: r, default: r === 1 })),
-        onSelect(item) {
-          art.playbackRate = Number(item.value)
-          return rateLabel(Number(item.value))
-        },
-      },
+      { name: "danmaku", position: "right", index: 2, html: "弹幕", click: () => o.onDanmaku() },
+      { name: "panel", position: "right", index: 4, html: "资源", click: () => o.onPanel?.() },
     ],
   })
   const video = art.video
+  // Create once, then detach/restore the DOM at the sm breakpoint. Never re-register
+  // built-in mounted handlers on resize (volume adds document listeners).
+  art.controls.add({
+    name: "rate",
+    position: "right",
+    index: 5,
+    html: rateLabel(1),
+    selector: RATES.map((r) => ({ html: r === 1 ? "1.0x" : `${r}x`, value: r, default: r === 1 })),
+    onSelect(item) {
+      art.playbackRate = Number(item.value)
+      return rateLabel(Number(item.value))
+    },
+  })
+  const desktopNodes = [art.query(".art-control-volume")!, art.query(".art-control-rate")!, art.query(".art-control-pip")!] as HTMLElement[]
+  const setDeviceControls = () => {
+    mobile = phoneControls(window.innerWidth, phoneDevice)
+    art.template.$player.classList.toggle("ot-phone", mobile)
+    for (const node of desktopNodes) {
+      if (mobile) node.remove()
+      else if (!node.isConnected) {
+        const parent = node.classList.contains("art-control-volume") ? art.template.$controlsLeft : art.template.$controlsRight
+        const next = [...parent.children].find((el) => Number((el as HTMLElement).dataset.index) > Number(node.dataset.index))
+        parent.insertBefore(node, next ?? null)
+      }
+    }
+  }
+  setDeviceControls()
   // 空 url：还没有视频（获取种子信息等）时先显示播放器与控制栏（「资源」按钮可用），不加载、不播放；
   // 画面由外层的封面与状态提示负责（.ot-idle 让播放器背景透明、隐藏大按钮与加载动画）
   const idle = !o.url
@@ -144,7 +148,7 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
   }
   setSpeed(o.speed)
 
-  // 额外快捷键（ArtPlayer 自带 空格 / ←→ 5 秒 / ↑↓ 音量 / Esc 退出网页全屏），桌面端生效
+  // 额外快捷键（ArtPlayer 自带 空格 / ←→ 5 秒 / ↑↓ 音量），桌面端生效
   art.hotkey.add("KeyF", () => {
     art.fullscreen = !art.fullscreen
   })
@@ -255,7 +259,6 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
     })
 
   // ---- 弹幕：控制栏「弹幕」按钮与中间的发送框容器 ----
-  let danmakuClick: (() => void) | null = null
   const danmakuSlot = document.createElement("div")
   danmakuSlot.className = "ot-danmaku-slot"
   art.template.$controlsCenter.appendChild(danmakuSlot)
@@ -268,60 +271,50 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
   })
   // 弹窗（「弹幕」/「资源」，全屏时挂在播放器里）中按键不触发播放器快捷键：ArtPlayer 只在焦点在播放器上
   // （isFocus）时处理，点击弹窗也算点击播放器，所以按键时（捕获阶段，先于 ArtPlayer）把 isFocus 取消。
-  // 否则在弹窗里按空格会暂停、按 Esc 关弹窗的同时退出网页全屏
+  // 否则在弹窗里按空格会暂停
   const guardKeys = (e: KeyboardEvent) => {
     if ((e.target as Element | null)?.closest?.('[role="dialog"]')) (art as Writable<Artplayer>).isFocus = false
   }
   window.addEventListener("keydown", guardKeys, true)
   const layoutListeners = new Set<() => void>()
-  let landscape = false
+  let sender = false
+  const isFullscreen = () => art.fullscreen || document.fullscreenElement === $player
   const updateLayout = () => {
     if (art.isDestroy) return
-    const on = (art.fullscreen || art.fullscreenWeb) && $player.clientWidth > $player.clientHeight
-    if (on !== landscape) {
-      landscape = on
-      $player.classList.toggle("ot-landscape", on)
-    }
+    setDeviceControls()
+    const left = art.template.$controlsLeft.getBoundingClientRect().width
+    const right = art.template.$controlsRight.getBoundingClientRect().width
+    const free = art.template.$controls.getBoundingClientRect().width - left - right - 24
+    const on = centerSender(isFullscreen(), mobile, $player.clientWidth, $player.clientHeight, free)
+    sender = on
+    $player.classList.toggle("ot-center-send", on)
     for (const cb of layoutListeners) cb()
   }
-  // 全屏切换后尺寸稍后才变：事件里与下一帧各算一次；窗口 / 屏幕方向变化（手机旋转）时也算
+  // Browser fullscreen, viewport resize and actual controls widths (subtitles arriving,
+  // duration/time labels) all affect the free space; no guessed aspect-only visibility.
   const relayout = () => {
     updateLayout()
     requestAnimationFrame(updateLayout)
   }
   art.on("fullscreen", relayout)
-  art.on("fullscreenWeb", relayout)
   art.on("resize", relayout)
   window.addEventListener("resize", relayout)
+  document.addEventListener("fullscreenchange", relayout)
   screen.orientation?.addEventListener?.("change", relayout)
+  const layoutObserver = new ResizeObserver(relayout)
+  for (const el of [art.template.$controls, art.template.$controlsLeft, art.template.$controlsRight]) layoutObserver.observe(el)
+  relayout()
 
   return {
     art,
     video,
     danmakuSlot,
-    isLandscape: () => landscape,
+    hasCenterSender: () => sender,
     onLayout(cb) {
       layoutListeners.add(cb)
       return () => layoutListeners.delete(cb)
     },
-    webFullscreenHost: () => (art.fullscreenWeb ? $player : null),
-    setDanmakuButton(onClick) {
-      if (art.isDestroy) return
-      danmakuClick = onClick
-      const name = "danmaku" as keyof typeof art.controls
-      if (!onClick) {
-        if (art.controls[name]) art.controls.remove("danmaku")
-        return
-      }
-      if (!art.controls[name])
-        art.controls.add({
-          name: "danmaku",
-          position: "right",
-          index: 2, // 「字幕」是 3、「资源」4、「倍速」5
-          html: "弹幕",
-          click: () => danmakuClick?.(),
-        })
-    },
+    fullscreenHost: () => isFullscreen() ? $player : null,
     setPoster(poster) {
       if (poster === undefined || poster === lastPoster) return
       lastPoster = poster
@@ -352,13 +345,13 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
     },
     destroy() {
       layoutListeners.clear()
+      layoutObserver.disconnect()
       window.removeEventListener("keydown", guardKeys, true)
       window.removeEventListener("resize", relayout)
+      document.removeEventListener("fullscreenchange", relayout)
       screen.orientation?.removeEventListener?.("change", relayout)
       el.removeEventListener("focusin", focusIn)
       el.removeEventListener("focusout", focusOut)
-      // 网页全屏时播放器在 <body> 里：先移回容器再销毁
-      if (art.fullscreenWeb) art.fullscreenWeb = false
       if (document.fullscreenElement && $player.contains(document.fullscreenElement)) document.exitFullscreen().catch(() => {})
       art.destroy(true) // 同时移除 src，释放 Service Worker 流请求
     },

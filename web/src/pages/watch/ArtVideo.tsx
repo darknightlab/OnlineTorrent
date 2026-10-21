@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react"
-import { createPortal } from "react-dom"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { useLocation } from "react-router-dom"
+import { DanmakuControls } from "./DanmakuControls"
 import { PlayerSpinner } from "@/components/PlayerSpinner"
 import type { ArtHandle } from "./artplayer-setup"
 import type { SubtitleSet } from "@/player/subs/set"
@@ -7,9 +8,6 @@ import { buildMenu, chooseMenu } from "@/player/subs/set"
 import { loadPref, prefFor, savePref } from "@/player/subs/prefs"
 import { byteToTimeFraction } from "@/lib/timemap"
 import type { TimeMapResult } from "@/player/types"
-import { api } from "@/lib/api"
-import { DEFAULT_DANMAKU_SETTINGS, type DanmakuSettings } from "@/lib/danmaku"
-import type { DanmakuItem } from "@/lib/types"
 
 /** 本集弹幕：单集页传入（条目 + 集的键） */
 export interface DanmakuSource {
@@ -17,13 +15,6 @@ export interface DanmakuSource {
   id: string
   episode: string
 }
-
-let danmakuModule: Promise<typeof import("./danmaku")> | null = null
-const loadDanmaku = () =>
-  (danmakuModule ??= import("./danmaku").catch((e) => {
-    danmakuModule = null
-    throw e
-  }))
 
 let setupModule: Promise<typeof import("./artplayer-setup")> | null = null
 /** 加载 ArtPlayer（单独的 chunk，含样式）；Player 挂载时调用以预加载 */
@@ -57,14 +48,6 @@ export interface ArtVideoProps {
   fileLength?: number
   /** 本集弹幕（只在单集页、正在播放本集的文件时） */
   danmaku?: DanmakuSource | null
-  /** 弹幕显示设置（弹幕栏） */
-  danmakuSettings?: DanmakuSettings
-  /** 由本组件填入：把自己刚发送的弹幕显示到播放器里（没有弹幕层时为 null） */
-  danmakuEmit?: React.RefObject<((item: DanmakuItem) => void) | null>
-  /** 单集页：控制栏「弹幕」按钮（打开弹幕弹窗）与横屏全屏时控制栏中间的发送框 */
-  danmakuUI?: { onOpen: () => void; sendBox: React.ReactNode } | null
-  /** 横屏全屏状态（弹幕弹窗里是否还放发送框）与网页全屏的播放器元素（弹窗挂载位置）变化 */
-  onLayout?: (layout: { landscape: boolean; webFullscreen: HTMLElement | null }) => void
 }
 
 /**
@@ -72,15 +55,20 @@ export interface ArtVideoProps {
  * StrictMode 下 effect 会执行两次：第一次的实例在清理时 destroy（移除 DOM 与事件，释放流请求），第二次重新创建；
  * 模块尚未加载完就被清理时不会创建实例。
  */
-export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, subtitles, onLog, timeMap, fileLength, danmaku, danmakuSettings, danmakuEmit, danmakuUI, onLayout }: ArtVideoProps) {
+export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, subtitles, onLog, timeMap, fileLength, danmaku }: ArtVideoProps) {
   const box = useRef<HTMLDivElement>(null)
   const handle = useRef<ArtHandle | null>(null)
   const [ready, setReady] = useState(false)
+  const loc = useLocation()
+  const dmScope = `${url}|${danmaku?.provider}/${danmaku?.id}/${danmaku?.episode}|${loc.pathname}`
+  const scopeRef = useRef(dmScope)
+  scopeRef.current = dmScope
+  const [dmRequest, setDmRequest] = useState<string | null>(null)
+  const requestDialog = useCallback((open: boolean) => setDmRequest(open ? scopeRef.current : null), [])
   const [loadError, setLoadError] = useState<string | null>(null)
   // 回调与动态数据用 ref 读取最新值，不触发重建
-  const latest = useRef({ poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, onLog, timeMap, fileLength, danmakuSettings, danmakuEmit, danmakuUI, onLayout })
-  latest.current = { poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, onLog, timeMap, fileLength, danmakuSettings, danmakuEmit, danmakuUI, onLayout }
-  const hasPanel = !!onPanel
+  const latest = useRef({ poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, onLog, timeMap, fileLength })
+  latest.current = { poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, onLog, timeMap, fileLength }
 
   useEffect(() => {
     const el = box.current
@@ -98,7 +86,8 @@ export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetada
           speed: l.speed,
           onLoadedMetadata: (v) => latest.current.onLoadedMetadata?.(v),
           onMediaError: (e) => latest.current.onMediaError?.(e),
-          onPanel: hasPanel ? () => latest.current.onPanel?.() : undefined,
+          onPanel: () => latest.current.onPanel?.(),
+          onDanmaku: () => requestDialog(true),
         })
         handle.current = h
         setReady(true)
@@ -113,11 +102,12 @@ export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetada
       if (h) {
         latest.current.onVideo?.(null)
         h.destroy()
+        requestDialog(false)
       }
       handle.current = null
       setReady(false)
     }
-  }, [url, hasPanel])
+  }, [url, requestDialog])
 
   useEffect(() => handle.current?.setPoster(poster), [poster, ready])
   useEffect(() => handle.current?.setSegments(segments), [segments, ready])
@@ -204,76 +194,6 @@ export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetada
     }
   }, [ready, subtitles, url])
 
-  // 弹幕（单集页）：加载弹幕插件并向服务器要本集弹幕（第一次打开该集时服务器才采集，可能要等十几秒）；
-  // 没有弹幕时插件也在，自己发送的弹幕（danmakuEmit）照样显示。开关与设置在播放器下方的弹幕栏
-  const dmProvider = danmaku?.provider
-  const dmId = danmaku?.id
-  const dmEpisode = danmaku?.episode
-  const [dmReady, setDmReady] = useState(false)
-  useEffect(() => {
-    const h = handle.current
-    if (!ready || !h || !url || !dmProvider || !dmId || !dmEpisode) return
-    const ctl = new AbortController()
-    let cancelled = false
-    let shown: typeof import("./danmaku") | null = null
-    const log = (level: "info" | "warn", msg: string) => latest.current.onLog?.(level, msg)
-    const items = api.danmaku(dmProvider, dmId, dmEpisode, ctl.signal).then(
-      (r) => r.items,
-      (e) => {
-        if (!cancelled && (e as Error)?.name !== "AbortError") log("warn", `弹幕加载失败：${String((e as Error)?.message ?? e)}`)
-        return [] as DanmakuItem[]
-      },
-    )
-    Promise.all([loadDanmaku(), items])
-      .then(([m, list]) => {
-        if (cancelled || h.art.isDestroy) return
-        m.showDanmaku(h.art, list, latest.current.danmakuSettings ?? DEFAULT_DANMAKU_SETTINGS)
-        shown = m
-        if (latest.current.danmakuEmit) latest.current.danmakuEmit.current = (item) => m.emitDanmaku(h.art, item)
-        setDmReady(true)
-        log("info", `弹幕：${list.length} 条`)
-      })
-      .catch((e) => log("warn", `弹幕插件加载失败：${String((e as Error)?.message ?? e)}`))
-    return () => {
-      cancelled = true
-      ctl.abort()
-      shown?.clearDanmaku(h.art)
-      if (latest.current.danmakuEmit) latest.current.danmakuEmit.current = null
-      setDmReady(false)
-    }
-  }, [ready, url, dmProvider, dmId, dmEpisode])
-  // 显示设置（弹幕栏里修改）立即生效
-  useEffect(() => {
-    const h = handle.current
-    if (!dmReady || !h || !danmakuSettings) return
-    void loadDanmaku().then((m) => m.applyDanmakuSettings(h.art, danmakuSettings))
-  }, [dmReady, danmakuSettings])
-
-  // 「弹幕」按钮：单集页一直显示（打开弹幕弹窗）
-  const hasDanmakuUI = !!danmakuUI
-  useEffect(() => {
-    const h = handle.current
-    if (!ready || !h) return
-    h.setDanmakuButton(hasDanmakuUI ? () => latest.current.danmakuUI?.onOpen() : null)
-    return () => h.setDanmakuButton(null)
-  }, [ready, hasDanmakuUI])
-  // 横屏全屏：发送框放到控制栏中间；网页全屏时弹窗挂在播放器里
-  const [landscape, setLandscape] = useState(false)
-  useEffect(() => {
-    const h = handle.current
-    if (!ready || !h) return
-    const report = () => {
-      setLandscape(h.isLandscape())
-      latest.current.onLayout?.({ landscape: h.isLandscape(), webFullscreen: h.webFullscreenHost() })
-    }
-    report()
-    const off = h.onLayout(report)
-    return () => {
-      off()
-      latest.current.onLayout?.({ landscape: false, webFullscreen: null })
-    }
-  }, [ready])
-
   return (
     <>
       {/* 播放器模块加载中（空 url 的外壳由外层显示状态，这里不再重复转圈） */}
@@ -287,8 +207,7 @@ export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetada
           )}
         </div>
       )}
-      {/* 横屏全屏时控制栏中间的弹幕发送框（渲染进 ArtPlayer 的控制栏） */}
-      {ready && landscape && danmakuUI && handle.current && createPortal(danmakuUI.sendBox, handle.current.danmakuSlot)}
+      {ready && handle.current && <DanmakuControls handle={handle.current} source={danmaku} mediaKey={url} requested={dmRequest === dmScope} onRequested={requestDialog} />}
       {/* ArtPlayer 接管此 div 的内容（React 不渲染子节点） */}
       <div
         ref={box}

@@ -1,7 +1,8 @@
 // 弹幕的设置与发送框：「弹幕」弹窗（控制栏「弹幕」按钮打开，同「资源」弹窗）里的设置 + 发送框；
-// 横屏全屏时发送框改在控制栏中间（DanmakuSendBox variant="bar"，见 ArtVideo），弹窗里只有设置。
+// 桌面全屏 / 手机横屏全屏且中间有足够空间时，发送框改在控制栏中间；否则仍在弹窗里。
 import { useEffect, useRef, useState } from "react"
 import { Link } from "react-router-dom"
+import { Send } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
@@ -50,7 +51,7 @@ export function DanmakuSettingsForm({ settings, onSettings }: { settings: Danmak
 }
 
 /**
- * 发送框：输入 + 发送（回车发送，空 / 超长禁用，错误在旁边显示几秒）；游客显示「登录以使用完整功能」，
+ * 发送框：弹窗里保留「发送」按键；控制栏内嵌输入框内部放纸飞机。两处都支持 Enter，空 / 超长禁用，错误在旁边显示几秒；游客显示「登录以使用完整功能」，
  * 登录了但没有发送权限时不显示。variant="bar"：播放器控制栏中间（暗色、紧凑，太窄时隐藏）。
  */
 export function DanmakuSendBox({
@@ -71,6 +72,7 @@ export function DanmakuSendBox({
 }) {
   const [text, setText] = useState("")
   const [sending, setSending] = useState(false)
+  const inFlight = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const bar = variant === "bar"
@@ -93,7 +95,8 @@ export function DanmakuSendBox({
 
   const problem = danmakuTextProblem(text)
   const send = async () => {
-    if (problem !== null || sending) return
+    if (problem !== null || inFlight.current) return
+    inFlight.current = true
     setSending(true)
     setError(null)
     try {
@@ -102,6 +105,7 @@ export function DanmakuSendBox({
     } catch (e) {
       setError(isApiError(e) ? e.message : String((e as Error)?.message ?? e))
     } finally {
+      inFlight.current = false
       setSending(false)
       input.current?.focus()
     }
@@ -111,7 +115,7 @@ export function DanmakuSendBox({
   return (
     <div className={cn("relative min-w-0", bar ? "w-full" : "space-y-1.5")}>
       <form
-        className="flex min-w-0 items-center gap-2"
+        className={cn("flex min-w-0 items-center gap-2", bar && "relative")}
         onSubmit={(e) => {
           e.preventDefault()
           void send()
@@ -128,12 +132,16 @@ export function DanmakuSendBox({
           autoFocus={autoFocus}
           className={cn(
             "min-w-0 flex-1",
-            bar ? "h-8 border-white/25 bg-white/15 text-[13px] text-white placeholder:text-white/60 focus-visible:border-white/60 focus-visible:ring-0" : "h-9",
+            bar ? "h-8 border-white/25 bg-white/15 pr-9 text-[13px] text-white placeholder:text-white/60 focus-visible:border-white/60 focus-visible:ring-0" : "h-9",
           )}
         />
-        <Button type="submit" size={bar ? "xs" : "sm"} disabled={problem !== null || sending} className={cn("shrink-0", bar && "h-8 px-3")}>
-          发送
-        </Button>
+        {bar ? (
+          <button type="submit" aria-label="发送弹幕" disabled={problem !== null || sending} className="absolute inset-y-0 right-0 flex w-8 items-center justify-center text-white/85 disabled:opacity-40">
+            <Send className="h-4 w-4" aria-hidden />
+          </button>
+        ) : (
+          <Button type="submit" size="sm" disabled={problem !== null || sending} className="shrink-0">发送</Button>
+        )}
       </form>
       {message && (
         <p
