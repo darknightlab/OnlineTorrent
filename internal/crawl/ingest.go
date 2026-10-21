@@ -91,7 +91,9 @@ func (c *Crawler) ingestItem(ctx context.Context, src store.Source, it FeedItem)
 	if ih != "" {
 		status, known := c.Meta.KnownTorrent(ctx, ih)
 		if known && it.moe == nil {
-			return false, ih, false, nil
+			// a new feed item for a known torrent: it shows up again — its uncertain files
+			// are decided again (rules, then the decision model)
+			return false, ih, false, c.Meta.Rematch(ctx, ih)
 		}
 		if it.moe != nil && len(in.Files) > 0 {
 			return !known, ih, false, c.Meta.Match(ctx, in)
@@ -114,7 +116,7 @@ func (c *Crawler) ingestItem(ctx context.Context, src store.Source, it FeedItem)
 				c.Log.Warn("crawl: store .torrent", "source", src.Name, "ih", ih, "err", err)
 			}
 			if status, known := c.Meta.KnownTorrent(ctx, ih); known && status == "ready" {
-				return false, ih, true, nil
+				return false, ih, true, c.Meta.Rematch(ctx, ih) // shows up again
 			}
 			in.Infohash = ih
 			if in.Title == "" {

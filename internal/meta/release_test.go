@@ -330,3 +330,92 @@ func TestRuleGateOnlyNewMappings(t *testing.T) {
 		t.Errorf("reviews queued for untouched rows: %d", n)
 	}
 }
+
+// A candidate knows whether the work has a mapped main-episode file anywhere.
+func TestCandidateMainMapped(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	if _, err := s.W.ExecContext(ctx, `INSERT INTO works(id,key,title,title_cn,type,begin_at,eps,updated_at) VALUES(1,'bgm:1','日常','日常','tv','2011-04-02T00:00:00Z',26,'x')`); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := s.CandidateFor(ctx, "bgm:1"); c.MainMapped {
+		t.Fatal("no files yet")
+	}
+	_, _ = s.W.ExecContext(ctx, `INSERT INTO torrents(infohash,seq,title,status,updated_at) VALUES('aa',1,'x','ready','x')`)
+	_, _ = s.W.ExecContext(ctx, `INSERT INTO torrent_files(infohash,file_index,path,kind,work_key,episode,status,method,updated_at) VALUES('aa',0,'NCOP.mkv','op','bgm:1',1,'auto','title','x')`)
+	if c, _ := s.CandidateFor(ctx, "bgm:1"); c.MainMapped {
+		t.Error("an NCOP is no main episode")
+	}
+	_, _ = s.W.ExecContext(ctx, `INSERT INTO torrent_files(infohash,file_index,path,kind,work_key,episode,status,method,updated_at) VALUES('aa',1,'01.mkv','episode','bgm:1',1,'auto','title','x')`)
+	if c, _ := s.CandidateFor(ctx, "bgm:1"); !c.MainMapped {
+		t.Error("mapped main episode")
+	}
+}
+
+// The uncertain requeue (and re-appearance) re-runs the rules first: an uncertain file the
+// rules can map now is mapped (its pending review settled), concluded files stay, and the
+// decision model is queued only for files still uncertain.
+func TestRematchUncertain(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	files := []FileInput{
+		{Index: 0, Path: "[G] Ano Hi Mita Hana no Namae o Bokutachi wa Mada Shiranai - 01 [1080p].mkv", Size: 1},
+		{Index: 1, Path: "[G] Ano Hi Mita Hana no Namae o Bokutachi wa Mada Shiranai - 02 [1080p].mkv", Size: 1},
+		{Index: 2, Path: "[G] Ano Hi Mita Hana no Namae o Bokutachi wa Mada Shiranai - 03 [1080p].mkv", Size: 1},
+	}
+	in := TorrentInput{Infohash: "aa", Title: "[G] Ano Hi Mita Hana no Namae o Bokutachi wa Mada Shiranai [1080p]", Source: "Nyaa", SourceKind: "rss", PublishedAt: "2026-10-20T00:00:00Z", Files: files}
+	// the work isn't in the catalogue yet: nothing certain, all three queued
+	if err := s.Match(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	if tm, _ := s.GetTorrentMap(ctx, "aa"); tm.Files[0].Work != nil {
+		t.Fatal("mapped without the work")
+	}
+	// the model's run: file 0 pending, file 1 "belongs to no subject" (a conclusion), file 2
+	// low confidence (uncertain); the job is done
+	ep := 1.0
+	_ = s.AddClefDecision(ctx, &ClefDecision{Infohash: "aa", FileIndex: 0, Path: files[0].Path, WorkKey: "bgm:1", Kind: "episode", Episode: &ep, EpisodeKey: "1", Model: "m", Status: "pending", Reason: "no_name_evidence"})
+	_ = s.AddClefDecision(ctx, &ClefDecision{Infohash: "aa", FileIndex: 1, Path: files[1].Path, Model: "m", Status: "discarded", Reason: "none"})
+	_ = s.AddClefDecision(ctx, &ClefDecision{Infohash: "aa", FileIndex: 2, Path: files[2].Path, Model: "m", Status: "discarded", Reason: "low_confidence"})
+	_ = s.FinishClefJob(ctx, "aa", "done", "", 1, "", false)
+	// the catalogue learns the work (2011, romaji alias)
+	seedWork(t, s, 10440, "あの日見た花の名前を僕達はまだ知らない。", "我们仍未知道那天所看见的花的名字。", `["Ano Hi Mita Hana no Namae o Bokutachi wa Mada Shiranai"]`, "tv", "2011-04-14", "2011-06-23", seq(1, 11), nil)
+	s.aliasMu.Lock()
+	s.aliases = nil
+	s.aliasMu.Unlock()
+	if err := s.QueueUncertainClef(ctx, "aa"); err != nil {
+		t.Fatal(err)
+	}
+	tm, _ := s.GetTorrentMap(ctx, "aa")
+	if tm.Files[0].Work == nil || tm.Files[0].EpisodeKey != "1" || tm.Files[2].Work == nil || tm.Files[2].EpisodeKey != "3" {
+		t.Errorf("uncertain files not mapped by the rules: %+v", tm.Files)
+	}
+	if tm.Files[1].Work != nil {
+		t.Errorf("concluded (none) file mapped: %+v", tm.Files[1])
+	}
+	if ds, n, _ := s.ListClefDecisions(ctx, "pending", "", 0, 10); n != 0 {
+		t.Errorf("review not settled: %+v", ds)
+	}
+	if ds, _, _ := s.ListClefDecisions(ctx, "applied", "", 0, 10); len(ds) != 1 || ds[0].FileIndex != 0 || ds[0].Source != "rule" {
+		t.Errorf("settled decision: %+v", ds)
+	}
+	// nothing uncertain left: the done job stays done (no model call)
+	if j, _ := s.GetClefJob(ctx, "aa"); j.Status != "done" {
+		t.Errorf("job: %+v", j)
+	}
+	// a file the rules still can't map is queued again
+	in.Files = append(in.Files, FileInput{Index: 3, Path: "[G] Ano Hi Mita Hana no Namae o Bokutachi wa Mada Shiranai - 30 [1080p].mkv", Size: 1})
+	if err := s.Match(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	_ = s.FinishClefJob(ctx, "aa", "done", "", 1, "", false)
+	if err := s.QueueUncertainClef(ctx, "aa"); err != nil {
+		t.Fatal(err)
+	}
+	if j, _ := s.GetClefJob(ctx, "aa"); j.Status != "pending" || j.Force {
+		t.Errorf("job for the still-uncertain file: %+v", j)
+	}
+	if tk, _ := s.BuildClefTask(ctx, "aa", false); len(tk.Files) != 1 || tk.Files[0].Index != 3 {
+		t.Errorf("task files: %+v", tk.Files)
+	}
+}

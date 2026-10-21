@@ -220,7 +220,14 @@ func TestDecideLLM(t *testing.T) {
 	if d := DecideLLM(ctx, tk4, one(strp("bgm_100"), nil, "op", 0.95), th, fakeValid, nil)[0]; d.Status != StatusPending || d.Reason != ReasonUnlisted {
 		t.Errorf("unlisted special: %s %s", d.Status, d.Reason)
 	}
-	// … but next to an applied main episode of the same work it is applied
+	// … applied when the work already has a mapped main episode (another torrent, rules,
+	// earlier run) — the file's own torrent holds no main episode
+	tk4.Candidates[0].MainMapped = true
+	if d := DecideLLM(ctx, tk4, one(strp("bgm_100"), nil, "op", 0.95), th, fakeValid, nil)[0]; d.Status != StatusApplied {
+		t.Errorf("unlisted special, work has mapped mains: %s %s", d.Status, d.Reason)
+	}
+	tk4.Candidates[0].MainMapped = false
+	// … and next to an applied main episode of the same work in the run
 	tk4.Files = append(tk4.Files, meta.ClefFile{Index: 1, Path: "Show/[G] Show - 01.mkv", Kind: "episode", Numbers: meta.NumberOptions("Show/[G] Show - 01.mkv", "", false)})
 	both := map[int]LLMFileOut{0: {Index: 0, SubjectID: strp("bgm_100"), Kind: "op", Confidence: 0.95}, 1: {Index: 1, SubjectID: strp("bgm_100"), Episode: f64p(1), Kind: "main", Confidence: 0.95}}
 	if ds := DecideLLM(ctx, tk4, both, th, fakeValid, nil); ds[0].Status != StatusApplied || ds[1].Status != StatusApplied {

@@ -490,8 +490,9 @@ func DecideLLM(ctx context.Context, t *meta.ClefTask, answers map[int]LLMFileOut
 		out = append(out, d)
 	}
 	// a special the work's official list doesn't have (OP/ED/PV are rarely listed) is only
-	// applied next to an applied main episode of the same work in the torrent (which season's
-	// NCOP it is can't be checked otherwise)
+	// applied while the work has an applied main episode: in this run, or a main-episode file
+	// of any torrent already mapped to it (MainMapped; rules, model or admin). Otherwise
+	// which season's NCOP it is can't be checked.
 	mains := map[string]bool{}
 	for _, d := range out {
 		if d.Status == StatusApplied && d.Kind == "episode" {
@@ -503,7 +504,7 @@ func DecideLLM(ctx context.Context, t *meta.ClefTask, answers map[int]LLMFileOut
 		if d.Status != StatusApplied || d.Kind == "episode" {
 			continue
 		}
-		if k, ok := meta.ParseEpisodeKey(d.Key); ok && !strings.Contains(d.Candidate.Specials, k.Kind) && !mains[d.Candidate.WorkKey] {
+		if k, ok := meta.ParseEpisodeKey(d.Key); ok && !strings.Contains(d.Candidate.Specials, k.Kind) && !mains[d.Candidate.WorkKey] && !d.Candidate.MainMapped {
 			d.Status, d.Reason = StatusPending, ReasonUnlisted
 		}
 	}

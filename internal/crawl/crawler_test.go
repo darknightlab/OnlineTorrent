@@ -135,6 +135,16 @@ func TestCrawlRSS(t *testing.T) {
 		t.Errorf("torrent downloads: %d", n)
 	}
 
+	// the torrent shows up again (a new feed item with its infohash): its uncertain file is
+	// decided again — the finished decision-model job is queued once more
+	_ = c.Meta.FinishClefJob(ctx, mi.Infohash, "done", "", 0, "", false)
+	if _, _, _, err := c.ingestItem(ctx, *src, FeedItem{Infohash: mi.Infohash, GUID: "g9", Title: "[Sub] Foo - 01 [1080p] (repost)"}); err != nil {
+		t.Fatal(err)
+	}
+	if j, _ := c.Meta.GetClefJob(ctx, mi.Infohash); j == nil || j.Status != "pending" {
+		t.Errorf("re-appearance: job %+v", j)
+	}
+
 	// second run: conditional GET → 304, nothing downloaded
 	src, _ = c.St.GetSource(ctx, id)
 	res = c.crawl(ctx, *src)

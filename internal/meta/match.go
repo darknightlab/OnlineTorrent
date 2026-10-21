@@ -75,6 +75,7 @@ func (s *Store) Match(ctx context.Context, t TorrentInput) error {
 	// (rejected; the model's none / not_episode) — no rule rewrite, no decision-model job.
 	// Only uncertain files are mapped again / queued.
 	concluded := s.ConcludedFiles(ctx, t.Infohash)
+	pending := s.pendingDecisionFiles(ctx, t.Infohash)
 	queue := false
 	for i, f := range t.Files {
 		if st, ok := gate.stored[f.Index]; ok && (st.status != "auto" || st.work.Valid || concluded[f.Index]) {
@@ -102,6 +103,13 @@ func (s *Store) Match(ctx context.Context, t TorrentInput) error {
 			t.Infohash, f.Index, store.Trunc(f.Path, store.MaxPathBytes), f.Size, kind, wk, ep, conf, m, now); err != nil {
 			return err
 		}
+		// a file waiting in the review queue that the rules now map (a re-run after rule /
+		// catalogue changes): its review is settled — recorded as applied by the rules
+		if wkey, ok := wk.(string); ok && pending[f.Index] {
+			if err := s.settleByRule(ctx, t.Infohash, f.Index, f.Path, wkey, kind, ep, conf); err != nil {
+				return err
+			}
+		}
 		queue = queue || res[i].queue
 	}
 	if queue {
@@ -110,6 +118,37 @@ func (s *Store) Match(ctx context.Context, t TorrentInput) error {
 		}
 	}
 	return s.refreshFTS(ctx, t.Infohash)
+}
+
+// Rematch re-runs Match over a stored ready torrent (its catalogue info and stored file
+// list): what "the torrent shows up again" does for the files without a conclusion — the
+// rules map what they can now (new mappings gated as new), the rest is queued for the
+// decision model. Concluded files are untouched. Not ready (no file list yet): nothing.
+func (s *Store) Rematch(ctx context.Context, ih string) error {
+	in, ok := s.GetTorrentInput(ctx, ih)
+	if !ok {
+		return store.ErrNotFound
+	}
+	if status, _ := s.KnownTorrent(ctx, ih); status != "ready" {
+		return nil
+	}
+	rows, err := s.R.QueryContext(ctx, `SELECT file_index, path, size_bytes FROM torrent_files WHERE infohash = ? ORDER BY file_index`, ih)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		var f FileInput
+		if err := rows.Scan(&f.Index, &f.Path, &f.Size); err != nil {
+			rows.Close()
+			return err
+		}
+		in.Files = append(in.Files, f)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil || len(in.Files) == 0 {
+		return err
+	}
+	return s.Match(ctx, in)
 }
 
 // ruleGate applies the release-time gates to certain rule mappings of one torrent.

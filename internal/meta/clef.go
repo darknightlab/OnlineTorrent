@@ -57,10 +57,11 @@ func (s *Store) enqueueClef(ctx context.Context, ih string) error {
 	return err
 }
 
-// QueueUncertainClef queues a non-forced job now (only the torrent's uncertain files are
-// decided, as when the torrent re-appears); no-op if already pending.
+// QueueUncertainClef treats the torrent as re-appeared (Rematch): the rules re-run over its
+// uncertain files first, then a non-forced job is queued for the files still uncertain (none
+// left: no job). Concluded files are untouched.
 func (s *Store) QueueUncertainClef(ctx context.Context, ih string) error {
-	return s.enqueueClef(ctx, ih)
+	return s.Rematch(ctx, ih)
 }
 
 // RequeueClef (re)queues a torrent now as a forced job (admin 重新判断: every file is decided
@@ -462,8 +463,11 @@ type ClefCandidate struct {
 	MainEpisodes string `json:"main_episodes,omitempty"`
 	Romaji       string `json:"romaji,omitempty"` // offline kana transliteration (no romanised alias)
 	Specials     string `json:"specials,omitempty"`
-	Eps          int    `json:"eps,omitempty"`
-	Type         string `json:"type,omitempty"`
+	// MainMapped: some torrent has a main episode file mapped to this work (rules, model or
+	// admin) — unlisted specials of the work need no applied main next to them
+	MainMapped bool   `json:"main_mapped,omitempty"`
+	Eps        int    `json:"eps,omitempty"`
+	Type       string `json:"type,omitempty"`
 	// Season: the TV season this entry is — stated by its titles (第2期, Season 2, Ⅱ …), else
 	// 1 for an entry without a TV/WEB prequel; 0 = a later season of unknown number
 	Season int    `json:"season,omitempty"`
@@ -826,6 +830,7 @@ func (s *Store) candidateOf(ctx context.Context, w *Work, why string) ClefCandid
 		c.Eps = n
 	}
 	c.MainEpisodes, c.Specials = s.episodeSummary(ctx, w.Key)
+	c.MainMapped = s.hasMappedMain(ctx, w.Key)
 	if v := workSeason(w); v > 0 && v == float64(int(v)) {
 		c.Season = int(v)
 	} else if c.Type == "tv" || c.Type == "web" {
@@ -1417,6 +1422,42 @@ func (s *Store) queueRuleReview(ctx context.Context, ih string, idx int, path, w
 	}
 	return s.AddClefDecision(ctx, &ClefDecision{Infohash: ih, FileIndex: idx, Path: path, WorkKey: workKey, Kind: kind, Episode: ep, EpisodeKey: key,
 		Score: conf, Margin: -1, Confidence: conf, Model: "rules", Source: "rule", Status: "pending", Reason: reason})
+}
+
+// pendingDecisionFiles: files of ih whose latest decision is pending (in the review queue).
+func (s *Store) pendingDecisionFiles(ctx context.Context, ih string) map[int]bool {
+	out := map[int]bool{}
+	rows, err := s.R.QueryContext(ctx, `SELECT d.file_index FROM clef_decisions d WHERE d.infohash = ? AND d.status = 'pending' AND `+latestClefDecision, ih)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var idx int
+		if rows.Scan(&idx) == nil {
+			out[idx] = true
+		}
+	}
+	return out
+}
+
+// settleByRule records that the rules mapped a file that was waiting for review (an applied
+// rule decision: it becomes the file's latest decision, the old one is superseded).
+func (s *Store) settleByRule(ctx context.Context, ih string, idx int, path, workKey, kind string, ep *float64, conf float64) error {
+	key := ""
+	if k, ok := KeyOfFile(kind, ep); ok {
+		ck, _ := s.ValidEpisode(ctx, workKey, k)
+		key = ck.String()
+	}
+	return s.AddClefDecision(ctx, &ClefDecision{Infohash: ih, FileIndex: idx, Path: path, WorkKey: workKey, Kind: kind, Episode: ep, EpisodeKey: key,
+		Score: conf, Margin: -1, Confidence: conf, Model: "rules", Source: "rule", Status: "applied"})
+}
+
+// hasMappedMain: a main-episode file of any torrent is mapped to the work (not rejected).
+func (s *Store) hasMappedMain(ctx context.Context, workKey string) bool {
+	var n int
+	_ = s.R.QueryRowContext(ctx, `SELECT 1 FROM torrent_files WHERE work_key = ? AND kind = 'episode' AND status != 'rejected' LIMIT 1`, workKey).Scan(&n)
+	return n == 1
 }
 
 // GetClefJob returns the decision-model job of ih (nil if none).
