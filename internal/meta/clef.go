@@ -1277,9 +1277,10 @@ func (s *Store) WorkNames(ctx context.Context, workKey string) []string {
 			addWork(rw)
 		}
 	}
-	// an OVA / special also goes by its parent's names (日常 OAD: "Nichijou"): bgm 主线故事
-	// (12) from it, or 番外篇 (6) to it
-	if k := (&famWork{w: w}).kind(); FixParentNames && (k == "ova" || k == "special") {
+	// a side story / OVA / special / movie also goes by its parent's names (日常 OAD:
+	// "Nichijou", 「无能的奈奈」迷你动画: "Munou na Nana", Index-tan / movie: "Toaru Majutsu no
+	// Index"): bgm 主线故事 (12) from it, or 番外篇 (6) to it
+	if FixParentNames {
 		for _, rid := range s.nameParents(ctx, id) {
 			if rw, err := s.WorkByExternal(ctx, "bgm", strconv.FormatInt(rid, 10)); err == nil {
 				addWork(rw)

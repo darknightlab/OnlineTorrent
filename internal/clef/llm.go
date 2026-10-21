@@ -158,7 +158,7 @@ func ParseChatResponse(status int, raw []byte) (*ChatResult, error) {
 // every language, types, air dates, the release date, official episode numbers) rather than
 // rules.
 const llmSystem = `Map every video file of an anime torrent to one of the candidate bangumi entries (one entry = one TV season, movie, OVA/OAD or standalone mini-anime; sequels, split cours, remakes and re-edits are separate entries). Use the titles, any season stated in the name and the dates: a file is normally released shortly after its episode aired, and "released" is the torrent's release date.
-OVA, OAD and standalone mini-anime entries are separate bangumi subjects whose episodes are kind = main of that subject (never sp or other).
+If a matching standalone OVA, OAD or mini-anime entry is among the candidates, pick that entry with kind = main (never sp or other); if no standalone entry exists for it in the candidates, attach it to the main entry with kind = sp.
 
 Per file: subject_id = a candidate id, or null if none fits; episode = the number exactly as written in the file name (a special's own number: NCOP2 → 2), null if none; kind = main | sp | op | ed | pv | cm | other (menu, preview, bonus, a file holding several episodes); confidence 0–1; reason = a few words.
 suggested_title: the work's title if no candidate fits, else null.`

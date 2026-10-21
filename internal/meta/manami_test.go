@@ -137,4 +137,11 @@ func TestNameEvidenceImprovements(t *testing.T) {
 	if s.NameEvidence(ctx, "bgm:10", []string{"Tokyo.Revengers.S04E03.mkv"}) {
 		t.Error("unrelated colon prefix used")
 	}
+	// A web mini-anime spin-off (番外篇 6 from parent) also borrows its parent's name.
+	seedWork(t, s, 11, "無能なナナ", "无能的奈奈", `["Munou na Nana"]`, "tv", "2020-10-04", "", seq(1, 13), nil)
+	seedWork(t, s, 12, "「無能なナナ」ミニアニメ", "「无能的奈奈」迷你动画", `[]`, "web", "2020-10-08", "", seq(1, 12), nil)
+	relate(t, s, 11, 12, 6)
+	if !s.NameEvidence(ctx, "bgm:12", []string{"[Nekomoe kissaten] Munou na Nana [Mini][10][BDRip 1080p HEVC-10bit FLAC].mkv"}) {
+		t.Error("web mini-anime parent name")
+	}
 }
