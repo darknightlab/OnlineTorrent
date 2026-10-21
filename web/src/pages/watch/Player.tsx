@@ -143,9 +143,21 @@ export function Player({
   const [webseedArmed, setWebseedArmed] = useState(false)
   /** ArtPlayer 内部的 <video>（看门狗用） */
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  // 可播放（canplay）时告诉引擎：起播不再先等文件首尾（MP4 的 moov 在开头等不需要尾部的情况）
+  const playableTarget = useRef<{ session: Session | null; file: number | null }>({ session: null, file: null })
+  playableTarget.current = { session, file: current }
+  const notePlayable = useRef(() => {
+    const { session: s, file } = playableTarget.current
+    if (s && file !== null) s.notePlayable?.(file)
+  }).current
   const setVideo = useCallback((el: HTMLVideoElement | null) => {
+    const prev = videoRef.current
+    if (prev && prev !== el) prev.removeEventListener("canplay", notePlayable)
     videoRef.current = el
-  }, [])
+    if (!el || prev === el) return
+    el.addEventListener("canplay", notePlayable)
+    if (el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) notePlayable()
+  }, [notePlayable])
   const autoPicked = useRef(false)
   const loc = useLocation()
   const here = `${loc.pathname}${loc.search}`

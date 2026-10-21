@@ -241,6 +241,16 @@ class WTSession implements Session {
     torrent.on("verified", (i: number) => {
       if (live() && this.webseeds.size) this.onVerified(i)
     })
+    // 起播闸门（edgesPending）：首尾到了、或来源的可用分块变了（新连接、bitfield、have；节点与 WebSeed 都是 Wire）
+    const gateCheck = () => {
+      if (live()) this.edgesPending()
+    }
+    torrent.on("verified", gateCheck)
+    torrent.on("wire", (w) => {
+      gateCheck()
+      w.on("bitfield", gateCheck)
+      w.on("have", gateCheck)
+    })
     torrent.on("metadata", () => {
       if (!live()) return
       // ut_metadata 需要已连接的节点；没有任何连接就拿到元数据，说明来自 xs=（HTTP）
@@ -509,33 +519,52 @@ class WTSession implements Session {
     }
     t.select(next.end, next.end, EDGE_PRIORITY)
     t.select(next.start, next.start, EDGE_PRIORITY)
-    if (!this.windowed) this.selectWholeAfterEdges(t, next)
+    // 窗口模式也走闸门（预取），只是闸门打开时不选整个文件
+    this.selectWholeAfterEdges(t, next)
   }
 
   /**
    * 起播先取当前文件的首尾 piece：MKV 的 Cues、MP4 尾部的 moov 在文件尾，浏览器起播前就要读。
    * WebTorrent 不按优先级先后取 piece——新连接（WebSeed）的第一个请求取最后一个（优先级最低的）选择的末尾，
    * 之后在所有优先级非 0 的选择之间轮流取——所以首尾的高优先级选择会被读取窗口的预取与整文件下载挤到后面
-   * （线上：1 GB 的 MKV 尾部 piece 到第 26 秒才到，起播要 25 秒）。在首尾都校验之前：读取不预取
-   * （windowBytes = 0，只取正在读的 piece）、不选整个文件；可请求的只有首、尾和正在读的 piece。
+   * （线上：1 GB 的 MKV 尾部 piece 到第 26 秒才到，起播要 25 秒）。
+   * 闸门：首 / 尾中还缺、且已连接的来源（节点 / WebSeed 宣告的分块，即边缘节点的 have）里有的那些 piece
+   * 到齐之前，读取不预取（windowBytes = 0，只取正在读的 piece）、不选整个文件——可请求的只有首、尾和正在读的
+   * piece。只有一端能取到时（边缘节点还在下载这一集，尾部还没有）就只等那一端，从不等没人有的 piece。
+   * 视频已经可以播放（canplay：MP4 的 moov 在开头、MKV 不需要 Cues 时）也立即打开（notePlayable）。
+   * 还没有任何连接时先关着（不知道谁有）。打开后不再关上：之后才出现的首 / 尾仍由高优先级选择尽早取到，
+   * 但不再挡住预取与播放。
    */
+  private gate: { range: { start: number; end: number }; open: boolean } | null = null
+
   private edgesPending(): boolean {
     const t = this.torrent
-    const a = this.applied
-    return !!t && !!a && !(t.bitfield?.get(a.start) && t.bitfield?.get(a.end))
+    const g = this.gate
+    if (!t || !g || g.open || g.range !== this.applied) return false
+    const missing = [g.range.start, g.range.end].filter((i) => !t.bitfield?.get(i))
+    const wires = t.wires ?? []
+    const offered = missing.some((i) => wires.some((w) => w.peerPieces?.get(i)))
+    if (!missing.length || (wires.length > 0 && !offered)) {
+      g.open = true
+      if (!this.windowed && !this.destroyed) t.select(g.range.start, g.range.end, 0)
+      return false
+    }
+    return true
   }
 
-  /** 首尾都到了以后再选整个文件（非窗口模式的后台下载） */
-  private selectWholeAfterEdges(t: WTTorrent, range: { start: number; end: number }) {
-    const still = () => this.torrent === t && this.applied === range && !this.windowed && !this.destroyed
-    if (!this.edgesPending()) return void t.select(range.start, range.end, 0)
-    const on = () => {
-      if (!still()) return void t.removeListener("verified", on)
-      if (this.edgesPending()) return
-      t.removeListener("verified", on)
-      t.select(range.start, range.end, 0)
-    }
-    t.on("verified", on)
+  /** 播放器：当前文件已可播放（canplay）——起播闸门不再等首尾 */
+  notePlayable(fileIndex: number) {
+    const t = this.torrent
+    const g = this.gate
+    if (!t || !g || g.open || this.focused !== fileIndex || g.range !== this.applied) return
+    g.open = true
+    if (!this.windowed && !this.destroyed) t.select(g.range.start, g.range.end, 0)
+  }
+
+  /** 整文件后台下载（非窗口模式）在闸门打开时选上（见 edgesPending；之后的检查由 attach 里的事件触发） */
+  private selectWholeAfterEdges(_t: WTTorrent, range: { start: number; end: number }) {
+    this.gate = { range, open: false }
+    this.edgesPending()
   }
 
   on<K extends keyof SessionEvents>(ev: K, cb: SessionEvents[K]) {

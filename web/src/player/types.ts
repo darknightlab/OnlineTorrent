@@ -81,6 +81,8 @@ export interface Session {
   subtitles?(fileIndex: number): import("./subs/set").SubtitleSet | null
   /** 该视频的外挂字幕与种子附带的字体文件（请求服务器做种时一并下载） */
   companionFiles?(fileIndex: number): number[]
+  /** 该文件的 <video> 已可播放（canplay）：起播不再先等文件首尾（见 webtorrent-engine edgesPending） */
+  notePlayable?(fileIndex: number): void
   /** 进度条的字节 → 时间映射（容器索引）；不支持的容器 / 没有索引时为 null */
   timeMap?(fileIndex: number): Promise<TimeMapResult | null>
   /** 读取文件 [start, end) 的字节（辅助读取：容器索引等；缺的 piece 会下载） */

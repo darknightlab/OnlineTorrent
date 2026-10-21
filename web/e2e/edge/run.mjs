@@ -156,7 +156,9 @@ function writePiece(i) {
   states[i] = 2
 }
 // notes.txt is in the last piece(s) → complete from the start; the video's first 8 %
-if (!SINGLE) for (let i = 0; i < NP; i++) if (i >= piecesOfVideo - 1) writePiece(i)
+// PARTIAL_TAIL=1: the video's last piece (shared with notes.txt) isn't on the edge yet either — a
+// newly aired episode still downloading: the tail (MKV Cues) only arrives when qB gets there
+if (!SINGLE) for (let i = 0; i < NP; i++) if (i >= piecesOfVideo - 1 && !(process.env.PARTIAL_TAIL && i === piecesOfVideo - 1)) writePiece(i)
 for (let i = 0; i < Math.floor(piecesOfVideo * START_FRACTION); i++) writePiece(i)
 const done = () => states.every((s) => s === 2)
 const progress = () => states.filter((s) => s === 2).length / NP

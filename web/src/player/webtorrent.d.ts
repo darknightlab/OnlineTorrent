@@ -8,6 +8,9 @@ declare module "webtorrent/dist/webtorrent.min.js" {
     downloadSpeed(): number
     uploadSpeed(): number
     destroy(): void
+    /** 对方宣告有的分块（WebSeed：internals.patchWebSeed 宣告的服务器已有分块） */
+    peerPieces?: { get(i: number): boolean }
+    on(ev: "bitfield" | "have", cb: () => void): void
   }
   export interface WTPiece {
     length: number
