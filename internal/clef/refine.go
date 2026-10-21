@@ -40,7 +40,7 @@ func Refine(ctx context.Context, ms *meta.Store, t *meta.ClefTask, ds []FileDeci
 		k, valid := ms.ValidEpisode(ctx, d.Candidate.WorkKey, meta.EpisodeKey{Kind: meta.KeyMain, Number: *d.Episode})
 		if valid && ms.ContinuationSeasonFits(ctx, t, d.Candidate, d.File.Season, k) {
 			d.Key = k.String()
-			gateLLM(ctx, d, th, ev, numberAgrees(ctx, d, ms.ValidEpisode))
+			gateLLM(ctx, d, th, ev, numberAgrees(ctx, d, ms.ValidEpisode, false))
 		}
 	}
 	// 1. season continuation
@@ -48,7 +48,7 @@ func Refine(ctx context.Context, ms *meta.Store, t *meta.ClefTask, ds []FileDeci
 		d := &ds[i]
 		if d.Status == StatusDiscarded && d.Reason == ReasonSeason && seasonContinues(ctx, ms, t, ds, d) {
 			d.Answers["rule"] = AnswerSummary{Choice: d.Candidate.ID + " episode " + d.Key, Note: "季数写法不同：同一种子中同季的文件属于前作，本条目接续前作编号"}
-			gateLLM(ctx, d, th, ev, numberAgrees(ctx, d, ms.ValidEpisode))
+			gateLLM(ctx, d, th, ev, numberAgrees(ctx, d, ms.ValidEpisode, false))
 		}
 	}
 	// 2. prequel numbering for numbers the entry doesn't list

@@ -395,6 +395,14 @@ func (f *family) route(paths []string, title, method string, anchorSure bool) []
 					break
 				}
 				w, ok := f.pickType(h.Type, hs)
+				if h.Type == "ova" && w != nil && w.kind() == "ova" {
+					out[i] = fileRoute{w: w, how: "type", sure: anchorSure}
+					break
+				}
+				if h.Type == "ova" {
+					out[i] = fileRoute{how: "type"} // never attach an OVA/OAD to the TV anchor
+					break
+				}
 				switch {
 				case !ok:
 					out[i] = fileRoute{how: "type"}
@@ -659,7 +667,7 @@ func refineRouted(fam *family, paths []string, routes []fileRoute, ps []ParsedNa
 				}
 			}
 		}
-		if k == "movie" {
+		if k == "movie" || k == "ova" {
 			var mains []int
 			for _, i := range idx {
 				if ps[i].Kind == "episode" || ps[i].Kind == "other" {
@@ -709,7 +717,7 @@ func (s *Store) officialSet(ctx context.Context, workKey string) *officialSet {
 //   - no specials of k's kind listed (bgm rarely lists OP/ED/PV/CM, often no SP): accepted
 //     (nothing to check against).
 func (o *officialSet) valid(k EpisodeKey, eps int) bool {
-	if o.kinds[k.Kind] > 0 {
+	if k.Kind == KeyMain && o.kinds[k.Kind] > 0 {
 		return o.keys[k]
 	}
 	if k.Kind == KeyMain {

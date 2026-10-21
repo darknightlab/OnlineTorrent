@@ -148,14 +148,14 @@ func TestParseEpisodeRealNames(t *testing.T) {
 		{"Film 1999-04-24. リマスター版CM 02; BD_480P.mp4", "cm/2"},
 		{"Film 1999-04-24. 予告; BD_480P.mp4", "extra/-"},
 		{"Film 1999-04-24. 特報; BD_480P.mp4", "pv/-"},
-		{"OVA 1994-09-24 そしてふたりは出会った; DVD_480P.mp4", "sp/-"},
+		{"OVA 1994-09-24 そしてふたりは出会った; DVD_480P.mp4", "episode/-"},
 		{"[Dynamis One] Mahou no Shimai Lulutto Lilly [Special] - 01 (Baha 1920x1080 AVC AAC MP4) [4F988385].mp4", "sp/1"},
 		{"[Tsukigakirei] Ao no Hako - NCED 02 [BDrip 1080P HEVC-10bit AAC][CHS&JPN].mp4", "ed/2"},
 		{"[Tsukigakirei] Ao no Hako - NCOP 01 [BDrip 1080P HEVC-10bit AAC][CHS&JPN].mp4", "op/1"},
 		{"[Sub] Show - SP 2 [1080p].mkv", "sp/2"},
-		{"[Sub] Show [OVA02][1080p].mkv", "sp/2"},
-		{"[Sub] Show OVA - 02 [1080p].mkv", "sp/2"},
-		{"[Sub] Show [OVA][1080p].mkv", "sp/-"},
+		{"[Sub] Show [OVA02][1080p].mkv", "episode/2"},
+		{"[Sub] Show OVA - 02 [1080p].mkv", "episode/2"},
+		{"[Sub] Show [OVA][1080p].mkv", "episode/-"},
 		{"[Sub] Show [SP01-SP03][1080p].mkv", "sp/-"}, // several specials in one file
 		{"[Sub] Show - Special 03 [1080p].mkv", "sp/3"},
 		{"[Sub] Show [Special 1999][1080p].mkv", "sp/-"},
@@ -236,17 +236,17 @@ func TestClassifyFiles(t *testing.T) {
 		{sp + "Special 1999 (Special S1 04); DVD_480P.mp4", "sp/4"},
 		{sp + "Special 1999 (Special S1 05); DVD_480P.mp4", "sp/5"},
 		{sp + "Special 1999 (Special S1 06); DVD_480P.mp4", "sp/6"},
-		{sp + "Special 2002-03-29 (Special S2) 逮捕しちゃうぞ; DVD_480P.mp4", "sp/-"},
+		{sp + "Special 2002-03-29 (Special S2) 逮捕しちゃうぞ; DVD_480P.mp4", "sp/7"},
 		{ex + "Extras (Special 1999)/Special 1999 (Special S1). No Mercy !! ; DVD_480P.mp4", "extra/-"},
-		{ex + "Extras (Special 1999)/Special 1999 (Special S1). ノンテロップ・オープニング; DVD_480P.mp4", "op/-"},
-		{ex + "Extras (TV S1 1996)/You're Under Arrest. TV S1 (1996). ノンテロップ·オープニング; DVD_480P.mp4", "op/-"},
-		{ex + "Extras (TV S3 2007)/You're Under Arrest. TV S3 (2007). NCOP; DVD_480P.mp4", "op/-"},
+		{ex + "Extras (Special 1999)/Special 1999 (Special S1). ノンテロップ・オープニング; DVD_480P.mp4", "op/1"},
+		{ex + "Extras (TV S1 1996)/You're Under Arrest. TV S1 (1996). ノンテロップ·オープニング; DVD_480P.mp4", "op/2"},
+		{ex + "Extras (TV S3 2007)/You're Under Arrest. TV S3 (2007). NCOP; DVD_480P.mp4", "op/3"},
 		{ex + "Extras (TV S3 2007)/You're Under Arrest. TV S3 (2007). NCED; DVD_480P.mp4", "ed/1"},
 		{ex + "Extras (TV S1 1996)/You're Under Arrest. TV S1 (1996). 墨東お料理教室 出て来い凶悪犯 ! ; DVD_480P.mp4", "extra/-"},
 		{ex + "Extras (Film 1994)/Film 1999-04-24. リマスター版CM 01; BD_480P.mp4", "cm/1"},
 		{ex + "Extras (Film 1994)/Film 1999-04-24. リマスター版CM 02; BD_480P.mp4", "cm/2"},
-		{root + "OVA (4S4E)_DVDrip_480P_h264_aac_dub jpn sub cht/OVA 1994~1995/OVA 1994-09-24 そしてふたりは出会った; DVD_480P.mp4", "sp/-"},
-		{root + "OVA (4S4E)_DVDrip_480P_h264_aac_dub jpn sub cht/OVA 1994~1995/OVA 1995-01-21 東京タイフーン・ラリー; DVD_480P.mp4", "sp/-"},
+		{root + "OVA (4S4E)_DVDrip_480P_h264_aac_dub jpn sub cht/OVA 1994~1995/OVA 1994-09-24 そしてふたりは出会った; DVD_480P.mp4", "episode/-"},
+		{root + "OVA (4S4E)_DVDrip_480P_h264_aac_dub jpn sub cht/OVA 1994~1995/OVA 1995-01-21 東京タイフーン・ラリー; DVD_480P.mp4", "episode/-"},
 		{tv + "TV S1 1996/You're Under Arrest. TV S1 (1996) 05; DVD_480P.mp4", "episode/-"},
 		{tv + "TV S1 1996/You're Under Arrest. TV S1 (1996) 30; DVD_480P.mp4", "episode/-"},
 		{tv + "TV S2 2001/You're Under Arrest. TV S2 (2001) 05; DVD_480P.mp4", "episode/-"},
@@ -261,10 +261,10 @@ func TestClassifyFiles(t *testing.T) {
 		{"Show/SPs/Show.mkv", "sp/1"},
 		{"Show/[Team] Show - 01 [1080p].ass", "other/-"},
 	})
-	// several unnumbered of a kind stay unnumbered; numbered ones keep theirs
+	// unnumbered specials of a kind are numbered sequentially; numbered ones keep theirs
 	run("ops", "[Team] Show [BD]", []c{
-		{"Show/NCOP/Show NCOP [Ver A].mkv", "op/-"},
-		{"Show/NCOP/Show NCOP [Ver B].mkv", "op/-"},
+		{"Show/NCOP/Show NCOP [Ver A].mkv", "op/1"},
+		{"Show/NCOP/Show NCOP [Ver B].mkv", "op/2"},
 		{"Show/SPs/Show [PV01].mkv", "pv/1"},
 		{"Show/SPs/Show [PV02].mkv", "pv/2"},
 	})
@@ -287,5 +287,5 @@ func TestClassifyFiles(t *testing.T) {
 	})
 	// single video without a number: the torrent title
 	run("single", "[Team] Show - 07 [1080p]", []c{{"[Team] Show [1080p].mkv", "episode/7"}})
-	run("single-sp", "[Team] Show - OVA 2 [1080p]", []c{{"[Team] Show - OVA [1080p].mkv", "sp/2"}})
+	run("single-sp", "[Team] Show - OVA 2 [1080p]", []c{{"[Team] Show - OVA [1080p].mkv", "episode/2"}})
 }

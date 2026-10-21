@@ -34,7 +34,7 @@ func TestParseEpisode(t *testing.T) {
 		// specials keep their number; unnumbered ones have none (ClassifyFiles numbers a
 		// torrent's only unnumbered special of a kind 1, see TestClassifyFiles)
 		{"[Team] Show - SP01 [1080p].mkv", 1, "sp"},
-		{"[Team] Show - OVA [1080p].mkv", -1, "sp"},
+		{"[Team] Show - OVA [1080p].mkv", -1, "episode"},
 		{"[Team] Show NCOP1.mkv", 1, "op"},
 		{"Show - NCED [BD].mkv", -1, "ed"},
 		{"Show - 12.5 [1080p].mkv", 12.5, "episode"},

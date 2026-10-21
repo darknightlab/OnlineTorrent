@@ -139,7 +139,7 @@ func TestRouteMultiSeasonBatch(t *testing.T) {
 	//   - Season 2 / ファイナル folders: season-chain and related-title routing (were 11 / 12);
 	//   - Movie / OVA folders: movie/OVA keyword routing (were 13 / 14; the OVA numbers came
 	//     from matching official episode titles, which is gone);
-	//   - unnumbered NCOPs: "only NCOP of its kind → ncop1" is an inference (were 11 / 10).
+	//   - unnumbered NCOP on the certain anchor: numbered sequentially as ncop1 and mapped to 10.
 	matchFiles(t, s, "batch", "[整理] 测试秀 (テストショー) TV+OVA+剧场版 合集 (整理时间：2026.07.15)", nil, []fileWant{
 		{root + "TV/Season 1/[G] Test Show - 01 [1080p].mkv", 10, "1"},
 		{root + "TV/Season 1/[G] Test Show - 12 [1080p].mkv", 10, "12"},
@@ -151,7 +151,7 @@ func TestRouteMultiSeasonBatch(t *testing.T) {
 		{root + "Movie/[G] Test Show The Movie [1080p].mkv", 0, "1"},
 		{root + "OVA/[G] Test Show OVA はじまりの日 [1080p].mkv", 0, ""},
 		{root + "OVA/[G] Test Show OVA さよならの日 [1080p].mkv", 0, ""},
-		{root + "SPs/[G] Test Show - NCOP [1080p].mkv", 0, "ncop1"},
+		{root + "SPs/[G] Test Show - NCOP [1080p].mkv", 10, "ncop1"},
 		{root + "TV/Season 1/[G] Test Show - 01 [1080p].ass", 0, ""},
 	})
 	tm, _ := s.GetTorrentMap(context.Background(), "batch")
@@ -166,14 +166,14 @@ func TestRouteMultiSeasonBatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(task.Files) != 9 || !task.PerFile {
+	if len(task.Files) != 8 || !task.PerFile {
 		t.Errorf("clef task: %d files, per-file %v", len(task.Files), task.PerFile)
 	}
 	hints := map[int]string{}
 	for _, f := range task.Files {
 		hints[f.Index] = f.Hint
 	}
-	if hints[2] != "bgm:11" || hints[5] != "bgm:12" || hints[7] != "bgm:13" || hints[8] != "bgm:14" || hints[10] != "bgm:10" {
+	if hints[2] != "bgm:11" || hints[5] != "bgm:12" || hints[7] != "bgm:13" || hints[8] != "bgm:14" {
 		t.Errorf("hints %v", hints)
 	}
 	cands := map[string]bool{}
@@ -186,12 +186,12 @@ func TestRouteMultiSeasonBatch(t *testing.T) {
 		}
 	}
 
-	// the anchor is season 2 (tagged; its title says 第二季): S2 files are certain, S3 files
-	// (season-chain routing, was 12) and the unnumbered NCOP (was ncop1 of 11) are queued
+	// the anchor is season 2 (tagged; its title says 第二季): S2 files and the unnumbered NCOP
+	// on the anchor are certain, S3 files (season-chain routing, was 12) are queued
 	matchFiles(t, s, "s2s3", "[G] Test Show S2+S3 [BD]", []string{"tag11"}, []fileWant{
 		{"Show/S2/[G] Test Show S2 - 01.mkv", 11, "1"},
 		{"Show/S3/[G] Test Show S3 - 01.mkv", 0, "1"},
-		{"Show/[G] Test Show - NCOP.mkv", 0, "ncop1"},
+		{"Show/[G] Test Show - NCOP.mkv", 11, "ncop1"},
 	})
 	// a single-season S2 torrent tagged with S2 stays on the anchor
 	matchFiles(t, s, "s2only", "[G] Test Show S2 - 05 [1080p]", []string{"tag11"}, []fileWant{

@@ -326,9 +326,9 @@ func setOf(xs ...string) map[string]bool {
 
 // type keywords (upper case) → kind. "oped" = a combined OP&ED video, "nc" = creditless marker.
 var typeWords = map[string]string{
-	"SP": "sp", "SPS": "sp", "SPECIAL": "sp", "SPECIALS": "sp", "OVA": "sp", "OVAS": "sp", "OAD": "sp", "OADS": "sp", "OAV": "sp",
+	"SP": "sp", "SPS": "sp", "SPECIAL": "sp", "SPECIALS": "sp", "OVA": "ova", "OVAS": "ova", "OAD": "ova", "OADS": "ova", "OAV": "ova",
 	"NCOP": "op", "NCED": "ed", "OP": "op", "ED": "ed", "OPENING": "op", "ENDING": "ed", "NCOPED": "oped", "NC": "nc", "CREDITLESS": "nc",
-	"PV": "pv", "PVS": "pv", "TRAILER": "pv", "TRAILERS": "pv", "TEASER": "pv", "TEASERS": "pv", "CM": "cm", "CMS": "cm",
+	"PV": "pv", "PVS": "pv", "TRAILER": "pv", "TRAILERS": "pv", "TEASER": "pv", "TEASERS": "pv", "CM": "cm", "CMS": "cm", "BDCM": "cm", "BDCMS": "cm", "TVCM": "cm", "TVCMS": "cm", "WEBPV": "pv", "WEBCM": "cm",
 	"PREVIEW": "extra", "PREVIEWS": "extra", "MENU": "extra", "MENUS": "extra", "MAKING": "extra", "INTERVIEW": "extra", "DIGEST": "extra",
 	"BONUS": "extra", "EXTRA": "extra", "EXTRAS": "extra",
 	"SAMPLE": "sample", "SAMPLES": "sample",
@@ -596,6 +596,8 @@ func postPass(toks []token, releaseGroup int) {
 			toks[j].cat = cSeason
 		case t.ord && j >= 0 && (strings.EqualFold(toks[j].text, "season") || strings.EqualFold(toks[j].text, "saison")):
 			t.cat = cSeason
+		case t.cat == cType && t.typ == "ova" && t.hasNum:
+			t.cat = cEpisode // OVA02 is a main episode of the standalone OVA subject
 		case epPrefix[u] && j >= 0 && toks[j].cat == cNum:
 			t.cat, toks[j].cat = cIdent, cEpisode
 		case (titleNumPrefix[u] || t.text == "No" || t.text == "NO") && j >= 0 && toks[j].cat == cNum:
@@ -715,8 +717,12 @@ func trustTypes(toks []token) {
 				k++
 			}
 			if k < len(toks) && toks[k].group == t.group && toks[k].cat == cNum && !toks[k].used {
-				t.num, t.hasNum = toks[k].num, true
-				toks[k].used = true
+				if t.typ == "ova" {
+					toks[k].cat = cEpisode // "OVA 2" is episode 2 of the standalone OVA subject
+				} else {
+					t.num, t.hasNum = toks[k].num, true
+					toks[k].used = true
+				}
 			}
 		}
 	}
@@ -917,6 +923,10 @@ func parseName(name string, allowBare bool) analysis {
 		return a
 	}
 
+	if kinds["ova"] && len(cands) == 0 {
+		a.Kind, a.Confidence, a.noNum = "episode", 0.5, true
+		return a
+	}
 	cands = distinct(cands)
 	switch {
 	case len(cands) == 1:
@@ -997,6 +1007,9 @@ func dirKind(d string) (string, float64) {
 				kind = "extra"
 			}
 		case t.cat == cType:
+			if t.typ == "ova" {
+				continue
+			} // work-type hint, not a special folder
 			if kind == "" {
 				kind = t.typ
 			}
@@ -1110,6 +1123,13 @@ func classifyOneKind(p, title string, videos int) (ParsedName, fileInfo) {
 			r.Episode, r.Confidence, r.Sure = t.Episode, t.Confidence*0.8, false
 		}
 	}
+	// an explicit OVA/OAD/Movie keyword in a folder marks an unnumbered file as an episode
+	for _, h := range pathHints(p)[1:] {
+		if (h.Type == "ova" || h.Type == "movie") && r.Kind == "other" && r.Episode == nil {
+			r.Kind, r.Confidence = "episode", 0.4
+			break
+		}
+	}
 	return r, info
 }
 
@@ -1190,13 +1210,29 @@ func classifyFilesIn(paths []string, title string, groups []string) []ParsedName
 			}
 		}
 	}
-	// the only unnumbered special of its kind → 1
+	// Unnumbered specials receive deterministic numbers in torrent order, skipping
+	// explicit numbers of this same work/group + kind. Ambiguous explicit numbers
+	// (including clashes) are not unnumbered and are never silently reassigned.
 	for k, idx := range perKind {
-		if k.kind == "episode" || len(idx) != 1 {
+		if k.kind == "episode" {
 			continue
 		}
-		if i := idx[0]; out[i].Episode == nil && infos[i].noNum {
-			out[i].Episode, out[i].Confidence, out[i].Sure = ptrF(1), 0.4, false
+		taken := map[float64]bool{}
+		for _, i := range idx {
+			if out[i].Episode != nil {
+				taken[*out[i].Episode] = true
+			}
+		}
+		n := 1.0
+		for _, i := range idx {
+			if out[i].Episode != nil || !infos[i].noNum {
+				continue
+			}
+			for taken[n] {
+				n++
+			}
+			out[i].Episode, out[i].Confidence, out[i].Sure = ptrF(n), 0.6, true
+			taken[n] = true
 		}
 	}
 	// consecutive numbering of a special kind inside one folder supports the numbers
@@ -1335,7 +1371,7 @@ func nameHint(s string) routeHint {
 		switch {
 		case u == "MOVIE" || u == "MOVIES" || u == "FILM" || u == "FILMS" || u == "GEKIJOUBAN" || strings.Contains(t.text, "剧场版") || strings.Contains(t.text, "劇場版"):
 			types["movie"] = true
-		case reOVAWord.MatchString(u):
+		case reOVAWord.MatchString(u) || (t.cat == cType && t.typ == "ova"):
 			types["ova"] = true
 		case u == "TV" || strings.HasPrefix(t.text, "TV动画") || strings.HasPrefix(t.text, "TVアニメ"):
 			types["tv"] = true

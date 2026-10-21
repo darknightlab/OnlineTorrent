@@ -157,7 +157,8 @@ func ParseChatResponse(status int, raw []byte) (*ChatResult, error) {
 // llmSystem is short on purpose (owner decision): the model gets the information (titles in
 // every language, types, air dates, the release date, official episode numbers) rather than
 // rules.
-const llmSystem = `Map every video file of an anime torrent to one of the candidate bangumi entries (one entry = one TV season, movie or OVA; sequels, split cours, remakes and re-edits are separate entries). Use the titles, any season stated in the name and the dates: a file is normally released shortly after its episode aired, and "released" is the torrent's release date.
+const llmSystem = `Map every video file of an anime torrent to one of the candidate bangumi entries (one entry = one TV season, movie, OVA/OAD or standalone mini-anime; sequels, split cours, remakes and re-edits are separate entries). Use the titles, any season stated in the name and the dates: a file is normally released shortly after its episode aired, and "released" is the torrent's release date.
+OVA, OAD and standalone mini-anime entries are separate bangumi subjects whose episodes are kind = main of that subject (never sp or other).
 
 Per file: subject_id = a candidate id, or null if none fits; episode = the number exactly as written in the file name (a special's own number: NCOP2 → 2), null if none; kind = main | sp | op | ed | pv | cm | other (menu, preview, bonus, a file holding several episodes); confidence 0–1; reason = a few words.
 suggested_title: the work's title if no candidate fits, else null.`
@@ -407,9 +408,23 @@ func DecideLLM(ctx context.Context, t *meta.ClefTask, answers map[int]LLMFileOut
 	}
 	type sk struct{ subj, kind string }
 	count := map[sk]int{}
+	takenSpecials := map[sk]map[float64]bool{}
+	nextSpecial := map[sk]float64{}
 	for _, f := range t.Files {
 		if a, ok := answers[f.Index]; ok && a.SubjectID != nil {
+			k := sk{*a.SubjectID, FileKindOf(a.Kind)}
 			count[sk{*a.SubjectID, a.Kind}]++
+			if k.kind != "" && k.kind != "episode" && a.Episode != nil && f.Episode != nil {
+				for _, n := range f.Numbers {
+					if n.Value == *a.Episode {
+						if takenSpecials[k] == nil {
+							takenSpecials[k] = map[float64]bool{}
+						}
+						takenSpecials[k][n.Value] = true
+						break
+					}
+				}
+			}
 		}
 	}
 	out := make([]FileDecision, 0, len(t.Files))
@@ -473,9 +488,22 @@ func DecideLLM(ctx context.Context, t *meta.ClefTask, answers map[int]LLMFileOut
 				discard(ReasonBadNumber)
 				continue
 			}
-		} else if count[sk{subj, a.Kind}] == 1 && d.Kind != "episode" {
-			one := 1.0
-			num = &one
+		} else if d.Kind != "episode" {
+			k := sk{subj, d.Kind}
+			if takenSpecials[k] == nil {
+				takenSpecials[k] = map[float64]bool{}
+			}
+			n := nextSpecial[k]
+			if n < 1 {
+				n = 1
+			}
+			for takenSpecials[k][n] {
+				n++
+			}
+			takenSpecials[k][n] = true
+			nextSpecial[k] = n + 1
+			v := n
+			num = &v
 		} else {
 			discard(ReasonNoNumber)
 			continue
@@ -496,7 +524,7 @@ func DecideLLM(ctx context.Context, t *meta.ClefTask, answers map[int]LLMFileOut
 			discard(ReasonNotOfficial)
 			continue
 		}
-		gateLLM(ctx, &d, th, evidence, numberAgrees(ctx, &d, valid))
+		gateLLM(ctx, &d, th, evidence, numberAgrees(ctx, &d, valid, a.Episode == nil && d.Kind != "episode"))
 		out = append(out, d)
 	}
 	// a special the work's official list doesn't have (OP/ED/PV are rarely listed) is only
@@ -523,9 +551,16 @@ func DecideLLM(ctx context.Context, t *meta.ClefTask, answers map[int]LLMFileOut
 
 // numberAgrees: the parser found no number, or the same one — compared after the split-cour
 // shift, so "Slime 4th Season - 24(96)" read as 24 by the parser and as 96 by the model is
-// the same official episode (96).
-func numberAgrees(ctx context.Context, d *FileDecision, valid Validator) bool {
+// the same official episode (96). For an unnumbered special (the model answered null and
+// received a sequential number), the parser's sequential number does not contradict it.
+func numberAgrees(ctx context.Context, d *FileDecision, valid Validator, unnumberedSpecial bool) bool {
+	if unnumberedSpecial {
+		return true
+	}
 	f := d.File
+	if d.Kind != "episode" && meta.UnnumberedSpecial(f.Path, d.Kind) && d.Episode != nil && *d.Episode != 1 {
+		return false // e.g. [NCEDv2]: v2 is a version marker, not episode 2
+	}
 	if f.Episode == nil || d.Episode == nil || *f.Episode == *d.Episode {
 		return true
 	}

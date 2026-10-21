@@ -137,6 +137,7 @@ const maxListedEpisodes = 2000
 // answer from the broadcast schedule (nil = unknown → the date alone decides).
 func episodeList(aired int, official []meta.OfficialEpisode, mapped []meta.EpisodeCount, today string, todayAired *bool) []episodeItem {
 	counts := map[meta.EpisodeKey]int{}
+	titles := map[meta.EpisodeKey]string{}
 	off := map[meta.EpisodeKey]meta.OfficialEpisode{}
 	hasMain := false
 	for _, o := range official {
@@ -146,6 +147,9 @@ func episodeList(aired int, official []meta.OfficialEpisode, mapped []meta.Episo
 	top := aired
 	for _, m := range mapped {
 		counts[m.Key] = m.Files
+		if m.Title != "" {
+			titles[m.Key] = m.Title
+		}
 		if m.Key.Kind == meta.KeyMain && m.Key.Number == math.Trunc(m.Key.Number) && int(m.Key.Number) > top {
 			top = int(m.Key.Number)
 		}
@@ -180,6 +184,9 @@ func episodeList(aired int, official []meta.OfficialEpisode, mapped []meta.Episo
 			if it.Title == "" {
 				it.Title, it.TitleJA = o.Name, ""
 			}
+		}
+		if it.Title == "" && k.Kind != meta.KeyMain {
+			it.Title = titles[k]
 		}
 		if k.Kind == meta.KeyMain {
 			var a bool

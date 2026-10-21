@@ -40,6 +40,23 @@ func TestEpisodeList(t *testing.T) {
 	if got := episodeList(0, nil, nil, "2026-10-18", nil); len(got) != 0 {
 		t.Errorf("empty: %+v", got)
 	}
+	// official specials keep bgm_ep_id and bgm title (falling back to file title when empty);
+	// unlisted specials use the file-derived title and keep bgm_ep_id = 0
+	offSp := []meta.OfficialEpisode{
+		{Key: meta.EpisodeKey{Kind: meta.KeySP, Number: 1}, BgmID: 901, NameCN: "官方SP1"},
+		{Key: meta.EpisodeKey{Kind: meta.KeySP, Number: 2}, BgmID: 902},
+	}
+	mapSp := []meta.EpisodeCount{
+		{Key: meta.EpisodeKey{Kind: meta.KeySP, Number: 1}, Files: 1, Title: "File SP1"},
+		{Key: meta.EpisodeKey{Kind: meta.KeySP, Number: 2}, Files: 1, Title: "File SP2"},
+		{Key: meta.EpisodeKey{Kind: meta.KeySP, Number: 5}, Files: 1, Title: "Machikado Mazoku Mini 05"},
+	}
+	spItems := episodeList(0, offSp, mapSp, "2026-10-18", nil)
+	if len(spItems) != 3 || !spItems[0].Official || spItems[0].BgmEpID != 901 || spItems[0].Title != "官方SP1" ||
+		!spItems[1].Official || spItems[1].BgmEpID != 902 || spItems[1].Title != "File SP2" ||
+		spItems[2].Official || spItems[2].BgmEpID != 0 || spItems[2].Title != "Machikado Mazoku Mini 05" {
+		t.Errorf("special titles/bgm_ep_id: %+v", spItems)
+	}
 }
 
 func TestEpisodesEndpoints(t *testing.T) {

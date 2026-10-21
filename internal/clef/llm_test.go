@@ -233,6 +233,23 @@ func TestDecideLLM(t *testing.T) {
 	if ds := DecideLLM(ctx, tk4, both, th, fakeValid, nil); ds[0].Status != StatusApplied || ds[1].Status != StatusApplied {
 		t.Errorf("special with main: %+v", ds)
 	}
+	// multiple unnumbered specials of the same (subj, kind) are numbered sequentially, skipping taken numbers
+	tk6 := task(1, false)
+	tk6.Candidates[0].MainMapped = true
+	tk6.Files = []meta.ClefFile{
+		{Index: 0, Path: "Show/[G] Show [Original PV].mkv", Kind: "pv", Episode: f64p(1)},
+		{Index: 1, Path: "Show/[G] Show [PV02].mkv", Kind: "pv", Episode: f64p(2), Numbers: meta.NumberOptions("Show/[G] Show [PV02].mkv", "", false)},
+		{Index: 2, Path: "Show/[G] Show [Teaser PV].mkv", Kind: "pv", Episode: f64p(3)},
+	}
+	ans6 := map[int]LLMFileOut{
+		0: {Index: 0, SubjectID: strp("bgm_100"), Kind: "pv", Confidence: 0.95},
+		1: {Index: 1, SubjectID: strp("bgm_100"), Episode: f64p(2), Kind: "pv", Confidence: 0.95},
+		2: {Index: 2, SubjectID: strp("bgm_100"), Kind: "pv", Confidence: 0.95},
+	}
+	ds6 := DecideLLM(ctx, tk6, ans6, th, fakeValid, nil)
+	if ds6[0].Status != StatusApplied || ds6[0].Key != "pv1" || ds6[1].Status != StatusApplied || ds6[1].Key != "pv2" || ds6[2].Status != StatusApplied || ds6[2].Key != "pv3" {
+		t.Errorf("sequential specials in DecideLLM: %+v", ds6)
+	}
 }
 
 func TestServiceLLMProvider(t *testing.T) {

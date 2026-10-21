@@ -753,49 +753,19 @@ func (s *Store) EpisodeFiles(ctx context.Context, workKey string, key EpisodeKey
 type EpisodeCount struct {
 	Key   EpisodeKey
 	Files int
+	Title string // fallback title derived from a mapped special file path
 }
 
 // EpisodeKeys lists every episode key (main episodes and specials) that has mapped files
 // for the work, with the number of files, sorted by LessKey.
 func (s *Store) EpisodeKeys(ctx context.Context, workKey string) ([]EpisodeCount, error) {
-	s.episodeOffset(ctx, workKey) // warm the cache before holding a rows cursor
-	rows, err := s.R.QueryContext(ctx, `SELECT kind, episode, COUNT(*) FROM torrent_files
-		WHERE work_key = ? AND episode IS NOT NULL AND kind IN ('episode','sp','op','ed','pv','cm') AND status != 'rejected'
-		GROUP BY kind, episode`, workKey)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []EpisodeCount{}
-	idx := map[EpisodeKey]int{}
-	for rows.Next() {
-		var kind string
-		var ep float64
-		var n int
-		if err := rows.Scan(&kind, &ep, &n); err != nil {
-			return nil, err
-		}
-		if k, ok := KeyOfFile(kind, &ep); ok {
-			k = s.CanonicalKey(ctx, workKey, k)
-			if i, dup := idx[k]; dup {
-				out[i].Files += n
-				continue
-			}
-			idx[k] = len(out)
-			out = append(out, EpisodeCount{k, n})
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return LessKey(out[i].Key, out[j].Key) })
-	return out, rows.Err()
+	return s.EpisodeKeysWhere(ctx, workKey, nil)
 }
 
 // EpisodeKeysWhere is EpisodeKeys counting only the files keep accepts (nil keep: all,
 // same as EpisodeKeys). The file carries the fields policy decisions need (infohash, path,
 // torrent title, team, trusted).
 func (s *Store) EpisodeKeysWhere(ctx context.Context, workKey string, keep func(EpisodeFile) bool) ([]EpisodeCount, error) {
-	if keep == nil {
-		return s.EpisodeKeys(ctx, workKey)
-	}
 	s.episodeOffset(ctx, workKey) // warm the cache before holding a rows cursor
 	rows, err := s.R.QueryContext(ctx, `SELECT f.kind, f.episode, f.infohash, f.file_index, f.path, f.size_bytes, t.title, t.team, t.trusted
 		FROM torrent_files f JOIN torrents t ON t.infohash = f.infohash
@@ -808,6 +778,7 @@ func (s *Store) EpisodeKeysWhere(ctx context.Context, workKey string, keep func(
 		ep   float64
 	}
 	counts := map[fileKey]int{}
+	paths := map[fileKey]string{}
 	var order []fileKey
 	for rows.Next() {
 		var k fileKey
@@ -816,11 +787,12 @@ func (s *Store) EpisodeKeysWhere(ctx context.Context, workKey string, keep func(
 			rows.Close()
 			return nil, err
 		}
-		if !keep(f) {
+		if keep != nil && !keep(f) {
 			continue
 		}
 		if _, ok := counts[k]; !ok {
 			order = append(order, k)
+			paths[k] = f.Path
 		}
 		counts[k]++
 	}
@@ -829,6 +801,7 @@ func (s *Store) EpisodeKeysWhere(ctx context.Context, workKey string, keep func(
 	if err != nil {
 		return nil, err
 	}
+	var workNames []string
 	out := []EpisodeCount{}
 	idx := map[EpisodeKey]int{}
 	for _, fk := range order {
@@ -840,10 +813,23 @@ func (s *Store) EpisodeKeysWhere(ctx context.Context, workKey string, keep func(
 		k = s.CanonicalKey(ctx, workKey, k)
 		if i, dup := idx[k]; dup {
 			out[i].Files += counts[fk]
+			if out[i].Title == "" && IsSpecialKind(k.Kind) {
+				if workNames == nil {
+					workNames = s.WorkNames(ctx, workKey)
+				}
+				out[i].Title = DeriveSpecialTitle(paths[fk], workNames)
+			}
 			continue
 		}
+		title := ""
+		if IsSpecialKind(k.Kind) {
+			if workNames == nil {
+				workNames = s.WorkNames(ctx, workKey)
+			}
+			title = DeriveSpecialTitle(paths[fk], workNames)
+		}
 		idx[k] = len(out)
-		out = append(out, EpisodeCount{k, counts[fk]})
+		out = append(out, EpisodeCount{Key: k, Files: counts[fk], Title: title})
 	}
 	sort.Slice(out, func(i, j int) bool { return LessKey(out[i].Key, out[j].Key) })
 	return out, nil
