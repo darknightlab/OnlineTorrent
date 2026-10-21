@@ -10,6 +10,25 @@ backends, chosen by the setting `clef.provider` (settings group 决策模型):
 
 Design: [plan.md](../plan.md) 「规则收紧 + 决策模型」. API: [api.md](../api.md) 「后台」→「决策模型」.
 
+## Official singleton main chapters (2026-10)
+
+A genuinely unnumbered main video may use the actual sort of the work's **sole official
+main chapter**, regardless of movie/OVA/WEB/TV type or torrent video count. Both an explicit
+model answer for that canonical sort and a null number use the same proof. Planned episode
+counts are not proof; explicit/ambiguous episode markers, numbered parts, specials, extras,
+interviews/IV and multiple unnumbered main answers for one work do not receive this fallback.
+All confidence, name, season, parser-kind and release gates remain. Recorded tasks refresh
+this official-list fact from the calibration catalogue before replaying.
+
+Production read-only audit: 377 current pending/discarded files, 14 invalid_number/no_number
+cases targeting an official singleton; **8** have genuinely unnumbered non-special video
+names, including Yuru Yuri Nachuyachumi (file 507), Psychic Wars, Anzio OVA, Index movie,
+Cosmic Princess Kaguya, High School Fleet movie, Sintel and No Game No Life Zero. Six retain
+explicit numbering / special classification and remain strict. This is eligibility, not a
+promise of application (Sintel still needs release time, other gates remain).
+Calibration: model **255 applied / 0 wrong**, unchanged; rules **196 certain / 7 raw
+mismatches**, unchanged (same full bangumi-data + manami snapshot, raw rules before gates).
+
 ## Names v5: attributed manami names and evidence normalisation (2026-10-21)
 
 See [manami-names.md](manami-names.md) for release format, deterministic ID linking,

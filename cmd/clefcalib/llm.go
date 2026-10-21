@@ -266,6 +266,9 @@ func analyzeLLM(ctx context.Context, ms *meta.Store, path string, recs []record)
 			r.Task.Released, r.Task.ReleasedBy = rt.UTC().Format(time.RFC3339), by
 		}
 		r.Task.Batch = ms.VideoFiles(ctx, r.Task.Infohash) >= 2 // the real torrent, not the sample
+		for i := range r.Task.Candidates {
+			r.Task.Candidates[i].OfficialSingleton = ms.OfficialSingleton(ctx, r.Task.Candidates[i].WorkKey)
+		}
 		// model alone: every validated answer is applied (no threshold, no gates)
 		alone := clef.DecideLLM(ctx, r.Task, r.LLM.Answers, clef.LLMThresholds{}, ms.ValidEpisode, nil)
 		gated := clef.DecideLLM(ctx, r.Task, r.LLM.Answers, *llmTh, ms.ValidEpisode, clef.TaskEvidence(ms, r.Task))

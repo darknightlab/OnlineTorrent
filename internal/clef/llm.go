@@ -451,7 +451,17 @@ func DecideLLM(ctx context.Context, t *meta.ClefTask, answers map[int]LLMFileOut
 			continue
 		}
 		var num *float64
-		if a.Episode != nil {
+		// A work's official singleton proves the number even when it is not written.
+		// Exactly one answer may claim that main chapter: don't guess several parts as
+		// duplicate mains. File kind and raw parser checks exclude specials/extras/IV.
+		implicit := d.Kind == "episode" && count[sk{subj, a.Kind}] == 1 &&
+			c.OfficialSingleton != nil && (a.Episode == nil || *a.Episode == *c.OfficialSingleton) &&
+			(f.Kind == "other" || f.Kind == "episode" || f.Kind == "") &&
+			f.Episode == nil && meta.UnnumberedMainVideo(f.Path)
+		if implicit {
+			v := *c.OfficialSingleton
+			num = &v
+		} else if a.Episode != nil {
 			// the number must be written in the file name (or, single video, the title)
 			for _, n := range f.Numbers {
 				if n.Value == *a.Episode {
@@ -463,7 +473,7 @@ func DecideLLM(ctx context.Context, t *meta.ClefTask, answers map[int]LLMFileOut
 				discard(ReasonBadNumber)
 				continue
 			}
-		} else if count[sk{subj, a.Kind}] == 1 && (d.Kind != "episode" || c.Type == "movie") {
+		} else if count[sk{subj, a.Kind}] == 1 && d.Kind != "episode" {
 			one := 1.0
 			num = &one
 		} else {

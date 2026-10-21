@@ -461,8 +461,11 @@ type ClefCandidate struct {
 	EndDate   string   `json:"end_date,omitempty"` // YYYY-MM-DD, "" = running / unknown
 	// official episode list, compact: "13–24", "sp1–2, ncop1, nced1" (LLM input)
 	MainEpisodes string `json:"main_episodes,omitempty"`
-	Romaji       string `json:"romaji,omitempty"` // offline kana transliteration (no romanised alias)
-	Specials     string `json:"specials,omitempty"`
+	// OfficialSingleton is the actual sort of the sole official main chapter, never the
+	// planned episode count. Local validation only (not added to the LLM prompt).
+	OfficialSingleton *float64 `json:"official_singleton,omitempty"`
+	Romaji            string   `json:"romaji,omitempty"` // offline kana transliteration (no romanised alias)
+	Specials          string   `json:"specials,omitempty"`
 	// MainMapped: some torrent has a main episode file mapped to this work (rules, model or
 	// admin) — unlisted specials of the work need no applied main next to them
 	MainMapped bool   `json:"main_mapped,omitempty"`
@@ -830,6 +833,7 @@ func (s *Store) candidateOf(ctx context.Context, w *Work, why string) ClefCandid
 		c.Eps = n
 	}
 	c.MainEpisodes, c.Specials = s.episodeSummary(ctx, w.Key)
+	c.OfficialSingleton = s.OfficialSingleton(ctx, w.Key)
 	c.MainMapped = s.hasMappedMain(ctx, w.Key)
 	if v := workSeason(w); v > 0 && v == float64(int(v)) {
 		c.Season = int(v)
