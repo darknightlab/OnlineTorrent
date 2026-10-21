@@ -25,10 +25,13 @@ export function DialogContent({
 }) {
   return (
     <DialogPrimitive.Portal container={container ?? undefined}>
-      <DialogPrimitive.Overlay className={overlay} />
+      {/* 挂在播放器（全屏 / 网页全屏）里时要高于播放器自己的图层（控制栏 60 … 右键菜单 120） */}
+      <DialogPrimitive.Overlay className={cn(overlay, container && "z-[200]")} />
       <DialogPrimitive.Content
         className={cn(
-          "fixed z-50 grid max-h-[92dvh] w-full gap-4 overflow-y-auto border bg-popover p-5 text-popover-foreground focus:outline-none",
+          "fixed z-50 grid",
+          container && "z-[200]",
+          "max-h-[92dvh] w-full gap-4 overflow-y-auto border bg-popover p-5 text-popover-foreground focus:outline-none",
           // 手机：底部弹出；桌面：居中
           "inset-x-0 bottom-0 rounded-t-xl pb-[max(1.25rem,env(safe-area-inset-bottom))] sm:inset-auto sm:left-1/2 sm:top-1/2 sm:max-w-lg sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-xl sm:pb-5",
           className,

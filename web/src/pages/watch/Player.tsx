@@ -24,7 +24,7 @@ import { loadEngine } from "@/player/engine"
 import { isPlayable, likelyUnsupported, type Engine, type FileKind, type FileSnap, type LogLevel, type Session, type TorrentSnap } from "@/player/types"
 import { segmentCount } from "@/lib/pieces"
 import { ArtVideo, loadArtplayer, type DanmakuSource } from "./ArtVideo"
-import { DanmakuBar } from "./DanmakuBar"
+import { DanmakuSendBox, DanmakuSettingsForm } from "./DanmakuPanel"
 import { loadDanmakuSettings, saveDanmakuSettings, type DanmakuSettings } from "@/lib/danmaku"
 import type { DanmakuItem } from "@/lib/types"
 import { PlayerSpinner } from "@/components/PlayerSpinner"
@@ -135,8 +135,19 @@ export function Player({
   const playerBox = useRef<HTMLDivElement>(null)
   const playerFrame = useRef<HTMLDivElement>(null)
   useSnappedFrame(playerBox, playerFrame)
-  // 播放器全屏时弹窗要挂在全屏元素里，否则看不到
+  // 播放器全屏时弹窗要挂在全屏元素里，否则看不到（网页全屏：挂在播放器元素里，见 dialogHost）
   const [fsHost, setFsHost] = useState<HTMLElement | null>(null)
+  const [webFsHost, setWebFsHost] = useState<HTMLElement | null>(null)
+  /** 横屏全屏：弹幕发送框在控制栏中间，弹幕弹窗里只有设置 */
+  const [landscape, setLandscape] = useState(false)
+  const onLayout = useCallback((l: { landscape: boolean; webFullscreen: HTMLElement | null }) => {
+    setLandscape(l.landscape)
+    setWebFsHost(l.webFullscreen)
+  }, [])
+  const dialogHost = fsHost ?? webFsHost
+  // 「弹幕」弹窗
+  const [dmOpen, setDmOpen] = useState(false)
+  const openDanmaku = useCallback(() => setDmOpen(true), [])
   useEffect(() => {
     const on = () => {
       const el = document.fullscreenElement as HTMLElement | null
@@ -464,6 +475,11 @@ export function Player({
     const r = await api.sendDanmaku(danmaku.provider, danmaku.id, danmaku.episode, { time: v.currentTime, duration: v.duration, text })
     dmEmit.current?.(r.item)
   }
+  /** 单集页：「弹幕」按钮与弹窗 */
+  const showDanmaku = !!danmaku && canDanmaku && (!file || file.kind === "video")
+  const sendBox = (variant: "dialog" | "bar") => (
+    <DanmakuSendBox variant={variant} canSend={canSendDanmaku} loggedIn={loggedIn} loginHref={loginHref} onSend={sendDanmaku} />
+  )
   const compactActions = (
     <div className="flex shrink-0 items-center sm:gap-1">
       <ActionButton icon={Share2} label="分享" onClick={share} />
@@ -537,6 +553,8 @@ export function Player({
                 danmaku={url && canDanmaku && danmaku && danmaku.file === current ? danmaku : null}
                 danmakuSettings={dmSettings}
                 danmakuEmit={dmEmit}
+                danmakuUI={showDanmaku ? { onOpen: openDanmaku, sendBox: sendBox("bar") } : null}
+                onLayout={onLayout}
               />
             ) : file.kind === "audio" ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-gradient-to-br from-primary/40 to-accent/40 p-6">
@@ -599,18 +617,6 @@ export function Player({
           </div>
         </div>
 
-        {/* 弹幕栏（单集页）：播放器与标题之间 */}
-        {danmaku && canDanmaku && (!file || file.kind === "video") && (
-          <DanmakuBar
-            settings={dmSettings}
-            onSettings={changeDmSettings}
-            canSend={canSendDanmaku}
-            loggedIn={loggedIn}
-            loginHref={loginHref}
-            onSend={sendDanmaku}
-          />
-        )}
-
         {/* 编码提示 */}
         {(mediaError || noPicture) && file?.kind === "video" ? (
           <CodecHint severe codec={unsupported} noPicture={noPicture} />
@@ -666,7 +672,7 @@ export function Player({
 
       {/* 「资源」弹窗（全屏时挂在全屏元素里） */}
       <Dialog open={panelOpen} onOpenChange={setPanelOpen}>
-        <DialogContent container={fsHost} title="资源与播放详情" className="gap-3 sm:max-w-2xl">
+        <DialogContent container={dialogHost} title="资源与播放详情" className="gap-3 sm:max-w-2xl">
           <Tabs value={tab} onValueChange={setTab} className="-mx-5 -mb-5 min-h-0 min-w-0">
             <TabsList className="overflow-x-auto px-3 scrollbar-none">
               {panelSources && (
@@ -703,6 +709,16 @@ export function Player({
           </Tabs>
         </DialogContent>
       </Dialog>
+
+      {/* 「弹幕」弹窗（同「资源」弹窗；全屏时挂在全屏元素里）：设置 + 发送框（横屏全屏时发送框在控制栏中间） */}
+      {showDanmaku && (
+        <Dialog open={dmOpen} onOpenChange={setDmOpen}>
+          <DialogContent container={dialogHost} title="弹幕" className="gap-4 sm:max-w-sm">
+            {!landscape && sendBox("dialog")}
+            <DanmakuSettingsForm settings={dmSettings} onSettings={changeDmSettings} />
+          </DialogContent>
+        </Dialog>
+      )}
 
       {infoHash && canReport && <ReportDialog open={reportOpen} onOpenChange={setReportOpen} infohash={infoHash} title={title} />}
     </div>

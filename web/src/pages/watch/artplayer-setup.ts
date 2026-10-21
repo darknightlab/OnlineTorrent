@@ -45,6 +45,16 @@ export interface ArtHandle {
   video: HTMLVideoElement
   /** 控制栏「字幕」选择（「资源」左边）；items 为 null 时移除按钮 */
   setSubtitleMenu: (items: SubtitleMenuItem[] | null, current: number, onSelect: (value: number) => void) => void
+  /** 控制栏「弹幕」按钮（「字幕」左边）；null = 移除 */
+  setDanmakuButton: (onClick: (() => void) | null) => void
+  /** 控制栏中间放弹幕发送框的容器（只在横屏全屏时显示，见 isLandscape） */
+  danmakuSlot: HTMLDivElement
+  /** 横屏全屏：浏览器全屏或网页全屏，且播放器宽 > 高（手机全屏会锁定横屏） */
+  isLandscape: () => boolean
+  /** 横屏全屏状态 / 网页全屏元素变化时回调；返回取消函数 */
+  onLayout: (cb: () => void) => () => void
+  /** 网页全屏时的播放器元素（弹窗要挂在它里面），否则 null */
+  webFullscreenHost: () => HTMLElement | null
   setPoster: (poster: string | undefined) => void
   setSegments: (segments: Uint8Array) => void
   /** 字节比例 → 时间比例（进度条是时间轴）；null = 按字节比例 */
@@ -244,9 +254,74 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
       reconcile()
     })
 
+  // ---- 弹幕：控制栏「弹幕」按钮与中间的发送框容器 ----
+  let danmakuClick: (() => void) | null = null
+  const danmakuSlot = document.createElement("div")
+  danmakuSlot.className = "ot-danmaku-slot"
+  art.template.$controlsCenter.appendChild(danmakuSlot)
+  // 发送框里打字时控制栏不自动隐藏（ArtPlayer 只在点击输入框时设 isInput，键盘 Tab 进来也要算）
+  danmakuSlot.addEventListener("focusin", (e) => {
+    if ((e.target as HTMLElement).tagName === "INPUT") (art as Writable<Artplayer>).isInput = true
+  })
+  danmakuSlot.addEventListener("focusout", () => {
+    ;(art as Writable<Artplayer>).isInput = false
+  })
+  // 弹窗（「弹幕」/「资源」，全屏时挂在播放器里）中按键不触发播放器快捷键：ArtPlayer 只在焦点在播放器上
+  // （isFocus）时处理，点击弹窗也算点击播放器，所以按键时（捕获阶段，先于 ArtPlayer）把 isFocus 取消。
+  // 否则在弹窗里按空格会暂停、按 Esc 关弹窗的同时退出网页全屏
+  const guardKeys = (e: KeyboardEvent) => {
+    if ((e.target as Element | null)?.closest?.('[role="dialog"]')) (art as Writable<Artplayer>).isFocus = false
+  }
+  window.addEventListener("keydown", guardKeys, true)
+  const layoutListeners = new Set<() => void>()
+  let landscape = false
+  const updateLayout = () => {
+    if (art.isDestroy) return
+    const on = (art.fullscreen || art.fullscreenWeb) && $player.clientWidth > $player.clientHeight
+    if (on !== landscape) {
+      landscape = on
+      $player.classList.toggle("ot-landscape", on)
+    }
+    for (const cb of layoutListeners) cb()
+  }
+  // 全屏切换后尺寸稍后才变：事件里与下一帧各算一次；窗口 / 屏幕方向变化（手机旋转）时也算
+  const relayout = () => {
+    updateLayout()
+    requestAnimationFrame(updateLayout)
+  }
+  art.on("fullscreen", relayout)
+  art.on("fullscreenWeb", relayout)
+  art.on("resize", relayout)
+  window.addEventListener("resize", relayout)
+  screen.orientation?.addEventListener?.("change", relayout)
+
   return {
     art,
     video,
+    danmakuSlot,
+    isLandscape: () => landscape,
+    onLayout(cb) {
+      layoutListeners.add(cb)
+      return () => layoutListeners.delete(cb)
+    },
+    webFullscreenHost: () => (art.fullscreenWeb ? $player : null),
+    setDanmakuButton(onClick) {
+      if (art.isDestroy) return
+      danmakuClick = onClick
+      const name = "danmaku" as keyof typeof art.controls
+      if (!onClick) {
+        if (art.controls[name]) art.controls.remove("danmaku")
+        return
+      }
+      if (!art.controls[name])
+        art.controls.add({
+          name: "danmaku",
+          position: "right",
+          index: 2, // 「字幕」是 3、「资源」4、「倍速」5
+          html: "弹幕",
+          click: () => danmakuClick?.(),
+        })
+    },
     setPoster(poster) {
       if (poster === undefined || poster === lastPoster) return
       lastPoster = poster
@@ -276,6 +351,10 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
       })
     },
     destroy() {
+      layoutListeners.clear()
+      window.removeEventListener("keydown", guardKeys, true)
+      window.removeEventListener("resize", relayout)
+      screen.orientation?.removeEventListener?.("change", relayout)
       el.removeEventListener("focusin", focusIn)
       el.removeEventListener("focusout", focusOut)
       // 网页全屏时播放器在 <body> 里：先移回容器再销毁

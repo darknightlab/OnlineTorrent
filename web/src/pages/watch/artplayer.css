@@ -134,7 +134,8 @@
   }
 }
 
-/* 文字按钮：字幕、资源、倍速（同样的字号与粗细） */
+/* 文字按钮：弹幕、字幕、资源、倍速（同样的字号与粗细） */
+.art-video-player .art-control-danmaku,
 .art-video-player .art-control-subtitle,
 .art-video-player .art-control-panel,
 .art-video-player .art-control-rate {
@@ -171,7 +172,30 @@
   pointer-events: none;
 }
 
-/* 弹幕插件自带的发送框 / 设置面板 / 开关不用（在播放器下方的弹幕栏），也不让它给播放器加下边距 */
+/* 控制栏中间：只在横屏全屏时显示（弹幕发送框，填满左右按钮之间的空间；太窄时隐藏发送框，不挤压按钮）。
+   弹幕插件初始化时把中间设成 flex（放它自己的设置栏），这里一律以本站的规则为准 */
+.art-video-player:not(.ot-landscape) .art-controls .art-controls-center {
+  display: none !important;
+}
+.art-video-player.ot-landscape .art-controls .art-controls-center {
+  display: flex !important;
+  min-width: 0;
+  padding: 0 12px;
+}
+.art-video-player .ot-danmaku-slot {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 560px;
+  min-width: 0;
+  container-type: inline-size;
+}
+@container (max-width: 160px) {
+  .art-video-player .ot-danmaku-slot > * {
+    display: none;
+  }
+}
+/* 弹幕插件自带的发送框 / 设置面板 / 开关不用（「弹幕」按钮打开本站的弹窗），也不让它给播放器加下边距 */
 .art-video-player .artplayer-plugin-danmuku {
   display: none !important;
 }

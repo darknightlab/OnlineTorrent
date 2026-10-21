@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react"
+import { createPortal } from "react-dom"
 import { PlayerSpinner } from "@/components/PlayerSpinner"
 import type { ArtHandle } from "./artplayer-setup"
 import type { SubtitleSet } from "@/player/subs/set"
@@ -60,6 +61,10 @@ export interface ArtVideoProps {
   danmakuSettings?: DanmakuSettings
   /** 由本组件填入：把自己刚发送的弹幕显示到播放器里（没有弹幕层时为 null） */
   danmakuEmit?: React.RefObject<((item: DanmakuItem) => void) | null>
+  /** 单集页：控制栏「弹幕」按钮（打开弹幕弹窗）与横屏全屏时控制栏中间的发送框 */
+  danmakuUI?: { onOpen: () => void; sendBox: React.ReactNode } | null
+  /** 横屏全屏状态（弹幕弹窗里是否还放发送框）与网页全屏的播放器元素（弹窗挂载位置）变化 */
+  onLayout?: (layout: { landscape: boolean; webFullscreen: HTMLElement | null }) => void
 }
 
 /**
@@ -67,14 +72,14 @@ export interface ArtVideoProps {
  * StrictMode 下 effect 会执行两次：第一次的实例在清理时 destroy（移除 DOM 与事件，释放流请求），第二次重新创建；
  * 模块尚未加载完就被清理时不会创建实例。
  */
-export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, subtitles, onLog, timeMap, fileLength, danmaku, danmakuSettings, danmakuEmit }: ArtVideoProps) {
+export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, subtitles, onLog, timeMap, fileLength, danmaku, danmakuSettings, danmakuEmit, danmakuUI, onLayout }: ArtVideoProps) {
   const box = useRef<HTMLDivElement>(null)
   const handle = useRef<ArtHandle | null>(null)
   const [ready, setReady] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
   // 回调与动态数据用 ref 读取最新值，不触发重建
-  const latest = useRef({ poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, onLog, timeMap, fileLength, danmakuSettings, danmakuEmit })
-  latest.current = { poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, onLog, timeMap, fileLength, danmakuSettings, danmakuEmit }
+  const latest = useRef({ poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, onLog, timeMap, fileLength, danmakuSettings, danmakuEmit, danmakuUI, onLayout })
+  latest.current = { poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, onLog, timeMap, fileLength, danmakuSettings, danmakuEmit, danmakuUI, onLayout }
   const hasPanel = !!onPanel
 
   useEffect(() => {
@@ -244,6 +249,31 @@ export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetada
     void loadDanmaku().then((m) => m.applyDanmakuSettings(h.art, danmakuSettings))
   }, [dmReady, danmakuSettings])
 
+  // 「弹幕」按钮：单集页一直显示（打开弹幕弹窗）
+  const hasDanmakuUI = !!danmakuUI
+  useEffect(() => {
+    const h = handle.current
+    if (!ready || !h) return
+    h.setDanmakuButton(hasDanmakuUI ? () => latest.current.danmakuUI?.onOpen() : null)
+    return () => h.setDanmakuButton(null)
+  }, [ready, hasDanmakuUI])
+  // 横屏全屏：发送框放到控制栏中间；网页全屏时弹窗挂在播放器里
+  const [landscape, setLandscape] = useState(false)
+  useEffect(() => {
+    const h = handle.current
+    if (!ready || !h) return
+    const report = () => {
+      setLandscape(h.isLandscape())
+      latest.current.onLayout?.({ landscape: h.isLandscape(), webFullscreen: h.webFullscreenHost() })
+    }
+    report()
+    const off = h.onLayout(report)
+    return () => {
+      off()
+      latest.current.onLayout?.({ landscape: false, webFullscreen: null })
+    }
+  }, [ready])
+
   return (
     <>
       {/* 播放器模块加载中（空 url 的外壳由外层显示状态，这里不再重复转圈） */}
@@ -257,6 +287,8 @@ export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetada
           )}
         </div>
       )}
+      {/* 横屏全屏时控制栏中间的弹幕发送框（渲染进 ArtPlayer 的控制栏） */}
+      {ready && landscape && danmakuUI && handle.current && createPortal(danmakuUI.sendBox, handle.current.danmakuSlot)}
       {/* ArtPlayer 接管此 div 的内容（React 不渲染子节点） */}
       <div
         ref={box}
