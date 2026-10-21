@@ -40,30 +40,72 @@ type ClefJob struct {
 	LastError string `json:"last_error"`
 	CreatedAt string `json:"created_at"`
 	UpdatedAt string `json:"updated_at"`
+	// Force: an admin 重新判断 — every video file is decided again (not only the uncertain
+	// ones) and may replace automatic mappings
+	Force bool `json:"force,omitempty"`
 }
 
+// enqueueClef queues the uncertain files of a torrent that (re)appeared: a new job, or a
+// finished one (done / failed / expired) made due again. A pending job is left as it is
+// (a forced one stays forced).
 func (s *Store) enqueueClef(ctx context.Context, ih string) error {
 	now := store.Now()
-	_, err := s.W.ExecContext(ctx, `INSERT OR IGNORE INTO clef_jobs(infohash,status,next_at,created_at,updated_at) VALUES(?, 'pending', ?, ?, ?)`, ih, now, now, now)
+	_, err := s.W.ExecContext(ctx, `INSERT INTO clef_jobs(infohash,status,next_at,created_at,updated_at) VALUES(?, 'pending', ?, ?, ?)
+		ON CONFLICT(infohash) DO UPDATE SET status='pending', attempts=0, next_at=excluded.next_at, last_error='', files='', force=0,
+			created_at=excluded.created_at, updated_at=excluded.updated_at
+		WHERE clef_jobs.status != 'pending'`, ih, now, now, now)
 	return err
 }
 
-// RequeueClef (re)queues a torrent now (admin).
+// RequeueClef (re)queues a torrent now as a forced job (admin 重新判断: every file is decided
+// again, concluded ones included).
 func (s *Store) RequeueClef(ctx context.Context, ih string) error {
 	now := store.Now()
-	_, err := s.W.ExecContext(ctx, `INSERT INTO clef_jobs(infohash,status,next_at,created_at,updated_at) VALUES(?, 'pending', ?, ?, ?)
-		ON CONFLICT(infohash) DO UPDATE SET status='pending', attempts=0, next_at=excluded.next_at, last_error='', updated_at=excluded.updated_at`, ih, now, now, now)
+	_, err := s.W.ExecContext(ctx, `INSERT INTO clef_jobs(infohash,status,next_at,force,created_at,updated_at) VALUES(?, 'pending', ?, 1, ?, ?)
+		ON CONFLICT(infohash) DO UPDATE SET status='pending', attempts=0, next_at=excluded.next_at, last_error='', force=1, created_at=excluded.created_at, updated_at=excluded.updated_at`, ih, now, now, now)
 	return err
 }
 
-const clefJobCols = `j.infohash, COALESCE(t.title,''), j.status, j.attempts, j.requests, j.next_at, j.last_error, j.created_at, j.updated_at`
+const clefJobCols = `j.infohash, COALESCE(t.title,''), j.status, j.attempts, j.requests, j.next_at, j.last_error, j.created_at, j.updated_at, j.force`
 
 func scanClefJob(sc interface{ Scan(...any) error }) (*ClefJob, error) {
 	var j ClefJob
-	if err := sc.Scan(&j.Infohash, &j.Title, &j.Status, &j.Attempts, &j.Requests, &j.NextAt, &j.LastError, &j.CreatedAt, &j.UpdatedAt); err != nil {
+	var force int
+	if err := sc.Scan(&j.Infohash, &j.Title, &j.Status, &j.Attempts, &j.Requests, &j.NextAt, &j.LastError, &j.CreatedAt, &j.UpdatedAt, &force); err != nil {
 		return nil, err
 	}
+	j.Force = force != 0
 	return &j, nil
+}
+
+// Decision-model conclusions (owner principle): a file with a conclusion is never decided
+// again automatically — mapped files (any method), files a human decided on (a rejected
+// decision; an accepted one maps the file), and the model's verdicts that a file belongs to
+// no subject (none) or is not an episode at all (not_episode). Every other file is
+// uncertain (a pending decision, any other discard reason, or none yet) and is decided again
+// when the torrent shows up again (re-crawled, resubmitted, qB metadata ingested again).
+var concludedDiscards = map[string]bool{"none": true, "not_episode": true}
+
+// ConcludedFiles: the unmapped files of a torrent whose latest decision is a conclusion
+// (rejected by a human, or discarded as none / not_episode).
+func (s *Store) ConcludedFiles(ctx context.Context, ih string) map[int]bool {
+	out := map[int]bool{}
+	rows, err := s.R.QueryContext(ctx, `SELECT d.file_index, d.status, d.reason FROM clef_decisions d WHERE d.infohash = ? AND `+latestClefDecision, ih)
+	if err != nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var idx int
+		var status, reason string
+		if rows.Scan(&idx, &status, &reason) != nil {
+			continue
+		}
+		if status == "rejected" || (status == "discarded" && concludedDiscards[reason]) {
+			out[idx] = true
+		}
+	}
+	return out
 }
 
 // NextClefJob returns the newest due pending job (nil if none), skipping the infohashes in
@@ -95,8 +137,10 @@ func (s *Store) FinishClefJob(ctx context.Context, ih, status, lastErr string, r
 	if status != "pending" {
 		retryAt = ""
 	}
-	_, err := s.W.ExecContext(ctx, `UPDATE clef_jobs SET status=?, last_error=?, requests=requests+?, attempts=attempts+?, next_at=CASE WHEN ?!='' THEN ? ELSE next_at END, updated_at=? WHERE infohash=?`,
-		status, store.Trunc(lastErr, 500), requests, inc, retryAt, retryAt, now, ih)
+	// a finished job is no longer forced (a later automatic one takes the uncertain files)
+	_, err := s.W.ExecContext(ctx, `UPDATE clef_jobs SET status=?, last_error=?, requests=requests+?, attempts=attempts+?, next_at=CASE WHEN ?!='' THEN ? ELSE next_at END,
+		force=CASE WHEN ?='pending' THEN force ELSE 0 END, updated_at=? WHERE infohash=?`,
+		status, store.Trunc(lastErr, 500), requests, inc, retryAt, retryAt, status, now, ih)
 	return err
 }
 
@@ -370,8 +414,9 @@ func (s *Store) ApplyOverride(ctx context.Context, ih string, idx int, workKey, 
 
 func (s *Store) applyDecision(ctx context.Context, ih string, idx int, workKey, kind string, ep *float64, conf float64, method, status, by string) error {
 	res, err := s.W.ExecContext(ctx, `UPDATE torrent_files SET work_key=?, kind=?, episode=?, confidence=?, method=?, status=?, updated_at=?, updated_by=?
-		WHERE infohash=? AND file_index=? AND status='auto' AND (work_key IS NULL OR (method != ? AND instr(','||(SELECT files FROM clef_jobs WHERE infohash=?)||',', ','||file_index||',') > 0))`,
-		workKey, kind, ep, conf, method, status, store.Now(), by, ih, idx, MethodClef, ih)
+		WHERE infohash=? AND file_index=? AND status='auto' AND (work_key IS NULL OR (SELECT force FROM clef_jobs WHERE infohash=?) = 1
+			OR (method != ? AND instr(','||(SELECT files FROM clef_jobs WHERE infohash=?)||',', ','||file_index||',') > 0))`,
+		workKey, kind, ep, conf, method, status, store.Now(), by, ih, idx, ih, MethodClef, ih)
 	if err != nil {
 		return err
 	}
@@ -502,15 +547,18 @@ const (
 	MaxClefFiles      = 256
 )
 
-// BuildClefTask prepares the decision for a torrent: its unmapped automatic video files
-// (all=true: every video except extras, for the admin dry run), the number tokens of each
-// file name and up to 20 candidate subjects. A task without files needs no request.
+// BuildClefTask prepares the decision for a torrent: its uncertain video files (unmapped
+// automatic files without a conclusion, ConcludedFiles; plus mapped files queued again as
+// anomalies), or with all=true every video except extras (the admin dry run and a forced
+// 重新判断), the number tokens of each file name and up to 20 candidate subjects. A task
+// without files needs no request.
 func (s *Store) BuildClefTask(ctx context.Context, ih string, all bool) (*ClefTask, error) {
 	in, ok := s.GetTorrentInput(ctx, ih)
 	if !ok {
 		return nil, store.ErrNotFound
 	}
 	redo := s.jobFiles(ctx, ih) // mapped files queued again (anomalous mappings)
+	concluded := s.ConcludedFiles(ctx, ih)
 	rows, err := s.R.QueryContext(ctx, `SELECT file_index, path, COALESCE(work_key,''), status, method FROM torrent_files WHERE infohash = ? ORDER BY file_index`, ih)
 	if err != nil {
 		return nil, err
@@ -566,8 +614,8 @@ func (s *Store) BuildClefTask(ctx context.Context, ih string, all bool) (*ClefTa
 			continue
 		}
 		again := redo[f.idx] && f.status == "auto" && f.method != MethodClef
-		if !all && !(f.unmapped && f.status == "auto") && !again {
-			continue
+		if !all && !(f.unmapped && f.status == "auto" && !concluded[f.idx]) && !again {
+			continue // mapped, decided by a human or concluded by the model (all: forced)
 		}
 		hint := res[i].hint
 		if hint == "" && !f.unmapped {

@@ -252,6 +252,11 @@ ALTER TABLE clef_jobs ADD COLUMN files TEXT NOT NULL DEFAULT '';
 ALTER TABLE torrents ADD COLUMN submitted_at TEXT NOT NULL DEFAULT '';
 ALTER TABLE torrents ADD COLUMN submitted_by INTEGER;
 ALTER TABLE clef_decisions ADD COLUMN source TEXT NOT NULL DEFAULT 'model';
+`,
+	// 12: a forced decision-model job (admin 重新判断): every video file is decided again and
+	// may replace automatic mappings; automatic jobs only take the uncertain files
+	`
+ALTER TABLE clef_jobs ADD COLUMN force INTEGER NOT NULL DEFAULT 0;
 `}
 
 // Store is the meta database.

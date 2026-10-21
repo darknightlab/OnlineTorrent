@@ -69,8 +69,16 @@ func (s *Store) Match(ctx context.Context, t TorrentInput) error {
 	// a re-delivered feed item or re-ingested qB metadata changes the release time), and
 	// rows the gate can't change anyway (manual / verified, decision-model) are left alone.
 	gate := s.newRuleGate(ctx, t.Infohash, len(t.Files), func(i int) string { return t.Files[i].Path })
+	// files with a conclusion are left exactly as they are (owner principle): mapped files
+	// (any method), rows a human set, and files whose latest decision is a conclusion
+	// (rejected; the model's none / not_episode) — no rule rewrite, no decision-model job.
+	// Only uncertain files are mapped again / queued.
+	concluded := s.ConcludedFiles(ctx, t.Infohash)
 	queue := false
 	for i, f := range t.Files {
+		if st, ok := gate.stored[f.Index]; ok && (st.status != "auto" || st.work.Valid || concluded[f.Index]) {
+			continue
+		}
 		kind, wk, ep, conf, m := res[i].kind, res[i].work, res[i].ep, res[i].conf, res[i].method
 		if wkey, ok := wk.(string); ok && !res[i].queue {
 			if reason := gate.check(ctx, f.Index, wkey, kind, ep); reason != "" {
@@ -80,9 +88,8 @@ func (s *Store) Match(ctx context.Context, t TorrentInput) error {
 				wk, conf, m = nil, 0, ""
 			}
 		}
-		// automatic rows are rewritten, except decision-model mappings (method clef) and, for
-		// an uncertain result, rows that are already mapped: existing mappings stay as they
-		// are (a re-delivered torrent is not re-decided)
+		// new and uncertain rows only (concluded ones were skipped above); the WHERE keeps
+		// the old guards
 		keep := ``
 		if res[i].queue {
 			keep = ` AND torrent_files.work_key IS NULL`

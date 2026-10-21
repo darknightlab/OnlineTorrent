@@ -385,7 +385,7 @@ func (s *Service) Process(ctx context.Context, c Config, job *meta.ClefJob) erro
 	s.current[job.Infohash] = true
 	s.mu.Unlock()
 	defer func() { s.mu.Lock(); delete(s.current, job.Infohash); s.mu.Unlock() }()
-	out, err := s.Decide(ctx, c, job.Infohash, false)
+	out, err := s.Decide(ctx, c, job.Infohash, job.Force) // forced (admin 重新判断): every file
 	sent := 0
 	if out != nil {
 		sent = out.Sent
