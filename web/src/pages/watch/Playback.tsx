@@ -259,6 +259,7 @@ export default function PlaybackPage() {
           renderInfo={(parts) => info(parts)}
           side={side}
           panelSources={panelSources}
+          danmaku={listed && epKey && ep?.kind === "main" ? { provider, id: subjectId, episode: epKey, file: listed.file_index } : null}
         />
       ) : (
         <div className={GRID}>

@@ -6,6 +6,23 @@ import { buildMenu, chooseMenu } from "@/player/subs/set"
 import { loadPref, prefFor, savePref } from "@/player/subs/prefs"
 import { byteToTimeFraction } from "@/lib/timemap"
 import type { TimeMapResult } from "@/player/types"
+import { api } from "@/lib/api"
+
+/** 本集弹幕：单集页传入（条目 + 集的键） */
+export interface DanmakuSource {
+  provider: string
+  id: string
+  episode: string
+}
+
+let danmakuModule: Promise<typeof import("./danmaku")> | null = null
+const loadDanmaku = () =>
+  (danmakuModule ??= import("./danmaku").catch((e) => {
+    danmakuModule = null
+    throw e
+  }))
+/** 「弹幕」开关：默认开，本次会话内沿用（换集、换资源不变） */
+let danmakuOn = true
 
 let setupModule: Promise<typeof import("./artplayer-setup")> | null = null
 /** 加载 ArtPlayer（单独的 chunk，含样式）；Player 挂载时调用以预加载 */
@@ -37,6 +54,8 @@ export interface ArtVideoProps {
   timeMap?: () => Promise<TimeMapResult | null>
   /** 当前文件长度（字节），与 timeMap 一起使用 */
   fileLength?: number
+  /** 本集弹幕（只在单集页、正在播放本集的文件时）；有弹幕时控制栏出现「弹幕」开关 */
+  danmaku?: DanmakuSource | null
 }
 
 /**
@@ -44,7 +63,7 @@ export interface ArtVideoProps {
  * StrictMode 下 effect 会执行两次：第一次的实例在清理时 destroy（移除 DOM 与事件，释放流请求），第二次重新创建；
  * 模块尚未加载完就被清理时不会创建实例。
  */
-export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, subtitles, onLog, timeMap, fileLength }: ArtVideoProps) {
+export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetadata, onMediaError, onPanel, subtitles, onLog, timeMap, fileLength, danmaku }: ArtVideoProps) {
   const box = useRef<HTMLDivElement>(null)
   const handle = useRef<ArtHandle | null>(null)
   const [ready, setReady] = useState(false)
@@ -175,6 +194,45 @@ export function ArtVideo({ url, poster, segments, speed, onVideo, onLoadedMetada
       handle.current?.setSubtitleMenu(null, -1, () => {})
     }
   }, [ready, subtitles, url])
+
+  // 弹幕：向服务器要本集弹幕（第一次打开该集时服务器才采集，可能要等十几秒），有弹幕时才加载弹幕插件
+  // 并在控制栏加「弹幕」开关
+  const dmProvider = danmaku?.provider
+  const dmId = danmaku?.id
+  const dmEpisode = danmaku?.episode
+  useEffect(() => {
+    const h = handle.current
+    if (!ready || !h || !url || !dmProvider || !dmId || !dmEpisode) return
+    const ctl = new AbortController()
+    let cancelled = false
+    let shown: typeof import("./danmaku") | null = null
+    const log = (level: "info" | "warn", msg: string) => latest.current.onLog?.(level, msg)
+    api
+      .danmaku(dmProvider, dmId, dmEpisode, ctl.signal)
+      .then(async (r) => {
+        if (cancelled || !r.items.length) return
+        const m = await loadDanmaku()
+        if (cancelled || h.art.isDestroy) return
+        m.showDanmaku(h.art, r.items, danmakuOn)
+        shown = m
+        const toggle = () => {
+          danmakuOn = !danmakuOn
+          m.setDanmakuVisible(h.art, danmakuOn)
+          h.setDanmakuButton(danmakuOn, toggle)
+        }
+        h.setDanmakuButton(danmakuOn, toggle)
+        log("info", `弹幕：${r.items.length} 条`)
+      })
+      .catch((e) => {
+        if (!cancelled && (e as Error)?.name !== "AbortError") log("warn", `弹幕加载失败：${String((e as Error)?.message ?? e)}`)
+      })
+    return () => {
+      cancelled = true
+      ctl.abort()
+      shown?.clearDanmaku(h.art)
+      h.setDanmakuButton(null, () => {})
+    }
+  }, [ready, url, dmProvider, dmId, dmEpisode])
 
   return (
     <>

@@ -23,7 +23,7 @@ import {
 import { loadEngine } from "@/player/engine"
 import { isPlayable, likelyUnsupported, type Engine, type FileKind, type FileSnap, type LogLevel, type Session, type TorrentSnap } from "@/player/types"
 import { segmentCount } from "@/lib/pieces"
-import { ArtVideo, loadArtplayer } from "./ArtVideo"
+import { ArtVideo, loadArtplayer, type DanmakuSource } from "./ArtVideo"
 import { PlayerSpinner } from "@/components/PlayerSpinner"
 import { useWebseedEvents } from "./useWebseedEvents"
 import { useStallWatchdog } from "./useStallWatchdog"
@@ -89,6 +89,7 @@ export function Player({
   renderInfo,
   side,
   panelSources,
+  danmaku,
 }: {
   magnet: string
   play: PlayResponse | null
@@ -109,6 +110,8 @@ export function Player({
   side?: React.ReactNode
   /** 播放器「资源」弹窗的第一个标签页（如单集页的资源列表）；参数 close 关闭弹窗 */
   panelSources?: (close: () => void) => React.ReactNode
+  /** 本集弹幕（单集页）：只在播放该文件（file = 种子内文件序号）时显示 */
+  danmaku?: (DanmakuSource & { file: number }) | null
 }) {
   const site = useSiteOrFallback()
   const [engine, setEngine] = useState<Engine | null>(null)
@@ -170,6 +173,7 @@ export function Player({
   const canWebseed = can(me.data, PERM.webseed)
   const canReport = can(me.data, PERM.report)
   const canTorrentFile = can(me.data, PERM.torrentFile) && can(me.data, PERM.torrentStatus)
+  const canDanmaku = can(me.data, PERM.danmaku)
 
   const meta = play?.meta ?? null
   const metaPath = meta ? subjectPath(meta) : null
@@ -509,6 +513,7 @@ export function Player({
                 onLog={log}
                 timeMap={session?.timeMap && current !== null ? () => session.timeMap!(current) : undefined}
                 fileLength={file?.length}
+                danmaku={url && canDanmaku && danmaku && danmaku.file === current ? danmaku : null}
               />
             ) : file.kind === "audio" ? (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-gradient-to-br from-primary/40 to-accent/40 p-6">

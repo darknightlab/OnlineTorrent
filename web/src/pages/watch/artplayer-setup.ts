@@ -45,6 +45,8 @@ export interface ArtHandle {
   video: HTMLVideoElement
   /** 控制栏「字幕」选择（「资源」左边）；items 为 null 时移除按钮 */
   setSubtitleMenu: (items: SubtitleMenuItem[] | null, current: number, onSelect: (value: number) => void) => void
+  /** 控制栏「弹幕」开关（「字幕」左边）；on 为 null 时移除按钮 */
+  setDanmakuButton: (on: boolean | null, onClick: () => void) => void
   setPoster: (poster: string | undefined) => void
   setSegments: (segments: Uint8Array) => void
   /** 字节比例 → 时间比例（进度条是时间轴）；null = 按字节比例 */
@@ -133,6 +135,8 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
     if (speedText) speedText.textContent = bufferingText(speed)
   }
   setSpeed(o.speed)
+
+  let danmakuClick = () => {}
 
   // 额外快捷键（ArtPlayer 自带 空格 / ←→ 5 秒 / ↑↓ 音量 / Esc 退出网页全屏），桌面端生效
   art.hotkey.add("KeyF", () => {
@@ -258,6 +262,27 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
       setSegments(lastSegments)
     },
     setSpeed,
+    setDanmakuButton(on, onClick) {
+      if (art.isDestroy) return
+      const name = "danmaku" as keyof typeof art.controls
+      if (on === null) {
+        if (art.controls[name]) art.controls.remove("danmaku")
+        return
+      }
+      if (!art.controls[name])
+        art.controls.add({
+          name: "danmaku",
+          position: "right",
+          index: 2, // 「字幕」是 3
+          html: "弹幕",
+          click: () => danmakuClick(),
+        })
+      danmakuClick = onClick
+      const el = art.query(".art-control-danmaku")
+      el?.classList.toggle("ot-off", !on)
+      el?.setAttribute("role", "button")
+      el?.setAttribute("aria-pressed", String(on))
+    },
     setSubtitleMenu(items, current, onSelect) {
       if (art.isDestroy) return
       if (art.controls["subtitle" as keyof typeof art.controls]) art.controls.remove("subtitle")

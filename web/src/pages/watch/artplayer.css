@@ -134,7 +134,8 @@
   }
 }
 
-/* 文字按钮：字幕、资源、倍速（同样的字号与粗细） */
+/* 文字按钮：弹幕、字幕、资源、倍速（同样的字号与粗细） */
+.art-video-player .art-control-danmaku,
 .art-video-player .art-control-subtitle,
 .art-video-player .art-control-panel,
 .art-video-player .art-control-rate {
@@ -164,11 +165,24 @@
   display: block;
 }
 
-/* 内封字幕（JASSUB 画布，插在 <video> 后面）：与 ArtPlayer 自带字幕层同层（视频 10、封面 11 之上，
-   图层 40 / 遮罩 50 / 控制栏 60 之下），不挡点击 */
+/* 内封字幕（JASSUB 画布，插在 <video> 后面）：视频 10、封面 11、弹幕层 30 之上（字幕不被弹幕盖住），
+   图层 40 / 遮罩 50 / 控制栏 60 之下，不挡点击 */
 .art-video-player canvas.ot-subtitles {
-  z-index: 20;
+  z-index: 35;
   pointer-events: none;
+}
+
+/* 弹幕关闭：按钮变暗加删除线 */
+.art-video-player.art-video-player .art-control.art-control-danmaku.ot-off {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+/* 弹幕插件自带的发送框 / 设置面板 / 开关不用（控制栏只有「弹幕」按钮），也不让它给播放器加下边距 */
+.art-video-player .artplayer-plugin-danmuku {
+  display: none !important;
+}
+.art-video-player.art-video-player:has(> .artplayer-plugin-danmuku) {
+  margin-bottom: 0 !important;
 }
 
 /* 时间文字略小、等宽数字 */

@@ -13,6 +13,7 @@ import type {
   ScheduleResponse,
   Site,
   SubjectResponse,
+  DanmakuResponse,
   EpisodeResponse,
   EpisodesResponse,
 } from "./types"
@@ -121,6 +122,9 @@ export const api = {
   /** key：集的键（"12"、"12.5"、"sp1"、"ncop1"…） */
   episode: (provider: string, id: string, key: string, s?: AbortSignal) =>
     get<EpisodeResponse>(`/subjects/${seg(provider)}/${seg(id)}/episodes/${seg(key)}`, s),
+  /** 单集弹幕（权限 PERM.danmaku）：[时间（秒）, 模式 1 滚动 / 4 底部 / 5 顶部, 颜色 0xRRGGBB, 文字]；第一次打开时服务器才采集，可能要等十几秒 */
+  danmaku: (provider: string, id: string, key: string, s?: AbortSignal) =>
+    get<DanmakuResponse>(`/subjects/${seg(provider)}/${seg(id)}/episodes/${seg(key)}/danmaku`, s),
   /** 搜索：番剧（仅第 1 页）+ 种子 */
   search: (keyword: string, page = 1, s?: AbortSignal) =>
     get<SearchResponse>(`/search/${seg(keyword)}${qs({ page: page > 1 ? page : undefined })}`, s),

@@ -209,6 +209,14 @@ export interface EpisodeFile {
   swarm?: SwarmStats | null
 }
 
+/** 一条弹幕：[时间（秒）, 模式（1 滚动 / 4 底部 / 5 顶部）, 颜色 0xRRGGBB, 文字] */
+export type DanmakuItem = [number, number, number, string]
+
+/** GET /subjects/{provider}/{id}/episodes/{key}/danmaku；没有弹幕时 items 为空 */
+export interface DanmakuResponse {
+  items: DanmakuItem[]
+}
+
 /** GET /subjects/{provider}/{id}/episodes/{key}；items 按发布时间倒序，由前端按推荐规则排序（lib/rank.ts） */
 export interface EpisodeResponse {
   subject: Subject
