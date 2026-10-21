@@ -32,8 +32,11 @@ var bdProviders = map[string]string{
 	"tmdb": "tmdb", "gamer": "gamer", "bilibili": "bilibili", "mikan": "mikan", "acgnx": "acgnx",
 }
 
-// ImportBangumiData downloads bangumi-data and upserts works begun within `sinceYears`.
-func (s *Store) ImportBangumiData(ctx context.Context, hc *http.Client, url string, sinceYears int) (int, error) {
+// ImportBangumiData downloads bangumi-data and upserts every item (all years: titles and
+// aliases of old works matter for matching, e.g. the English / romanised names the decision
+// model's name check needs). The airing timeline picks its works by date
+// (WorksForSchedule), not by being in bangumi-data.
+func (s *Store) ImportBangumiData(ctx context.Context, hc *http.Client, url string) (int, error) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	resp, err := hc.Do(req)
 	if err != nil {
@@ -49,7 +52,6 @@ func (s *Store) ImportBangumiData(ctx context.Context, hc *http.Client, url stri
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 64<<20)).Decode(&data); err != nil {
 		return 0, err
 	}
-	cutoff := time.Now().AddDate(-sinceYears, 0, 0).UTC().Format(time.RFC3339)
 	tx, err := s.W.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -58,7 +60,7 @@ func (s *Store) ImportBangumiData(ctx context.Context, hc *http.Client, url stri
 	n := 0
 	now := store.Now()
 	for _, it := range data.Items {
-		if it.Begin < cutoff || it.Title == "" {
+		if it.Title == "" {
 			continue
 		}
 		key := ""
@@ -75,7 +77,7 @@ func (s *Store) ImportBangumiData(ctx context.Context, hc *http.Client, url stri
 			cn = v[0]
 		}
 		var aliases []string
-		for _, lang := range []string{"zh-Hans", "zh-Hant", "en"} {
+		for _, lang := range []string{"zh-Hans", "zh-Hant", "en", "ja"} {
 			aliases = append(aliases, it.TitleTranslate[lang]...)
 		}
 		al, _ := json.Marshal(aliases)

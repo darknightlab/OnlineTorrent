@@ -37,7 +37,7 @@ func main() {
 	go func() {
 		for {
 			hc := &http.Client{Timeout: 3 * time.Minute}
-			if n, err := ms.ImportBangumiData(ctx, hc, *bdURL, 3); err != nil {
+			if n, err := ms.ImportBangumiData(ctx, hc, *bdURL); err != nil {
 				log.Warn("bangumi-data", "err", err)
 			} else {
 				log.Info("bangumi-data imported", "works", n)

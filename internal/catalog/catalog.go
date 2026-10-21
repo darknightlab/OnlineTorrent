@@ -446,7 +446,7 @@ func (c *Catalog) refreshBangumiData(ctx context.Context) {
 	defer cancel()
 	hc := c.HTTPClient()
 	hc.Timeout = 3 * time.Minute
-	n, err := c.meta.ImportBangumiData(cctx, hc, c.st.Str(store.KeyBangumiDataURL), 3)
+	n, err := c.meta.ImportBangumiData(cctx, hc, c.st.Str(store.KeyBangumiDataURL))
 	c.bd.mu.Lock()
 	c.bd.st.Running = false
 	if err != nil {

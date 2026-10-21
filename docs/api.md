@@ -386,7 +386,7 @@ Source：
 - `DELETE /admin/sources/id/{id}` → `{"items": [Source]}`（已收录的种子保留）
 - `POST /admin/sources/id/{id}/run` → 202 Source（`running: true`），后台立即抓取一次（无视间隔、启用状态与全局开关）；正在抓取时 409 `busy`。结果稍后见列表。
 - `GET /admin/bgm-archive` → `{dump, dump_at, digest, synced_at, subjects, episodes, relations, duration_sec, checked_at, error?, error_at?, running, phase?}`（bangumi Archive 同步状态；phase 为 subjects|episodes|relations）；`POST /admin/bgm-archive/run` → 202（即使未更新也重新导入），运行中 409 `busy`。设置 `bgm_archive.enabled` 控制每 6 小时自动检查。
-- `GET /admin/bangumi-data` → `{url, running, synced_at, works, duration_sec, error?, error_at?, next_at}`（bangumi-data 同步状态，只在内存中；服务启动时及每 12 小时同步一次，导入近 3 年的番剧）；`POST /admin/bangumi-data/run` → 202，运行中 409 `busy`。
+- `GET /admin/bangumi-data` → `{url, running, synced_at, works, duration_sec, error?, error_at?, next_at}`（bangumi-data 同步状态，只在内存中；服务启动时及每 12 小时同步一次，导入全部条目（不限年份；时间表按日期另行筛选）；`POST /admin/bangumi-data/run` → 202，运行中 409 `busy`。
 - `GET /admin/metadata-jobs` → `{"items":[{infohash, source_id, status:"pending|running|done|failed", attempts, next_at, server_id, added, started_at, last_error, created_at, updated_at}]}`（最近 200 条，未完成的在前）
 
 相关设置（`GET/PUT /admin/settings`）：`bt.trackers`（string_list，默认 opentrackr / torrent.eu.org / stealth.si / desync / nyaa.tracker.wf / explodie，2026-10 实测可 scrape）、`swarm.enabled`（bool，默认 true）、`crawl.enabled`（bool，默认 true）、`crawl.workers`（同时抓取的源数，默认 2）、`upstream.tmdb_api_key`（secret，默认空；TMDB v3 key 或 v4 读取令牌）、`upstream.proxy`（抓取与 bgm.tv/TMDB 请求共用；为空时使用环境变量 `HTTPS_PROXY` 等）。

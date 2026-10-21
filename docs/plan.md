@@ -220,6 +220,7 @@ GitHub release 支持 Range（不支持后缀式 `bytes=-N`，要用绝对区间
 - 已实现：`internal/meta/bgmarchive_zip.go`（HTTP Range 读 zip，zip64、CRC32 校验）、`bgmarchive.go`（导入）、`episodes_bgm.go`（官方章节、已播集数、分割放送换算，读取侧换算）、`internal/catalog/archive.go`（每 6 小时检查 latest.json）、后台 `GET/POST /api/v1/admin/bgm-archive[/run]`、设置 `bgm_archive.enabled`。
 - 开发机实测（dump-2026-10-13）：85 秒、内存约 45 MB；动画条目 31174、章节 347689、关联 29893；meta.db 5.7 MB → 89 MB。
 - 合并：别名分来源存（bd_aliases / bgm_aliases）后取并集；中文名、简介以 bangumi 为准；放送时间、类型、日期以 bangumi-data 为准；本站数字 ID 不变。
+- bangumi-data 导入不限年份（2026-10；原来只导入近 3 年）：全部条目的标题、各语言译名（zh-Hans / zh-Hant / en / ja，作别名）、放送、类型、日期与平台 ID 都导入，旧作品也有 bangumi-data 的英文名（决策模型的名称核对用）。时间表只按日期窗口取候选（`WorksForSchedule`），不受影响。开发库实测：作品 31230 → 31296（新增 62 个无 bangumi ID 的 `bd:` 条目等），来源为 bangumi-data 的 1106 → 8910，时间表候选 233 → 233。注意 bangumi-data 的英文名并不全：魔法禁书目录（2008）没有英文 / 罗马字名，点兔 BLOOM 只有 "Is the order a rabbit ? BLOOM"，这两例的名称核对仍不通过。
 
 ## 映射关系（2026-10-18 确认）
 不做「系列（series）」：跟随 bangumi，每季 / 每部剧场版 / OVA 都是独立条目（subject）。
