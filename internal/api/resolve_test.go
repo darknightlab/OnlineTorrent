@@ -206,6 +206,11 @@ func TestResolveNewHash(t *testing.T) {
 	}
 	_ = s.Pool.Reload(ctx)
 	s.Pool.CheckAll(ctx)
+	// the metadata queue only: no live crawling of the default sources (a magnet-only item in
+	// a real feed would land in the fake qB and fail the "nothing left in qB" check below)
+	if err := s.St.UpdateSettings(ctx, map[string]json.RawMessage{store.KeyCrawlEnabled: json.RawMessage("false")}); err != nil {
+		t.Fatal(err)
+	}
 	go s.Crawl.Run(ctx)
 
 	member := loginAs(t, s, "alice", store.RoleMember)
