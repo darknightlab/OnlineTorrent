@@ -123,8 +123,10 @@ export default function PlaybackPage() {
 
   // 新种子判定后已映射（redirect），或从播放页打开一个已映射的种子：跳到对应单集页。
   // 同一路由组件、同一 Player 实例，跳转后就地继续（redirect 时随后重新请求 play 拿磁力）
-  const redirectTo =
-    state.status === "redirect" ? state.path : !isEpisode && state.status === "ready" && ih ? episodeRedirect(state.play?.meta, ih, urlIndex) : null
+  // （从单集页因「不属于本集」转来时，不再跳回同一集，避免选集列表过期时来回跳）
+  const mapped = !isEpisode && state.status === "ready" && ih ? episodeRedirect(state.play?.meta, ih, urlIndex) : null
+  const leftEpisode = (loc.state as { leftEpisode?: string } | null)?.leftEpisode
+  const redirectTo = state.status === "redirect" ? state.path : mapped && mapped !== leftEpisode ? mapped : null
   useEffect(() => {
     if (redirectTo) navigate(redirectTo, { replace: true, state: loc.state })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -152,6 +154,10 @@ export default function PlaybackPage() {
     return <Navigate replace to={`${epBase}${urlIh ? `/hash/${seg(urlIh)}${urlIndex !== null ? `/file/${urlIndex}` : ""}` : ""}${loc.search}`} state={loc.state} />
   // 统一为小写 hex（base32 / 大写链接）
   if (urlIh && rawIh !== urlIh) return <Navigate replace to={sourceHref(urlIh, urlIndex)} state={loc.state} />
+  // 单集页只播放映射到本集的文件：网址里的种子 / 文件不属于本集（在「文件」里点了别的文件、或手动拼的链接）
+  // → 种子页；该文件映射到别的集时，种子页再跳到那一集，未映射的就留在种子页（不借用本集的名义）
+  if (isEpisode && urlIh && epData && !epQ.isFetching && !listed)
+    return <Navigate replace to={watchHref(urlIh, urlIndex)} state={{ ...((loc.state as object | null) ?? {}), leftEpisode: loc.pathname }} />
 
   const here = `${loc.pathname}${loc.search}`
   // 等待播放会话时：统计行（单集页）、信息与文件列表（播放页）的骨架；需登录 / 无权播放等结果不显示
