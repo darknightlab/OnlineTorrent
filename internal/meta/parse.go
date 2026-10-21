@@ -406,9 +406,14 @@ func classifyWord(w string) token {
 		return t
 	}
 	if m := reSxxExx.FindStringSubmatch(u); m != nil {
-		t.cat = cEpisode
+		s, _ := strconv.Atoi(m[1])
 		t.num, _ = strconv.ParseFloat(m[2], 64)
 		t.hasNum = true
+		if s == 0 {
+			t.cat, t.typ, t.trust = cType, "sp", true // S00E05: Specials
+		} else {
+			t.cat = cEpisode
+		}
 		return t
 	}
 	if m := reRange.FindStringSubmatch(u); m != nil {
@@ -428,9 +433,12 @@ func classifyWord(w string) token {
 		return t
 	}
 	if m := reSeason.FindStringSubmatch(u); m != nil {
-		t.cat = cSeason
-		t.num, _ = strconv.ParseFloat(m[1], 64)
-		t.hasNum = true
+		v, _ := strconv.ParseFloat(m[1], 64)
+		if v == 0 {
+			t.cat, t.typ, t.trust = cType, "sp", true // S00: Specials
+		} else {
+			t.cat, t.num, t.hasNum = cSeason, v, true
+		}
 		return t
 	}
 	if m := reOrdinal.FindStringSubmatch(u); m != nil {
