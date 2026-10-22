@@ -11,7 +11,7 @@ import { StatusPage } from "@/pages/NotFound"
 import { usePlayAttempt, usePlayResolve, type PlayHint, type PlayPreload, type PlaySource, type ResolveState } from "./usePlayResolve"
 import { PlayGate } from "./PlayGate"
 import { Player, PlayerShell } from "./Player"
-import { GRID } from "@/pages/Episode"
+import { FilesSkeleton, GRID, WatchInfoSkeleton } from "@/pages/Episode"
 
 /** 列表页跳转时附带的 location.state */
 export interface WatchLocationState {
@@ -89,6 +89,7 @@ function WatchView({
   const loc = useLocation()
   const here = `${loc.pathname}${loc.search}`
   const shareURL = (ih: string | null, idx: number | null) => (ih ? `${location.origin}${watchHref(ih, idx)}` : `${location.origin}${here}`)
+  const waiting = state.status === "loading" || state.status === "pending" || state.status === "redirect"
 
   if (state.status === "idle") return <IdleWatch />
   return (
@@ -110,7 +111,13 @@ function WatchView({
             <PlayerShell>
               <PlayGate overlay state={state} title={hint?.title} here={here} retry={retry} />
             </PlayerShell>
+            {waiting && <WatchInfoSkeleton />}
           </section>
+          {waiting && (
+            <aside className="min-w-0">
+              <FilesSkeleton />
+            </aside>
+          )}
         </div>
       )}
     </Container>

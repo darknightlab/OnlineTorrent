@@ -1,6 +1,7 @@
 // 单集页（/subject/:provider/:id/episode/:key[/hash/:ih[/file/:index]]）的界面部件；页面逻辑见 watch/Playback.tsx
 import { Link } from "react-router-dom"
-import { ChevronRight, Film, Layers, ListVideo, Pin, Sparkles } from "lucide-react"
+import { ChevronRight, Film, Layers, ListVideo, Sparkles } from "lucide-react"
+import { PlayerSpinner } from "@/components/PlayerSpinner"
 import { ReleaseRowBody, releaseRowClass } from "@/components/ReleaseRow"
 import { describeScore, type Scored } from "@/lib/rank"
 import { Badge } from "@/components/ui/badge"
@@ -9,61 +10,34 @@ import { Skeleton, SkeletonLine } from "@/components/ui/skeleton"
 import { airedCount, EpisodeGrid, episodeFullLabel, useEpisodeChips, useEpisodeItem, useEpisodePage } from "@/components/EpisodeGrid"
 import { displayTitle } from "@/lib/schedule"
 import { episodeLabel, formatEpisodeKey, type EpisodeKey } from "@/lib/episode"
-import type { EpisodeFile, EpisodeResponse, Subject } from "@/lib/types"
+import type { EpisodeFile, Subject } from "@/lib/types"
 import { WEEKDAYS } from "@/lib/format"
 import { useNow } from "@/lib/hooks"
 import { cn, subjectHref } from "@/lib/utils"
-import type { PlayerParts } from "./watch/Player"
+import { PlayerShell, type PlayerParts } from "./watch/Player"
 
 /** 与 Player 相同的两栏布局（移动端单栏） */
 export const GRID = "grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-5 xl:grid-cols-[minmax(0,1fr)_400px]"
 /** 移动端 / 平板全宽（抵消 Container 的左右内边距） */
 export const BLEED = "-mx-3 sm:-mx-4 lg:mx-0"
 
-/** 无资源：保留选集，资源区给出提示 */
-export function EmptyEpisode({ data, ep }: { data: EpisodeResponse; ep: EpisodeKey }) {
-  const s = data.subject
+/** 播放器画面内的无资源提示（放在 PlayerShell 里） */
+export function EmptyEpisodeOverlay({ subject: s, ep }: { subject: Subject; ep: EpisodeKey }) {
   const item = useEpisodeItem(s, formatEpisodeKey(ep))
   const future = item?.aired === false
   return (
-    <div className={GRID}>
-      <section className="min-w-0">
-        <div className={cn(BLEED, "ot-player-frame relative aspect-video overflow-hidden bg-black lg:[clip-path:inset(0_round_0.75rem)]")}>
-          {s.cover && (
-            <div aria-hidden className="absolute inset-0 scale-110 bg-cover bg-center opacity-40 blur-2xl" style={{ backgroundImage: `url("${s.cover}")` }} />
-          )}
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/50 px-6 text-center text-white">
-            <Film className="h-8 w-8 text-white/80" />
-            <p className="font-medium">
-              {episodeLabel(ep)}
-              {ep.kind === "main" ? "" : " "}
-              {future ? "尚未播出" : "暂无可播放的资源"}
-            </p>
-            <p className="text-xs text-white/70">
-              {future
-                ? `${item?.airdate ? `预计 ${item.airdate} 播出，` : ""}播出后字幕组发布的资源会自动出现`
-                : "如已有种子可直接在搜索框输入并观看"}
-            </p>
-          </div>
-        </div>
-        <EpisodeInfo subject={s} ep={ep} />
-      </section>
-      <aside className="min-w-0 space-y-4 lg:space-y-5">
-        <EpisodeList subject={s} ep={ep} hasItems={false} />
-        <SideSection id="sources-title" icon={Layers} title="资源">
-          <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed px-4 py-6 text-center lg:border-0 lg:py-4">
-            <p className="text-[13px] text-muted-foreground">
-              {future ? "本集尚未播出，播出后会自动收录资源。" : "本集暂时还没有收录资源，可以在番剧页查看全部种子。"}
-            </p>
-            <Button asChild variant="soft" size="sm">
-              <Link to={subjectHref(s)}>
-                查看全部种子
-                <ChevronRight />
-              </Link>
-            </Button>
-          </div>
-        </SideSection>
-      </aside>
+    <div className="flex flex-col items-center gap-2 px-6 text-center text-white">
+      <Film className="h-8 w-8 text-white/80" />
+      <p className="font-medium">
+        {episodeLabel(ep)}
+        {ep.kind === "main" ? "" : " "}
+        {future ? "尚未播出" : "暂无可播放的资源"}
+      </p>
+      <p className="text-xs text-white/70">
+        {future
+          ? `${item?.airdate ? `预计 ${item.airdate} 播出，` : ""}播出后字幕组发布的资源会自动出现`
+          : "如已有种子可直接在搜索框输入并观看"}
+      </p>
     </div>
   )
 }
@@ -201,102 +175,99 @@ function baseName(path: string) {
   return i >= 0 ? path.slice(i + 1) : path
 }
 
-function SourcesWrap({ bare, count, children }: { bare?: boolean; count: number; children: React.ReactNode }) {
-  if (bare) return <>{children}</>
-  return (
-    <SideSection id="sources-title" icon={Layers} title="资源" extra={`${count} 个`}>
-      {children}
-    </SideSection>
-  )
-}
-
 /** 资源的唯一键 */
 export const sourceKey = (f: Pick<EpisodeFile, "infohash" | "file_index">) => `${f.infohash}:${f.file_index}`
 
 /**
- * 资源列表（已按推荐规则排序，见 lib/rank.ts）。`extra`：URL 指定、但不在本集已知文件中的资源（显示在最上方）。
- * `selected`：正在播放的资源键（sourceKey）。
+ * 资源列表（播放器「资源」弹窗内渲染，已按推荐规则排序，见 lib/rank.ts）。
+ * `selected`：正在播放的资源键（sourceKey）。无资源时显示空状态提示与跳转番剧页按钮。
  */
 export function SourceList({
+  subject: s,
+  ep,
   ranked,
-  extra,
   selected,
   onSelect,
-  bare,
 }: {
+  subject: Subject
+  ep: EpisodeKey
   ranked: Scored<EpisodeFile>[]
-  extra?: EpisodeFile | null
   selected: string | null
   onSelect: (f: EpisodeFile) => void
-  /** 只渲染列表（播放器「资源」弹窗里用，没有标题卡片） */
-  bare?: boolean
 }) {
   const now = useNow()
-  const items = ranked.map((r) => r.file)
-  const list = extra ? [extra, ...items] : items
+  const item = useEpisodeItem(s, formatEpisodeKey(ep))
+  const future = item?.aired === false
+  if (ranked.length === 0) {
+    return (
+      <div className="flex flex-col items-center gap-3 px-4 py-8 text-center">
+        <p className="text-[13px] text-muted-foreground">
+          {future ? "本集尚未播出，播出后会自动收录资源。" : "本集暂时还没有收录资源，可以在番剧页查看全部种子。"}
+        </p>
+        <Button asChild variant="soft" size="sm">
+          <Link to={subjectHref(s)}>
+            查看全部种子
+            <ChevronRight />
+          </Link>
+        </Button>
+      </div>
+    )
+  }
   return (
-    <SourcesWrap bare={bare} count={list.length}>
-      <ul className={cn(bare ? "divide-y" : cn(BLEED, "divide-y border-y lg:-mx-4 lg:-mb-4 lg:border-b-0"))}>
-        {list.map((f, n) => {
-          const i = extra ? n - 1 : n
-          const pinned = !!extra && n === 0
-          const active = sourceKey(f) === selected
-          const blocked = f.access.action === "block"
-          const name = baseName(f.path)
-          const sc = i >= 0 ? ranked[i] : undefined
-          return (
-            <li key={pinned ? "extra" : sourceKey(f)} className="relative">
-              {active && <span aria-hidden className="absolute inset-y-0 left-0 z-10 w-0.5 bg-primary" />}
-              <button type="button" onClick={() => onSelect(f)} aria-current={active ? "true" : undefined} className={releaseRowClass(active, blocked)}>
-                <ReleaseRowBody
-                  lead={
-                    <>
-                      {active && <Badge variant="default">播放中</Badge>}
-                      {pinned && (
-                        <Badge variant="accent-soft" title="通过链接指定的资源（尚未收录到本集）">
-                          <Pin />
-                          指定
-                        </Badge>
-                      )}
-                      {i === 0 && sc && (
-                        <Badge variant="soft" title={`自动推荐（${describeScore(sc)}）`}>
-                          <Sparkles />
-                          推荐
-                        </Badge>
-                      )}
-                    </>
-                  }
-                  team={f.team}
-                  access={f.access}
-                  tagText={`${f.path} ${f.torrent_title}`}
-                  tagPath={f.path}
-                  title={name}
-                  titleAttr={f.path}
-                  size={f.size_bytes}
-                  publishedAt={f.published_at}
-                  swarm={pinned ? null : f.swarm}
-                  score={sc ?? null}
-                  active={active}
-                  now={now}
-                />
-              </button>
-            </li>
-          )
-        })}
-      </ul>
-    </SourcesWrap>
+    <ul className="divide-y">
+      {ranked.map((sc, i) => {
+        const f = sc.file
+        const active = sourceKey(f) === selected
+        const blocked = f.access.action === "block"
+        const name = baseName(f.path)
+        return (
+          <li key={sourceKey(f)} className="relative">
+            {active && <span aria-hidden className="absolute inset-y-0 left-0 z-10 w-0.5 bg-primary" />}
+            <button type="button" onClick={() => onSelect(f)} aria-current={active ? "true" : undefined} className={releaseRowClass(active, blocked)}>
+              <ReleaseRowBody
+                lead={
+                  <>
+                    {active && <Badge variant="default">播放中</Badge>}
+                    {i === 0 && (
+                      <Badge variant="soft" title={`自动推荐（${describeScore(sc)}）`}>
+                        <Sparkles />
+                        推荐
+                      </Badge>
+                    )}
+                  </>
+                }
+                team={f.team}
+                access={f.access}
+                tagText={`${f.path} ${f.torrent_title}`}
+                tagPath={f.path}
+                title={name}
+                titleAttr={f.path}
+                size={f.size_bytes}
+                publishedAt={f.published_at}
+                swarm={f.swarm}
+                score={sc}
+                active={active}
+                now={now}
+              />
+            </button>
+          </li>
+        )
+      })}
+    </ul>
   )
 }
 
 /**
- * 整页骨架：与播放器同样的黑色画面 + 信息 + 右栏。
+ * 整页骨架：与播放器同样的 PlayerShell + 信息 + 右栏。
  * files：种子播放页（右栏为文件，信息为标题两行 + 统计行）；否则为单集页（右栏为选集）。
  */
 export function EpisodeSkeleton({ files }: { files?: boolean }) {
   return (
     <div className={GRID} aria-hidden>
       <section className="min-w-0">
-        <div className={cn(BLEED, "aspect-video bg-black lg:rounded-xl")} />
+        <PlayerShell>
+          <PlayerSpinner />
+        </PlayerShell>
         {files ? <WatchInfoSkeleton /> : <EpisodeInfoSkeleton />}
       </section>
       <aside className="min-w-0">{files ? <FilesSkeleton /> : <EpisodeSideSkeleton />}</aside>

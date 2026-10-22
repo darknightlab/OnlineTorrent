@@ -15,14 +15,14 @@ import { api, isApiError } from "@/lib/api"
 import { PERM, can, qk, useEpisode, useMe, useSite, useSiteOrFallback } from "@/lib/queries"
 import { DEFAULT_RANK_RULES, rankFiles, type Scored } from "@/lib/rank"
 import { displayTitle } from "@/lib/schedule"
-import type { EpisodeFile, EpisodeResponse, TorrentStatus } from "@/lib/types"
+import type { EpisodeFile } from "@/lib/types"
 import { useDocumentTitle } from "@/lib/hooks"
 import { useEpisodeItem, episodeFullLabel } from "@/components/EpisodeGrid"
-import { canonicalEpisodeKey, formatEpisodeKey, parseEpisodeKey, type EpisodeKey } from "@/lib/episode"
+import { canonicalEpisodeKey, formatEpisodeKey, parseEpisodeKey } from "@/lib/episode"
 import { episodeSourceHref, normalizeInfohash, watchHref } from "@/lib/utils"
 import { StatusPage } from "@/pages/NotFound"
 import {
-  EmptyEpisode,
+  EmptyEpisodeOverlay,
   EpisodeInfo,
   EpisodeInfoSkeleton,
   EpisodeList,
@@ -210,12 +210,6 @@ export default function PlaybackPage() {
         </Container>
       )
     if (epQ.error) return <EpisodeError error={epQ.error} retry={() => epQ.refetch()} />
-    if (items.length === 0)
-      return (
-        <Container className="pb-6 lg:py-5">
-          <EmptyEpisode data={epData!} ep={ep!} />
-        </Container>
-      )
   }
 
   const selected = ih ? (listed ? sourceKey(listed) : sourceKey({ infohash: ih, file_index: fileIndex ?? playing ?? -1 })) : null
@@ -224,12 +218,9 @@ export default function PlaybackPage() {
     navigate(`${epBase}/hash/${seg(f.infohash)}/file/${f.file_index}`, { replace: true })
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
-  const sideProps = epData
-    ? { data: epData, ranked, ep: ep!, ih, fileIndex: fileIndex ?? playing, listed: !!listed, playName: ready ? state.play?.name : undefined, hint, selected, onSelect: select }
-    : null
   // 资源列表只在播放器的「资源」弹窗里（任何状态都有播放器外壳），页面上只留选集
-  const side = sideProps ? (
-    <EpisodeSide {...sideProps} part="episodes" />
+  const side = epData ? (
+    <EpisodeList subject={epData.subject} ep={ep!} hasItems={epData.items.length > 0} />
   ) : epQ.error ? (
     <Card>
       <ErrorState error={epQ.error} onRetry={() => epQ.refetch()} />
@@ -237,7 +228,20 @@ export default function PlaybackPage() {
   ) : (
     <EpisodeSideSkeleton />
   )
-  const panelSources = sideProps ? (close: () => void) => <EpisodeSide {...sideProps} part="sources" onPicked={close} /> : undefined
+  const panelSources = epData
+    ? (close: () => void) => (
+        <SourceList
+          subject={epData.subject}
+          ep={ep!}
+          ranked={ranked}
+          selected={selected}
+          onSelect={(f) => {
+            select(f)
+            close()
+          }}
+        />
+      )
+    : undefined
   const info = (parts?: Parameters<typeof EpisodeInfo>[0]["parts"]) =>
     epData ? <EpisodeInfo subject={epData.subject} ep={ep!} parts={parts} /> : <EpisodeInfoSkeleton />
   const shareURL = (h: string | null, idx: number | null) => `${location.origin}${h ? sourceHref(h, idx) : here}`
@@ -264,9 +268,13 @@ export default function PlaybackPage() {
       ) : (
         <div className={GRID}>
           <section className="min-w-0">
-            {/* 还没有播放会话：同样的播放器外壳（「资源」按钮可用），状态提示在画面里 */}
+            {/* 还没有播放会话或本集暂无资源：同样的播放器外壳（「弹幕」「资源」按钮始终可用），状态提示在画面里 */}
             <PlayerShell poster={epData?.subject.cover ?? undefined} panelSources={panelSources}>
-              {state.status !== "idle" && <PlayGate overlay state={state} title={hint?.title} here={here} retry={retry} docTitle={false} />}
+              {state.status !== "idle" ? (
+                <PlayGate overlay state={state} title={hint?.title} here={here} retry={retry} docTitle={false} />
+              ) : (
+                epData && <EmptyEpisodeOverlay subject={epData.subject} ep={ep!} />
+              )}
             </PlayerShell>
             {info(waiting ? STATS_SKELETON : undefined)}
           </section>
@@ -285,77 +293,6 @@ function EpisodeError({ error, retry }: { error: unknown; retry: () => void }) {
         <ErrorState error={error} onRetry={retry} />
       </Card>
     </Container>
-  )
-}
-
-/** 单集页右栏：选集 + 资源（URL 指定但未收录到本集的资源置顶） */
-function EpisodeSide({
-  data,
-  ranked,
-  ep,
-  ih,
-  fileIndex,
-  listed,
-  playName,
-  hint,
-  selected,
-  onSelect,
-  part = "all",
-  onPicked,
-}: {
-  data: EpisodeResponse
-  ranked: Scored<EpisodeFile>[]
-  ep: EpisodeKey
-  ih: string | null
-  fileIndex: number | null
-  listed: boolean
-  playName?: string
-  hint?: PlayHint
-  selected: string | null
-  onSelect: (f: EpisodeFile) => void
-  /** all：选集 + 资源（没有播放器时）；episodes：只有选集；sources：只有资源列表（播放器弹窗里） */
-  part?: "all" | "episodes" | "sources"
-  /** 资源被点选后（弹窗里用来关闭弹窗） */
-  onPicked?: () => void
-}) {
-  // 播放页轮询留下的收录状态（只读缓存，不发请求）提供文件名与大小
-  const status = useQuery<TorrentStatus>({ queryKey: qk.torrentStatus(ih ?? ""), queryFn: () => api.torrentStatus(ih!), enabled: false }).data
-  const extra = useMemo<EpisodeFile | null>(() => {
-    if (!ih || listed) return null
-    const f = fileIndex !== null ? status?.files.find((x) => x.index === fileIndex) : undefined
-    const title = status?.title || playName || hint?.title || ih
-    return {
-      infohash: ih,
-      file_index: fileIndex ?? -1,
-      path: f?.path ?? title,
-      size_bytes: f?.size_bytes ?? 0,
-      torrent_title: title,
-      team: hint?.team ?? "",
-      published_at: "",
-      source_id: "",
-      source: "user",
-      confidence: 0,
-      access: { action: "allow", reason: "" },
-    }
-  }, [ih, listed, fileIndex, status, playName, hint?.title, hint?.team])
-  const sources = (
-    <SourceList
-      ranked={ranked}
-      extra={extra}
-      selected={extra ? sourceKey(extra) : selected}
-      onSelect={(f) => {
-        onSelect(f)
-        onPicked?.()
-      }}
-      bare={part === "sources"}
-    />
-  )
-  if (part === "sources") return sources
-  return (
-    <>
-      <EpisodeList subject={data.subject} ep={ep} hasItems={data.items.length > 0 || !!ih} />
-      {part === "all" && sources}
-    </>
   )
 }
 
