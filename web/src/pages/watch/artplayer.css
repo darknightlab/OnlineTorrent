@@ -172,8 +172,7 @@
   pointer-events: none;
 }
 
-/* 控制栏中间：桌面全屏 / 手机横屏全屏，且实测剩余宽度足够。
-   弹幕插件初始化时把中间设成 flex（放它自己的设置栏），这里一律以本站的规则为准 */
+/* 控制栏中间：桌面全屏 / 手机横屏全屏，且实测剩余宽度足够 */
 .art-video-player:not(.ot-center-send) .art-controls .art-controls-center {
   display: none !important;
 }
@@ -188,13 +187,6 @@
   width: 100%;
   max-width: 560px;
   min-width: 0;
-}
-/* 弹幕插件自带的发送框 / 设置面板 / 开关不用（「弹幕」按钮打开本站的弹窗），也不让它给播放器加下边距 */
-.art-video-player .artplayer-plugin-danmuku {
-  display: none !important;
-}
-.art-video-player.art-video-player:has(> .artplayer-plugin-danmuku) {
-  margin-bottom: 0 !important;
 }
 
 /* 时间文字略小、等宽数字 */

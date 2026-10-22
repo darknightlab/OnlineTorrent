@@ -1,9 +1,8 @@
-// 弹幕：服务器格式 → artplayer-plugin-danmuku 的格式（pages/watch/danmaku.ts）、显示设置（每个浏览器保存）、
-// 发送前的校验（与服务端 internal/api/danmaku.go 一致）
+// 弹幕：服务器格式转换、轨道分配、时间游标、显示设置（每个浏览器保存）、发送前的校验（与服务端一致）
 import type { DanmakuItem } from "./types"
 
-/** 插件的弹幕（与 artplayer-plugin-danmuku 的 Danmu 相同的字段） */
-export interface PluginDanmu {
+/** 渲染器内部使用的弹幕项 */
+export interface ParsedDanmu {
   text: string
   time: number
   /** 0 滚动、1 顶部、2 底部 */
@@ -13,18 +12,123 @@ export interface PluginDanmu {
   border?: boolean
 }
 
-/** 服务器的模式（bilibili 写法：1 滚动、4 底部、5 顶部）→ 插件的模式 */
+/** 服务器的模式（bilibili 写法：1 滚动、4 底部、5 顶部）→ 渲染器的模式 */
 const MODES: Record<number, 0 | 1 | 2> = { 1: 0, 5: 1, 4: 2 }
 
-export function toDanmu(items: DanmakuItem[]): PluginDanmu[] {
-  const out: PluginDanmu[] = []
+export function toDanmu(items: DanmakuItem[]): ParsedDanmu[] {
+  const out: ParsedDanmu[] = []
   for (const [time, mode, color, text, own] of items) {
     if (!text || !(time >= 0)) continue
-    const d: PluginDanmu = { text, time, mode: MODES[mode] ?? 0, color: `#${(color & 0xffffff).toString(16).padStart(6, "0")}` }
+    const d: ParsedDanmu = { text, time, mode: MODES[mode] ?? 0, color: `#${(color & 0xffffff).toString(16).padStart(6, "0")}` }
     if (own === 1) d.border = true
     out.push(d)
   }
+  out.sort((a, b) => a.time - b.time)
   return out
+}
+
+/** 二分查找第一个 time >= target 的下标 */
+export function lowerBoundDanmu(items: readonly ParsedDanmu[], target: number): number {
+  let lo = 0
+  let hi = items.length
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1
+    if (items[mid].time < target) lo = mid + 1
+    else hi = mid
+  }
+  return lo
+}
+
+// ---- 零回流轨道分配器 ----
+
+export interface ScrollLane {
+  t0: number
+  w0: number
+  dur0: number
+  v0: number
+}
+
+export class LaneAllocator {
+  private scrollLanes: (ScrollLane | null)[] = []
+  private topFreeAt: number[] = []
+  private bottomFreeAt: number[] = []
+  private laneCount = 0
+  private lineHeight = 30
+  private marginTop = 10
+
+  configure(clientHeight: number, fontSize: number, area: DanmakuArea, marginTop = 10) {
+    this.marginTop = marginTop
+    this.lineHeight = Math.max(16, Math.round(fontSize * 1.25))
+    const maxBottom = area >= 1 ? clientHeight - marginTop : Math.floor(clientHeight * area)
+    const usable = Math.max(0, maxBottom - marginTop)
+    const count = Math.max(1, Math.floor(usable / this.lineHeight))
+    const prevCount = this.laneCount
+    if (count !== prevCount) {
+      this.laneCount = count
+      this.scrollLanes.length = count
+      this.topFreeAt.length = count
+      this.bottomFreeAt.length = count
+      for (let i = prevCount; i < count; i++) {
+        this.scrollLanes[i] = null
+        this.topFreeAt[i] = -Infinity
+        this.bottomFreeAt[i] = -Infinity
+      }
+    }
+  }
+
+  reset() {
+    this.scrollLanes.fill(null)
+    this.topFreeAt.fill(-Infinity)
+    this.bottomFreeAt.fill(-Infinity)
+  }
+
+  /**
+   * 为一条弹幕分配垂直坐标 top（px）；所有轨道都满时返回 null（直接跳过，不堆积）
+   * @param mode 0 滚动、1 顶部、2 底部
+   * @param t 当前播放器运行时间（秒，按播放倍速折算或实测时间）
+   * @param width 弹幕像素宽度
+   * @param clientWidth 播放器像素宽度
+   * @param duration 弹幕持续秒数（滚动为 speed，顶部/底部固定 5s）
+   * @param gap 同轨道相邻滚动弹幕最小间距（px）
+   */
+  allocate(mode: 0 | 1 | 2, t: number, width: number, clientWidth: number, duration: number, gap = 16): number | null {
+    if (this.laneCount <= 0 || clientWidth <= 0 || duration <= 0) return null
+    if (mode === 1) {
+      for (let i = 0; i < this.laneCount; i++) {
+        if (this.topFreeAt[i] <= t) {
+          this.topFreeAt[i] = t + duration
+          return this.marginTop + i * this.lineHeight
+        }
+      }
+      return null
+    }
+    if (mode === 2) {
+      for (let i = this.laneCount - 1; i >= 0; i--) {
+        if (this.bottomFreeAt[i] <= t) {
+          this.bottomFreeAt[i] = t + duration
+          return this.marginTop + i * this.lineHeight
+        }
+      }
+      return null
+    }
+    const v = (clientWidth + width) / duration
+    for (let i = 0; i < this.laneCount; i++) {
+      const prev = this.scrollLanes[i]
+      if (!prev || t >= prev.t0 + prev.dur0) {
+        this.scrollLanes[i] = { t0: t, w0: width, dur0: duration, v0: v }
+        return this.marginTop + i * this.lineHeight
+      }
+      const dt = t - prev.t0
+      if (dt < 0) continue
+      // 1) 前一条弹幕右边缘已完全进入画面并留出 gap
+      if (dt * prev.v0 < prev.w0 + gap) continue
+      // 2) 若新弹幕更快，新弹幕左边缘到达左边界前不会追上前一条右边缘
+      if (v > prev.v0 && t + clientWidth / v < prev.t0 + prev.dur0) continue
+      this.scrollLanes[i] = { t0: t, w0: width, dur0: duration, v0: v }
+      return this.marginTop + i * this.lineHeight
+    }
+    return null
+  }
 }
 
 // ---- 显示设置 ----
@@ -96,7 +200,7 @@ export function saveDanmakuSettings(s: DanmakuSettings) {
   }
 }
 
-/** 设置 → 插件选项（字号按手机 / 桌面；速度为弹幕滚过画面的秒数，插件范围 1–10；区域 = 底部留白） */
+/** 设置 → 渲染参数（字号按手机 / 桌面；速度为弹幕滚过画面的秒数；区域 = 底部留白） */
 export function pluginOptions(s: DanmakuSettings, mobile: boolean) {
   const sizes = mobile ? { s: 13, m: 15, l: 18 } : { s: 20, m: 24, l: 30 }
   const speeds = { slow: 8, normal: 5, fast: 3 }
