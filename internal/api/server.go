@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	"github.com/darknightlab/onlinetorrent/internal/catalog"
 	"github.com/darknightlab/onlinetorrent/internal/clef"
 	"github.com/darknightlab/onlinetorrent/internal/crawl"
@@ -78,6 +80,8 @@ type Server struct {
 
 	recheckMu sync.Mutex
 	checked   map[string]uint64 // infohash -> policy generation it was last checked at
+
+	coverSF singleflight.Group // dedupes concurrent cover image downloads per work.Key
 
 	// content scopes (admin "内容范围"): compiled per role, replaced on write
 	scopeMu     sync.RWMutex

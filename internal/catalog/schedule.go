@@ -2,12 +2,11 @@ package catalog
 
 import (
 	"context"
-	"net/http"
+	"fmt"
 	"net/url"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/darknightlab/onlinetorrent/internal/meta"
@@ -70,23 +69,58 @@ func (c *Catalog) Schedule() *Schedule {
 	return c.sched
 }
 
-// CoverFor returns the best cover for a work.
+// MoeCover returns the bangumi.moe cover URL for a tag id, if known.
+func (c *Catalog) MoeCover(id string) string {
+	c.coversMu.RLock()
+	cv := c.covers[id]
+	c.coversMu.RUnlock()
+	return cv
+}
+
+// UpstreamCoverURLs returns the ordered candidate upstream image URLs for a work.
 // bgm.tv's 400px "common" image is preferred (bangumi.moe covers can be 2000px+),
 // bangumi.moe is the fallback.
-func (c *Catalog) CoverFor(w *meta.Work) string {
-	if w.Cover != "" {
-		return w.Cover
+func (c *Catalog) UpstreamCoverURLs(w *meta.Work) []string {
+	if w == nil {
+		return nil
+	}
+	var out []string
+	add := func(u string) {
+		if u == "" {
+			return
+		}
+		for _, ex := range out {
+			if ex == u {
+				return
+			}
+		}
+		out = append(out, u)
+	}
+	if strings.HasPrefix(w.Cover, "https://") || strings.HasPrefix(w.Cover, "http://") {
+		add(w.Cover)
 	}
 	if id := w.External["bgm"]; id != "" {
-		return "https://api.bgm.tv/v0/subjects/" + id + "/image?type=common"
+		add("https://api.bgm.tv/v0/subjects/" + url.PathEscape(id) + "/image?type=common")
 	}
 	if id := w.External["bangumi_moe"]; id != "" {
-		c.coversMu.RLock()
-		cv := c.covers[id]
-		c.coversMu.RUnlock()
-		if cv != "" {
-			return cv
+		if cv := c.MoeCover(id); cv != "" {
+			add(cv)
 		}
+	}
+	return out
+}
+
+// CoverFor returns the local cover endpoint URL for a work, or "" if no upstream cover
+// source exists (so the frontend shows a placeholder without making a dead request).
+func (c *Catalog) CoverFor(w *meta.Work) string {
+	if len(c.UpstreamCoverURLs(w)) == 0 {
+		return ""
+	}
+	if p, id, ok := strings.Cut(w.Key, ":"); ok && p != "" && id != "" {
+		return "/api/v1/subjects/" + url.PathEscape(p) + "/" + url.PathEscape(id) + "/cover"
+	}
+	if w.ID > 0 {
+		return fmt.Sprintf("/api/v1/subjects/id/%d/cover", w.ID)
 	}
 	return ""
 }
@@ -158,9 +192,6 @@ func (c *Catalog) rebuildSchedule(ctx context.Context) {
 	}
 	c.publishSchedule(now, cloneItems(items))
 
-	// covers: resolve api.bgm.tv image redirects once (they can take ~20s) and store the final URL
-	c.resolveCovers(ctx, works, items)
-
 	// phase 2: latest episode per anime, from the file mappings
 	c.fillLatest(ctx, items)
 	c.publishSchedule(now, items)
@@ -224,52 +255,6 @@ func (c *Catalog) publishSchedule(now time.Time, items []*ScheduleItem) {
 	c.schedMu.Lock()
 	c.sched = &Schedule{GeneratedAt: store.Now(), Items: items}
 	c.schedMu.Unlock()
-}
-
-// resolveCovers stores the final lain.bgm.tv URL for works that only have a bgm id,
-// so browsers never hit the slow api.bgm.tv redirect.
-func (c *Catalog) resolveCovers(ctx context.Context, works []*meta.Work, items []*ScheduleItem) {
-	byKey := map[string]*ScheduleItem{}
-	for _, it := range items {
-		byKey[it.Key] = it
-	}
-	hc := c.HTTPClient()
-	nc := &http.Client{Transport: hc.Transport, Timeout: 40 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	sem := make(chan struct{}, 2)
-	var wg sync.WaitGroup
-	for _, w := range works {
-		it := byKey[w.Key]
-		id := w.External["bgm"]
-		if it == nil || w.Cover != "" || id == "" {
-			continue
-		}
-		wg.Add(1)
-		sem <- struct{}{}
-		go func() {
-			defer wg.Done()
-			defer func() { <-sem }()
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.bgm.tv/v0/subjects/"+id+"/image?type=common", nil)
-			if err != nil {
-				return
-			}
-			req.Header.Set("User-Agent", c.st.Str(store.KeyBgmUserAgent))
-			resp, err := nc.Do(req)
-			if err != nil {
-				return
-			}
-			resp.Body.Close()
-			loc := resp.Header.Get("Location")
-			u, err := url.Parse(loc)
-			if resp.StatusCode/100 != 3 || err != nil || u.Scheme != "https" || !strings.HasSuffix(u.Host, "bgm.tv") {
-				return
-			}
-			if c.meta.SetCover(ctx, w.Key, loc) == nil {
-				it.Cover = loc
-			}
-		}()
-	}
-	wg.Wait()
 }
 
 // ScheduleItemByKey returns the cached schedule entry for a work (with latest torrent),

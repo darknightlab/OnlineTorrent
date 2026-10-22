@@ -1,10 +1,14 @@
 package api
 
 import (
+	"context"
 	"errors"
+	"io"
 	"math"
 	"net/http"
+	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/darknightlab/onlinetorrent/internal/catalog"
@@ -102,6 +106,114 @@ func (s *Server) getSubject(w http.ResponseWriter, r *http.Request) error {
 	}
 	httpx.JSON(w, 200, map[string]any{"subject": s.subjectView(r, work), "torrents": s.listTorrents(r, catalog.FromCatalogList(rows))})
 	return nil
+}
+
+// GET /api/v1/subjects/{provider}/{id}/cover
+func (s *Server) getSubjectCover(w http.ResponseWriter, r *http.Request) error {
+	work, err := s.resolveSubject(r)
+	if err != nil {
+		return err
+	}
+	coverPath := s.Meta.CoverPath(work.Key)
+	if coverPath == "" {
+		return httpx.E(404, "not_found", "封面不存在")
+	}
+	if served, err := serveCachedCover(w, r, coverPath); served || err != nil {
+		return err
+	}
+	_, err, _ = s.coverSF.Do(work.Key, func() (any, error) {
+		if info, statErr := os.Stat(coverPath); statErr == nil && info.Size() > 0 {
+			return nil, nil
+		}
+		urls := s.Cat.UpstreamCoverURLs(work)
+		if len(urls) == 0 {
+			return nil, httpx.E(404, "not_found", "封面不存在")
+		}
+		baseCtx := s.BaseCtx
+		if baseCtx == nil {
+			baseCtx = context.Background()
+		}
+		ua := s.St.Str(store.KeyBgmUserAgent)
+		hc := s.Cat.HTTPClient()
+		coverDir := s.Meta.CoverDir()
+		for _, u := range urls {
+			fctx, cancel := context.WithTimeout(baseCtx, 20*time.Second)
+			req, reqErr := http.NewRequestWithContext(fctx, http.MethodGet, u, nil)
+			if reqErr != nil {
+				cancel()
+				continue
+			}
+			if (work.Cover == "" && work.External["bgm"] != "") || strings.Contains(u, "bgm.tv") {
+				req.Header.Set("User-Agent", ua)
+			}
+			resp, doErr := hc.Do(req)
+			if doErr != nil {
+				cancel()
+				continue
+			}
+			data, readErr := io.ReadAll(io.LimitReader(resp.Body, 10<<20))
+			resp.Body.Close()
+			cancel()
+			if readErr != nil || resp.StatusCode != 200 || len(data) == 0 {
+				continue
+			}
+			ct := http.DetectContentType(data)
+			if !strings.HasPrefix(ct, "image/") {
+				continue
+			}
+			if err := os.MkdirAll(coverDir, 0o755); err != nil {
+				continue
+			}
+			tmp, err := os.CreateTemp(coverDir, ".cover-*")
+			if err != nil {
+				continue
+			}
+			tmpName := tmp.Name()
+			_, werr := tmp.Write(data)
+			cerr := tmp.Close()
+			if werr != nil || cerr != nil {
+				_ = os.Remove(tmpName)
+				continue
+			}
+			if err := os.Rename(tmpName, coverPath); err != nil {
+				_ = os.Remove(tmpName)
+				continue
+			}
+			if work.Cover == "" && resp.Request != nil && resp.Request.URL != nil && resp.Request.URL.Scheme == "https" {
+				_ = s.Meta.SetCover(baseCtx, work.Key, resp.Request.URL.String())
+			}
+			return nil, nil
+		}
+		return nil, httpx.E(404, "not_found", "封面不存在")
+	})
+	if err != nil {
+		return err
+	}
+	if served, err := serveCachedCover(w, r, coverPath); served || err != nil {
+		return err
+	}
+	return httpx.E(404, "not_found", "封面不存在")
+}
+
+func serveCachedCover(w http.ResponseWriter, r *http.Request, coverPath string) (bool, error) {
+	f, err := os.Open(coverPath)
+	if err != nil {
+		return false, nil
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || info.Size() <= 0 {
+		return false, nil
+	}
+	var head [512]byte
+	n, _ := io.ReadFull(f, head[:])
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return false, err
+	}
+	w.Header().Set("Content-Type", http.DetectContentType(head[:n]))
+	w.Header().Set("Cache-Control", "public, max-age=604800")
+	http.ServeContent(w, r, "", info.ModTime(), f)
+	return true, nil
 }
 
 type episodeFile struct {

@@ -8,6 +8,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -312,6 +314,9 @@ CREATE TABLE manami_names (
 type Store struct {
 	W, R *sql.DB
 
+	coverDir  string
+	tempCover bool
+
 	aliasMu sync.Mutex
 	aliases *aliasIndex
 	aliasAt time.Time
@@ -320,6 +325,8 @@ type Store struct {
 	cand   *candIndex
 }
 
+var coverNameReplacer = strings.NewReplacer(":", "_", "/", "_", "\\", "_", "..", "_")
+
 // Open opens meta.db.
 func Open(path string) (*Store, error) {
 	w, r, err := store.OpenDB(path, migrations)
@@ -327,11 +334,35 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	st := &Store{W: w, R: r}
+	if path != "" && path != ":memory:" {
+		st.coverDir = filepath.Join(filepath.Dir(path), "covers")
+	} else {
+		if dir, err := os.MkdirTemp("", "otd-covers-*"); err == nil {
+			st.coverDir, st.tempCover = dir, true
+		}
+	}
 	st.resetEpisodeOffsets() // the split-cour cache is per process; another store (tests) may have filled it
 	return st, nil
 }
 
-func (s *Store) Close() { s.R.Close(); s.W.Close() }
+func (s *Store) Close() {
+	s.R.Close()
+	s.W.Close()
+	if s.tempCover && s.coverDir != "" {
+		_ = os.RemoveAll(s.coverDir)
+	}
+}
+
+// CoverDir returns the local directory where cached cover images are stored.
+func (s *Store) CoverDir() string { return s.coverDir }
+
+// CoverPath returns the local file path for a work's cached cover image.
+func (s *Store) CoverPath(workKey string) string {
+	if s.coverDir == "" || workKey == "" {
+		return ""
+	}
+	return filepath.Join(s.coverDir, coverNameReplacer.Replace(workKey))
+}
 
 // Work is an anime/series entry.
 type Work struct {

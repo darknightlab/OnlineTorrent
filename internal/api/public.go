@@ -31,6 +31,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 
 	s.route(mux, "GET", "/api/v1/schedule", AccessConfigurable, "浏览", "新番时间表", []string{store.RoleGuest}, s.getSchedule)
 	s.route(mux, "GET", "/api/v1/subjects/{provider}/{id}", AccessConfigurable, "浏览", "条目详情（单季）", []string{store.RoleGuest}, s.getSubject)
+	s.route(mux, "GET", "/api/v1/subjects/{provider}/{id}/cover", AccessPublic, "浏览", "番剧封面图（首次请求时拉取并缓存到本地）", nil, s.getSubjectCover)
 	s.route(mux, "GET", "/api/v1/subjects/{provider}/{id}/episodes", AccessConfigurable, "浏览", "选集列表（正片 + SP / NCOP / NCED / PV / CM）", []string{store.RoleGuest}, s.getEpisodes)
 	s.route(mux, "GET", "/api/v1/subjects/{provider}/{id}/episodes/{n}", AccessConfigurable, "浏览", "单集资源列表", []string{store.RoleGuest}, s.getEpisode)
 	s.route(mux, "GET", "/api/v1/subjects/{provider}/{id}/episodes/{n}/danmaku", AccessConfigurable, "播放", "单集弹幕（第一次打开该集时采集并保存；含用户发送的弹幕）", []string{store.RoleGuest}, s.getDanmaku)
