@@ -25,6 +25,13 @@
   --ot-piece-partial: rgb(33 150 243 / 0.32);
   font-family: var(--font-sans);
   font-variant-numeric: tabular-nums;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.art-video-player .art-video {
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 /* piece 图层：已下载 / 部分下载（浏览器的「已缓冲」不显示，见 --art-loaded-color） */

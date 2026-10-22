@@ -12,8 +12,9 @@ Artplayer.CONTEXTMENU = false
 // 解码失败不自动重连：交给下方的编码提示（重试同一地址只会再次失败）；流卡死由 useStallWatchdog 处理
 Artplayer.RECONNECT_TIME_MAX = 0
 Artplayer.SEEK_STEP = 5
-// 移动端左右滑动整个播放器宽度移动 1/12 视频时长（默认 0.5）
+// 移动端左右滑动整个播放器宽度移动 1/12 视频时长（默认 0.5）；长按 2 倍速（默认 3）
 Artplayer.TOUCH_MOVE_RATIO = 1 / 12
+Artplayer.FAST_FORWARD_VALUE = 2
 
 const RATES = [2, 1.5, 1.25, 1, 0.75, 0.5]
 const rateLabel = (r: number) => (r === 1 ? "倍速" : `${r}x`)
@@ -133,6 +134,15 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
   const { $player, $state, $poster } = art.template
   $state.setAttribute("role", "button")
   $state.setAttribute("aria-label", "播放")
+
+  // ArtPlayer 在移动端跳过 Contextmenu.init()，长按触发 2x 倍速时会弹出浏览器原生的视频菜单；
+  // 移动端拦截播放器内的 contextmenu（唯独放行弹幕输入框），并在系统手势触发 touchcancel 时结束长按倍速。
+  const preventContextMenu = (e: Event) => {
+    if ((phoneDevice || mobile) && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) e.preventDefault()
+  }
+  const onTouchCancel = (e: Event) => art.emit("document:touchend", e)
+  $player.addEventListener("contextmenu", preventContextMenu)
+  document.addEventListener("touchcancel", onTouchCancel)
 
   // 进度条里的 piece 可用性图层：位于「已缓冲 / 已播放」之下
   const pieces = document.createElement("div")
@@ -355,6 +365,8 @@ export function mountArtplayer(el: HTMLDivElement, o: MountOptions): ArtHandle {
       screen.orientation?.removeEventListener?.("change", relayout)
       el.removeEventListener("focusin", focusIn)
       el.removeEventListener("focusout", focusOut)
+      $player.removeEventListener("contextmenu", preventContextMenu)
+      document.removeEventListener("touchcancel", onTouchCancel)
       if (document.fullscreenElement && $player.contains(document.fullscreenElement)) document.exitFullscreen().catch(() => {})
       art.destroy(true) // 同时移除 src，释放 Service Worker 流请求
     },
