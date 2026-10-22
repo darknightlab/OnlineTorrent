@@ -12,6 +12,7 @@ const overlay =
 
 export function DialogContent({
   className,
+  style,
   children,
   title,
   description,
@@ -23,13 +24,35 @@ export function DialogContent({
   /** 挂载位置（默认 body）；全屏元素里弹窗时传全屏元素，否则会被挡住 */
   container?: HTMLElement | null
 }) {
+  // iOS Safari 等不缩放布局视口的虚拟键盘：用 visualViewport 将底部上移到键盘上方，保证弹窗内部可滚动且不被遮挡
+  const [kbOffset, setKbOffset] = React.useState(0)
+  React.useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv || container) {
+      setKbOffset(0)
+      return
+    }
+    const update = () => {
+      const covered = Math.max(0, Math.round(window.innerHeight - (vv.offsetTop + vv.height)))
+      setKbOffset(covered)
+    }
+    update()
+    vv.addEventListener("resize", update)
+    vv.addEventListener("scroll", update)
+    return () => {
+      vv.removeEventListener("resize", update)
+      vv.removeEventListener("scroll", update)
+    }
+  }, [container])
+
   return (
     <DialogPrimitive.Portal container={container ?? undefined}>
       {/* 挂在播放器（全屏 / 网页全屏）里时要高于播放器自己的图层（控制栏 60 … 右键菜单 120） */}
       <DialogPrimitive.Overlay className={cn(overlay, container && "z-[200]")} />
       <DialogPrimitive.Content
+        style={kbOffset > 0 ? { bottom: `${kbOffset}px`, ...style } : style}
         className={cn(
-          "fixed z-50 grid",
+          "fixed z-50 grid content-start",
           container && "z-[200]",
           "max-h-[92dvh] w-full gap-4 overflow-y-auto border bg-popover p-5 text-popover-foreground focus:outline-none",
           // 手机：底部弹出；桌面：居中

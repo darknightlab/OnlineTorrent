@@ -112,7 +112,16 @@ export function DanmakuControls({ handle: h, source, mediaKey, requested, onRequ
   return <>
     {centerActive && createPortal(box("bar"), h.danmakuSlot)}
     <Dialog open={requested} onOpenChange={dismiss}>
-      <DialogContent container={host} title="弹幕" className="gap-4 sm:max-w-sm">
+      <DialogContent
+        container={host}
+        title="弹幕"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+        className={
+          host
+            ? "gap-4 sm:max-w-sm"
+            : "gap-4 max-sm:top-[calc(env(safe-area-inset-top)+56.25vw)] max-sm:bottom-0 max-sm:max-h-none sm:max-w-sm"
+        }
+      >
         {!centerActive && box("dialog")}
         <DanmakuSettingsForm settings={settings} onSettings={change} />
       </DialogContent>

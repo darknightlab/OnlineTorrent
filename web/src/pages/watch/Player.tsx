@@ -628,11 +628,19 @@ export function Player({
         )}
       </aside>
 
-      {/* 「资源」弹窗（全屏时挂在全屏元素里） */}
+      {/* 「资源」弹窗（全屏时挂在全屏元素里；手机非全屏时正好覆盖 16:9 播放器下方区域） */}
       <Dialog open={panelOpen} onOpenChange={setPanelOpen}>
-        <DialogContent container={fsHost} title="资源与播放详情" className="gap-3 sm:max-w-2xl">
-          <Tabs value={tab} onValueChange={setTab} className="-mx-5 -mb-5 min-h-0 min-w-0">
-            <TabsList className="overflow-x-auto px-3 scrollbar-none">
+        <DialogContent
+          container={fsHost}
+          title="资源与播放详情"
+          className={
+            fsHost
+              ? "gap-3 sm:max-w-2xl"
+              : "gap-3 max-sm:top-[calc(env(safe-area-inset-top)+56.25vw)] max-sm:bottom-0 max-sm:flex max-sm:max-h-none max-sm:flex-col max-sm:overflow-hidden sm:max-w-2xl"
+          }
+        >
+          <Tabs value={tab} onValueChange={setTab} className="-mx-5 -mb-5 min-h-0 min-w-0 max-sm:flex max-sm:flex-1 max-sm:flex-col">
+            <TabsList className="shrink-0 overflow-x-auto px-3 scrollbar-none">
               {panelSources && (
                 <TabsTrigger value="sources">
                   <Layers />
@@ -654,7 +662,7 @@ export function Player({
                 详情
               </TabsTrigger>
             </TabsList>
-            <div className="h-[min(60dvh,32rem)] overflow-y-auto">
+            <div className="min-h-0 flex-1 overflow-y-auto sm:h-[min(60dvh,32rem)] sm:flex-none">
               {panelSources && <TabsContent value="sources">{panelSources(() => setPanelOpen(false))}</TabsContent>}
               {!filesInSide && <TabsContent value="files">{fileList}</TabsContent>}
               <TabsContent value="peers">
@@ -928,8 +936,16 @@ export function PlayerShell({ poster, panelSources, children }: { poster?: strin
       </div>
       {panelSources && (
         <Dialog open={open} onOpenChange={setOpen}>
-          <DialogContent container={fsHost} title="资源" className="gap-3 sm:max-w-2xl">
-            <div className="-mx-5 -mb-5 h-[min(60dvh,32rem)] min-w-0 overflow-y-auto border-t">{panelSources(() => setOpen(false))}</div>
+          <DialogContent
+            container={fsHost}
+            title="资源"
+            className={
+              fsHost
+                ? "gap-3 sm:max-w-2xl"
+                : "gap-3 max-sm:top-[calc(env(safe-area-inset-top)+56.25vw)] max-sm:bottom-0 max-sm:flex max-sm:max-h-none max-sm:flex-col max-sm:overflow-hidden sm:max-w-2xl"
+            }
+          >
+            <div className="-mx-5 -mb-5 min-h-0 min-w-0 flex-1 overflow-y-auto border-t sm:h-[min(60dvh,32rem)] sm:flex-none">{panelSources(() => setOpen(false))}</div>
           </DialogContent>
         </Dialog>
       )}
