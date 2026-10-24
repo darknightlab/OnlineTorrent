@@ -9,10 +9,10 @@ import JASSUB from "jassub"
 import workerUrl from "jassub/dist/worker/worker.js?worker&url"
 import wasmUrl from "jassub/dist/wasm/jassub-worker.wasm?url"
 import modernWasmUrl from "jassub/dist/wasm/jassub-worker-modern.wasm?url"
-// 默认字体（字幕要的字体都不在时使用）：Noto Sans CJK SC 子集（简繁日韩常用字 + 拉丁，2.7 MB，见 fonts/），
+// 默认字体（字幕要的字体都不在时使用）：完整 Noto Sans CJK SC Medium（65535 字形，不裁剪），
 // 只在 libass 真的需要默认字体时下载。JASSUB 自带的 default.woff2 没有中文，外挂字幕的字体
 // （如「方正准圆_GBK」，字幕组常把字体打包成 .rar / .7z）不在时会显示成方框
-import defaultFontUrl from "./fonts/NotoSansCJKsc-Medium-subset.woff2?url"
+import defaultFontUrl from "./fonts/NotoSansCJKsc-Medium.woff2?url"
 import { srtHeader, type Cue } from "./source.ts"
 import type { MenuTrack, SubtitleSet } from "./set.ts"
 
