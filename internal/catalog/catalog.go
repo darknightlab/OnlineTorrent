@@ -142,7 +142,8 @@ type Catalog struct {
 	sched     *Schedule
 	rebuildMu sync.Mutex
 
-	bd bdState // bangumi-data sync status (admin)
+	bd       bdState // bangumi-data sync status (admin)
+	trending trendingState
 
 	coversMu sync.RWMutex
 	covers   map[string]string // moe tag id -> cover URL

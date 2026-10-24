@@ -3,13 +3,13 @@ import useEmblaCarousel from "embla-carousel-react"
 import AutoHeight from "embla-carousel-auto-height"
 import { WheelGesturesPlugin } from "embla-carousel-wheel-gestures"
 import { Navigate, useLocation } from "react-router-dom"
-import { CalendarDays, Megaphone } from "lucide-react"
+import { CalendarDays, Flame, Megaphone } from "lucide-react"
 import { Container } from "@/components/layout/Container"
 import { SubjectCard, SubjectCardSkeleton } from "@/components/SubjectCard"
 import { EmptyState, ErrorState, SectionHeader } from "@/components/states"
 import { Markdown } from "@/components/Markdown"
 import { Card } from "@/components/ui/card"
-import { useSchedule, useSite } from "@/lib/queries"
+import { useSchedule, useSite, useTrending } from "@/lib/queries"
 import { byWeekday } from "@/lib/schedule"
 import type { ScheduleItem } from "@/lib/types"
 import { todayWeekday, WEEKDAYS } from "@/lib/format"
@@ -29,6 +29,7 @@ export default function Home() {
     <Container className="space-y-6 pb-4 pt-3 sm:space-y-8 sm:py-6">
       <Announcement />
       <ScheduleSection />
+      <TrendingSection />
     </Container>
   )
 }
@@ -177,4 +178,32 @@ const DayPanel = memo(function DayPanel({
     </div>
   )
 })
+
+function TrendingSection() {
+  const now = useNow()
+  const { data, isPending, error, refetch } = useTrending()
+  const items = data?.items ?? []
+  return (
+    <section aria-labelledby="trending-title" id="trending">
+      <SectionHeader id="trending-title" icon={Flame} title="瞩目动画" />
+      {error ? (
+        <Card>
+          <ErrorState error={error} onRetry={() => refetch()} />
+        </Card>
+      ) : isPending ? (
+        <div className="grid grid-cols-2 gap-x-2.5 gap-y-4 sm:grid-cols-3 sm:gap-x-3 lg:grid-cols-4 xl:grid-cols-5">
+          {Array.from({ length: 10 }, (_, i) => <SubjectCardSkeleton key={i} />)}
+        </div>
+      ) : items.length ? (
+        <div className="grid grid-cols-2 gap-x-2.5 gap-y-4 sm:grid-cols-3 sm:gap-x-3 lg:grid-cols-4 xl:grid-cols-5">
+          {items.map((i) => <SubjectCard key={i.key} item={i} now={now} />)}
+        </div>
+      ) : (
+        <Card>
+          <EmptyState icon={Flame} title="暂无瞩目动画" />
+        </Card>
+      )}
+    </section>
+  )
+}
 

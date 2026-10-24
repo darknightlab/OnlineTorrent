@@ -30,6 +30,7 @@ func (s *Server) routes(mux *http.ServeMux) {
 	s.route(mux, "POST", "/api/v1/me/redeem", AccessUser, "账号", "使用兑换码", []string{store.RoleMember}, s.redeem)
 
 	s.route(mux, "GET", "/api/v1/schedule", AccessConfigurable, "浏览", "新番时间表", []string{store.RoleGuest}, s.getSchedule)
+	s.route(mux, "GET", "/api/v1/trending", AccessConfigurable, "浏览", "瞩目动画（Bangumi 近期注目，缓存 24 小时）", []string{store.RoleGuest}, s.getTrending)
 	s.route(mux, "GET", "/api/v1/subjects/{provider}/{id}", AccessConfigurable, "浏览", "条目详情（单季）", []string{store.RoleGuest}, s.getSubject)
 	s.route(mux, "GET", "/api/v1/subjects/{provider}/{id}/cover", AccessPublic, "浏览", "番剧封面图（首次请求时拉取并缓存到本地）", nil, s.getSubjectCover)
 	s.route(mux, "GET", "/api/v1/subjects/{provider}/{id}/episodes", AccessConfigurable, "浏览", "选集列表（正片 + SP / NCOP / NCED / PV / CM）", []string{store.RoleGuest}, s.getEpisodes)
@@ -335,6 +336,43 @@ func (s *Server) getSchedule(w http.ResponseWriter, r *http.Request) error {
 	out := catalog.Schedule{GeneratedAt: sc.GeneratedAt, Items: items}
 	w.Header().Set("Cache-Control", "private, max-age=60")
 	httpx.JSON(w, 200, out)
+	return nil
+}
+
+type trendingResp struct {
+	GeneratedAt string       `json:"generated_at"`
+	Items       []subjectOut `json:"items"`
+}
+
+func (s *Server) getTrending(w http.ResponseWriter, r *http.Request) error {
+	works, genAt, err := s.Cat.TrendingWorks(r.Context())
+	if err != nil {
+		return httpx.E(http.StatusBadGateway, "upstream_error", "暂时无法获取瞩目动画，请稍后重试")
+	}
+	scope := s.scopeOf(r)
+	keys := make([]string, 0, len(works))
+	for _, wk := range works {
+		if scope.Visible(wk) {
+			keys = append(keys, wk.Key)
+		}
+	}
+	latest, _ := s.Meta.LatestEpisodesForWorks(r.Context(), keys)
+	items := make([]subjectOut, 0, len(keys))
+	for _, wk := range works {
+		if !scope.Visible(wk) {
+			continue
+		}
+		card := s.subjectCard(r, wk, false)
+		if card.LatestEpisode == nil {
+			if ep, ok := latest[wk.Key]; ok && ep > 0 {
+				v := ep
+				card.LatestEpisode = &v
+			}
+		}
+		items = append(items, card)
+	}
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	httpx.JSON(w, 200, trendingResp{GeneratedAt: genAt, Items: items})
 	return nil
 }
 

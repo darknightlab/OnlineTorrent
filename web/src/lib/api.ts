@@ -11,6 +11,7 @@ import type {
   RegisterRequest,
   ReportRequest,
   ScheduleResponse,
+  TrendingResponse,
   Site,
   SubjectResponse,
   DanmakuItem,
@@ -117,6 +118,7 @@ export const api = {
   changePassword: (b: { old_password: string; new_password: string }) => post<Record<string, never>>("/me/password", b),
   redeem: (code: string) => post<MeResponse>("/me/redeem", { code }),
   schedule: (s?: AbortSignal) => get<ScheduleResponse>("/schedule", s),
+  trending: (s?: AbortSignal) => get<TrendingResponse>("/trending", s),
   /** 条目详情：provider = id（本站 ID）/ bgm / mal / anidb … */
   subject: (provider: string, id: string, s?: AbortSignal) => get<SubjectResponse>(`/subjects/${seg(provider)}/${seg(id)}`, s),
   /** 选集列表（正片 + 特别篇） */

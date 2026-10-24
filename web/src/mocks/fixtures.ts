@@ -337,6 +337,7 @@ export const permissionSpecs: Spec[] = [
   spec("POST", "/api/v1/me/password", "user", "账号", "修改密码", ["member"]),
   spec("POST", "/api/v1/me/redeem", "user", "账号", "使用兑换码", ["member"]),
   spec("GET", "/api/v1/schedule", "configurable", "浏览", "新番时间表", ["guest"]),
+  spec("GET", "/api/v1/trending", "configurable", "浏览", "瞩目动画（Bangumi 近期注目，缓存 24 小时）", ["guest"]),
   spec("GET", "/api/v1/subjects/{provider}/{id}", "configurable", "浏览", "番剧详情", ["guest"]),
   spec("GET", "/api/v1/subjects/{provider}/{id}/episodes", "configurable", "浏览", "选集列表（正片 + SP / NCOP / NCED / PV / CM）", ["guest"]),
   spec("GET", "/api/v1/subjects/{provider}/{id}/episodes/{n}", "configurable", "浏览", "单集资源列表", ["guest"]),

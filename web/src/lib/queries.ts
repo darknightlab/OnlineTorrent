@@ -6,6 +6,7 @@ export const qk = {
   site: ["site"] as const,
   me: ["me"] as const,
   schedule: ["schedule"] as const,
+  trending: ["trending"] as const,
   subject: (provider: string, id: string) => ["subject", provider, id] as const,
   episodes: (provider: string, id: string) => ["subject", provider, id, "episodes"] as const,
   episode: (provider: string, id: string, key: string) => ["subject", provider, id, "episode", key] as const,
@@ -62,6 +63,7 @@ export const isAdminPath = (pathname: string) => /^\/admin(\/|$)/.test(pathname)
 /** 常用接口权限键（与后端路由注册的 "METHOD /pattern" 一致） */
 export const PERM = {
   schedule: "GET /api/v1/schedule",
+  trending: "GET /api/v1/trending",
   subject: "GET /api/v1/subjects/{provider}/{id}",
   episodes: "GET /api/v1/subjects/{provider}/{id}/episodes",
   episode: "GET /api/v1/subjects/{provider}/{id}/episodes/{n}",
@@ -115,6 +117,10 @@ export function useLogout() {
 
 export function useSchedule() {
   return useQuery({ queryKey: qk.schedule, queryFn: ({ signal }) => api.schedule(signal), staleTime: 5 * 60_000 })
+}
+
+export function useTrending() {
+  return useQuery({ queryKey: qk.trending, queryFn: ({ signal }) => api.trending(signal), staleTime: 5 * 60_000 })
 }
 
 /** 条目详情；provider/id 为空时不请求 */

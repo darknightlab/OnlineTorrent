@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -78,7 +79,13 @@ func (s *Server) subjectCard(r *http.Request, work *meta.Work, detail bool) subj
 	}
 	finished := official || (!known && item != nil && item.NextAirAt == nil && item.LastAirAt != nil)
 	if item == nil {
-		item = &catalog.ScheduleItem{Key: work.Key, SubjectID: work.ID, Title: work.Title, TitleCN: work.TitleCN, Cover: s.Cat.CoverFor(work)}
+		item = &catalog.ScheduleItem{Key: work.Key, SubjectID: work.ID, Title: work.Title, TitleCN: work.TitleCN, Cover: s.Cat.CoverFor(work), Begin: work.Begin}
+		if v, err := strconv.ParseInt(work.External["bgm"], 10, 64); err == nil {
+			item.BgmID = &v
+		}
+		if v := work.External["bangumi_moe"]; v != "" {
+			item.MoeTagID = &v
+		}
 	}
 	out := subjectOut{ScheduleItem: item, Summary: work.Summary, Type: work.Type, Official: work.Official, External: work.External,
 		Tags: work.Tags, MetaTags: work.MetaTags, NSFW: work.NSFW, Score: work.Score, Rank: work.Rank, Eps: work.Eps, Finished: finished}

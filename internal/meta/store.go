@@ -411,7 +411,109 @@ func scanWork(sc interface{ Scan(...any) error }) (*Work, error) {
 		w.Tags = []string{}
 	}
 	w.NSFW = nsfw != 0
+	// MetaState reads and writes key-value entries in meta_state.
 	return &w, nil
+}
+
+// GetState reads a JSON value from meta_state (returns false if not found or invalid).
+func (s *Store) GetState(ctx context.Context, key string, out any) bool {
+	var raw string
+	if err := s.R.QueryRowContext(ctx, `SELECT value FROM meta_state WHERE key = ?`, key).Scan(&raw); err != nil {
+		return false
+	}
+	return json.Unmarshal([]byte(raw), out) == nil
+}
+
+// SetState writes a JSON value to meta_state.
+func (s *Store) SetState(ctx context.Context, key string, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	_, err = s.W.ExecContext(ctx, `INSERT INTO meta_state(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, string(b))
+	return err
+}
+
+// WorksByBgmIDs loads works matching the given bangumi subject IDs in the same order,
+// skipping any IDs that are not in the local database.
+func (s *Store) WorksByBgmIDs(ctx context.Context, ids []string) ([]*Work, error) {
+	if len(ids) == 0 {
+		return []*Work{}, nil
+	}
+	keys := make([]any, 0, len(ids))
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		keys = append(keys, "bgm:"+id)
+	}
+	if len(keys) == 0 {
+		return []*Work{}, nil
+	}
+	ph := strings.TrimRight(strings.Repeat("?,", len(keys)), ",")
+	rows, err := s.R.QueryContext(ctx, `SELECT `+workCols+` FROM works WHERE key IN (`+ph+`)`, keys...)
+	if err != nil {
+		return nil, err
+	}
+	byKey := map[string]*Work{}
+	var list []*Work
+	for rows.Next() {
+		w, err := scanWork(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		byKey[w.Key] = w
+		list = append(list, w)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := s.fillExternal(ctx, list); err != nil {
+		return nil, err
+	}
+	out := make([]*Work, 0, len(list))
+	added := map[string]bool{}
+	for _, id := range ids {
+		k := "bgm:" + id
+		if w := byKey[k]; w != nil && !added[k] {
+			added[k] = true
+			out = append(out, w)
+		}
+	}
+	return out, nil
+}
+
+// LatestEpisodesForWorks returns max mapped main episode per work for the given work keys.
+func (s *Store) LatestEpisodesForWorks(ctx context.Context, workKeys []string) (map[string]float64, error) {
+	out := map[string]float64{}
+	if len(workKeys) == 0 {
+		return out, nil
+	}
+	args := make([]any, len(workKeys))
+	for i, k := range workKeys {
+		args[i] = k
+	}
+	ph := strings.TrimRight(strings.Repeat("?,", len(args)), ",")
+	rows, err := s.R.QueryContext(ctx, `SELECT work_key, MAX(episode) FROM torrent_files
+		WHERE work_key IN (`+ph+`) AND episode IS NOT NULL AND kind = 'episode' AND status != 'rejected'
+		GROUP BY work_key`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var k string
+		var e float64
+		if err := rows.Scan(&k, &e); err != nil {
+			return nil, err
+		}
+		out[k] = e
+	}
+	return out, rows.Err()
 }
 
 func (s *Store) fillExternal(ctx context.Context, works []*Work) error {

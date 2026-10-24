@@ -154,6 +154,11 @@ export interface ScheduleResponse {
   items: ScheduleItem[]
 }
 
+export interface TrendingResponse {
+  generated_at: string
+  items: Subject[]
+}
+
 export interface ExternalIds {
   bgm?: number | null
   mal?: number | null

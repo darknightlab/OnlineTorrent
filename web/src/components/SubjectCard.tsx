@@ -27,9 +27,13 @@ export const SubjectCard = memo(function SubjectCard({ item, now }: { item: Sche
           <Cover src={item.cover} title={title} position="object-[50%_30%]" className="aspect-video w-full transition-transform duration-300 group-hover:scale-[1.03]" />
           {/* 顶部：时间 + 状态 */}
           <div className="absolute inset-x-0 top-0 flex items-start justify-between gap-1 whitespace-nowrap p-1 sm:p-1.5">
-            <span className="rounded bg-black/65 px-1 py-px sm:px-1.5 text-[11px] font-semibold tabular-nums leading-[18px] text-white">
-              {item.air_time}
-            </span>
+            {item.air_time ? (
+              <span className="rounded bg-black/65 px-1 py-px sm:px-1.5 text-[11px] font-semibold tabular-nums leading-[18px] text-white">
+                {item.air_time}
+              </span>
+            ) : (
+              <span />
+            )}
             {status === "updated" && (
               <span className="rounded bg-primary px-1 py-px text-[11px] sm:px-1.5 font-medium leading-[18px] text-white">已更新</span>
             )}

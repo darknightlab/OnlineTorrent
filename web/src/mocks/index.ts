@@ -461,6 +461,7 @@ const routes: [string, string, Handler][] = [
     return me()
   }],
   ["GET", "/schedule", () => (requirePerm("GET /api/v1/schedule"), { generated_at: new Date().toISOString(), items: subjects.filter(visibleSubject).map(fx.toScheduleItem) })],
+  ["GET", "/trending", () => (requirePerm("GET /api/v1/trending"), { generated_at: new Date().toISOString(), items: subjects.filter(visibleSubject).slice(0, 15) })],
   ["GET", "/subjects/:provider/:id", ({ params }) => {
     requirePerm("GET /api/v1/subjects/{provider}/{id}")
     const a = findSubject(params.provider, params.id)

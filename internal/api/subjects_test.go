@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/darknightlab/onlinetorrent/internal/store"
 )
 
 func TestSubjectCoverCacheAndSingleflight(t *testing.T) {
@@ -102,5 +104,62 @@ func TestSubjectCoverCacheAndSingleflight(t *testing.T) {
 	}
 	if got := hits.Load(); got != 1 {
 		t.Fatalf("upstream hits after cache = %d, want 1", got)
+	}
+}
+
+func TestTrendingEndpointAndScope(t *testing.T) {
+	s, h := testServer(t)
+	ctx := context.Background()
+
+	if _, err := s.Meta.W.ExecContext(ctx, `INSERT INTO works(id,key,title,title_cn,type,begin_at,tags,meta_tags,eps,updated_at) VALUES
+		(10,'bgm:554779','生徒会にも穴はある！','学生会也有洞！','tv','2026-10-03T15:30:00Z','["搞笑"]','["TV"]',12,'x'),
+		(11,'bgm:622288','FX戦士くるみちゃん','FX战士久留美','tv','2026-10-01T12:30:00Z','["职场","限制"]','["TV"]',12,'x')`); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = s.Meta.W.ExecContext(ctx, `INSERT INTO work_ids VALUES('bgm','554779','bgm:554779'),('bgm','622288','bgm:622288')`)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<ul class="featuredItems"><li class="single clearit">
+			<h2 class="title"><a href="/anime/browser/?sort=trends" class="l">注目动画</a></h2>
+			<div class="grid">
+				<div class="mainItem"><a href="/subject/622288">FX</a></div>
+				<div class="mainItem"><a href="/subject/554779">Seitokai</a></div>
+			</div>
+		</li></ul>`))
+	}))
+	defer srv.Close()
+	s.Cat.SetTrendingURL(srv.URL)
+
+	// Configure guest content scope to exclude tag "限制".
+	if _, err := s.St.SetContentScope(ctx, store.RoleGuest, store.ContentScope{Role: store.RoleGuest, TagMode: "all", ExcludeTags: []string{"限制"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.loadScopes(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var guestOut struct {
+		GeneratedAt string       `json:"generated_at"`
+		Items       []subjectOut `json:"items"`
+	}
+	if code := getJSON(t, h, "/api/v1/trending", &guestOut); code != 200 {
+		t.Fatalf("guest /trending code = %d", code)
+	}
+	if guestOut.GeneratedAt == "" || len(guestOut.Items) != 1 || guestOut.Items[0].Key != "bgm:554779" || guestOut.Items[0].Cover != "/api/v1/subjects/bgm/554779/cover" {
+		t.Fatalf("guest /trending: %+v", guestOut)
+	}
+
+	// Admin sees both items in Bangumi's exact order (622288 first, then 554779).
+	adminTok := loginAs(t, s, "admin_trend", store.RoleAdmin)
+	var adminOut struct {
+		GeneratedAt string       `json:"generated_at"`
+		Items       []subjectOut `json:"items"`
+	}
+	if code := scopeReq(t, h, "GET", "/api/v1/trending", adminTok, "", &adminOut); code != 200 {
+		t.Fatalf("admin /trending code = %d", code)
+	}
+	if len(adminOut.Items) != 2 || adminOut.Items[0].Key != "bgm:622288" || adminOut.Items[1].Key != "bgm:554779" {
+		t.Fatalf("admin /trending: %+v", adminOut)
 	}
 }
