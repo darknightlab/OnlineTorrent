@@ -227,12 +227,15 @@ export function srtHeader(): string {
   ].join("\n")
 }
 
-/** SRT 文本 → Matroska ASS 块（基本标签 <i> <b> <u> <s> <font color>，换行 → \N） */
+/** SRT 文本 → Matroska ASS 块（保留 {\an8} 等 ASS 控制标签；基本标签 <i> <b> <u> <s> <font color>，换行 → \N） */
 export function srtToAss(text: string, order: number): string {
+  const tags: string[] = []
   const t = text
     .replace(/\r/g, "")
     .trim()
+    .replace(/\{\\[^}]*\}/g, (m) => `\0${tags.push(m) - 1}\0`)
     .replace(/[{}]/g, (c) => (c === "{" ? "(" : ")"))
+    .replace(/\0(\d+)\0/g, (_, i: string) => tags[Number(i)])
     .replace(/<\s*(\/?)\s*([ibus])\s*>/gi, (_, close: string, tag: string) => `{\\${tag.toLowerCase()}${close ? 0 : 1}}`)
     .replace(/<font\s+color\s*=\s*["']?#?([0-9a-f]{6})["']?\s*>/gi, (_, c: string) => `{\\c&H${c.slice(4, 6)}${c.slice(2, 4)}${c.slice(0, 2)}&}`)
     .replace(/<\/font\s*>/gi, "{\\c}")

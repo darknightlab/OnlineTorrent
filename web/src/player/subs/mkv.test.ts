@@ -183,6 +183,7 @@ test("tap: tracks learnt from the stream itself when the header isn't parsed yet
 
 test("srt → ASS chunk", () => {
   assert.equal(srtToAss("<b>A</b> {x}\r\n<font color=\"#ff8000\">B</font>", 5), "5,0,Default,,0,0,0,,{\\b1}A{\\b0} (x)\\N{\\c&H0080ff&}B{\\c}")
+  assert.equal(srtToAss("{\\an8}我就住在附近", 6), "6,0,Default,,0,0,0,,{\\an8}我就住在附近")
 })
 
 test("Cues → time map points (video track preferred); tap records clusters for the no-Cues fallback", async () => {

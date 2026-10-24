@@ -260,6 +260,11 @@
 .art-video-player.art-video-player .art-bottom .art-controls {
   z-index: auto;
 }
+.art-video-player.art-video-player.art-control-show .art-bottom .art-controls,
+.art-video-player.art-video-player.art-hover .art-bottom .art-controls {
+  transform: none;
+}
+.art-video-player.art-video-player .art-bottom .art-controls:has(.art-control-volume:hover, .art-control-selector:hover),
 .art-video-player.art-video-player .art-control-volume:hover,
 .art-video-player.art-video-player .art-control-selector:hover {
   z-index: 25;
